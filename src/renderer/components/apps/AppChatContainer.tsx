@@ -16,7 +16,7 @@
  * - Mobile (<640px): Panel as full-screen overlay
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { PanelRight } from 'lucide-react'
 import { useAppsPageStore } from '../../stores/apps-page.store'
 import { useChatStore } from '../../stores/chat.store'
@@ -24,6 +24,7 @@ import { useTranslation } from '../../i18n'
 import { AppChatView } from './AppChatView'
 import { ImChatView } from './ImChatView'
 import { ImSessionPanel } from './ImSessionPanel'
+import type { ImSessionRecord } from '../../../shared/types/im-channel'
 
 interface AppChatContainerProps {
   appId: string
@@ -46,6 +47,22 @@ export function AppChatContainer({ appId, spaceId }: AppChatContainerProps) {
 
   // Check if any IM session is actively generating (for badge indicator)
   const hasActiveImSession = useImActiveIndicator(appId)
+
+  // ── Clear key for ImChatView reload ──
+  // Incremented when ImSessionPanel clears the currently viewed session,
+  // triggering ImChatView to re-fetch messages (which will now be empty).
+  const [imChatClearKey, setImChatClearKey] = useState(0)
+
+  const handleSessionCleared = useCallback((clearedSession: ImSessionRecord) => {
+    // If the cleared session is the one currently being viewed, trigger reload
+    if (
+      selectedImSession &&
+      selectedImSession.channel === clearedSession.channel &&
+      selectedImSession.chatId === clearedSession.chatId
+    ) {
+      setImChatClearKey(prev => prev + 1)
+    }
+  }, [selectedImSession])
 
   return (
     <div className="flex h-full">
@@ -73,6 +90,7 @@ export function AppChatContainer({ appId, spaceId }: AppChatContainerProps) {
               appId={appId}
               spaceId={spaceId}
               session={selectedImSession}
+              clearKey={imChatClearKey}
             />
           ) : (
             <AppChatView appId={appId} spaceId={spaceId} />
@@ -86,7 +104,11 @@ export function AppChatContainer({ appId, spaceId }: AppChatContainerProps) {
           fixed inset-0 z-50 bg-background
           sm:relative sm:inset-auto sm:z-auto sm:w-64 sm:border-l sm:border-border
         ">
-          <ImSessionPanel appId={appId} />
+          <ImSessionPanel
+            appId={appId}
+            spaceId={spaceId}
+            onSessionCleared={handleSessionCleared}
+          />
         </div>
       )}
     </div>

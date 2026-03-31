@@ -4,9 +4,12 @@
  * Renders a single IM session entry in the session panel list.
  * Shows session name, channel badge, chat type icon, last message preview,
  * relative time, and an active indicator when the session is generating.
+ *
+ * Supports an optional onClear callback to trigger session clearing
+ * from a hover-revealed clear button.
  */
 
-import { User, Users } from 'lucide-react'
+import { Trash2, User, Users } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chat.store'
 import type { ImSessionRecord } from '../../../shared/types/im-channel'
@@ -15,6 +18,8 @@ interface ImSessionItemProps {
   session: ImSessionRecord
   isSelected: boolean
   onClick: () => void
+  /** Called when the user clicks the clear button on this session */
+  onClear?: (session: ImSessionRecord) => void
 }
 
 /** Channel identifier → display label */
@@ -36,7 +41,7 @@ function formatRelativeTime(epochMs: number): string {
   return `${days}d`
 }
 
-export function ImSessionItem({ session, isSelected, onClick }: ImSessionItemProps) {
+export function ImSessionItem({ session, isSelected, onClick, onClear }: ImSessionItemProps) {
   const { t } = useTranslation()
 
   // Build conversationId to check streaming state
@@ -51,7 +56,7 @@ export function ImSessionItem({ session, isSelected, onClick }: ImSessionItemPro
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-3 py-2.5 transition-colors ${
+      className={`group w-full text-left px-3 py-2.5 transition-colors ${
         isSelected
           ? 'bg-secondary text-foreground'
           : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
@@ -83,10 +88,24 @@ export function ImSessionItem({ session, isSelected, onClick }: ImSessionItemPro
           )}
         </div>
 
-        {/* Time */}
-        <span className="text-[10px] text-muted-foreground/50 flex-shrink-0 self-start mt-0.5">
-          {formatRelativeTime(session.lastActiveAt)}
-        </span>
+        {/* Time + Clear button */}
+        <div className="flex flex-col items-end gap-1 flex-shrink-0 self-start mt-0.5">
+          <span className="text-[10px] text-muted-foreground/50">
+            {formatRelativeTime(session.lastActiveAt)}
+          </span>
+          {onClear && !isGenerating && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onClear(session)
+              }}
+              className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-secondary transition-all"
+              title={t('Clear session')}
+            >
+              <Trash2 className="w-3 h-3 text-muted-foreground/60 hover:text-destructive" />
+            </button>
+          )}
+        </div>
       </div>
     </button>
   )

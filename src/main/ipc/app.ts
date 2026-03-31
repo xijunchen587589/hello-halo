@@ -47,6 +47,7 @@ import {
   getAppChatSessionState,
   getAppChatConversationId,
   clearAppChat,
+  clearImSession,
 } from '../apps/runtime'
 import type { AppSpec } from '../apps/spec'
 import type { AppListFilter, UninstallOptions } from '../apps/manager'
@@ -622,7 +623,7 @@ export function registerAppHandlers(): void {
     'app:chat-clear',
     async (_event, input: { appId: string; spaceId: string }) => {
       try {
-        clearAppChat(input.appId, input.spaceId)
+        await clearAppChat(input.appId, input.spaceId)
         console.log(`[AppIPC] app:chat-clear: appId=${input.appId}`)
         return { success: true }
       } catch (error: unknown) {
@@ -647,6 +648,22 @@ export function registerAppHandlers(): void {
       } catch (error: unknown) {
         const err = error as Error
         console.error('[AppIPC] app:im-chat-messages error:', err.message)
+        return { success: false, error: err.message }
+      }
+    }
+  )
+
+  // ── app:im-chat-clear ────────────────────────────────────────────────
+  ipcMain.handle(
+    'app:im-chat-clear',
+    async (_event, input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => {
+      try {
+        await clearImSession(input.appId, input.spaceId, input.channel, input.chatType, input.chatId)
+        console.log(`[AppIPC] app:im-chat-clear: appId=${input.appId} channel=${input.channel} chatId=${input.chatId}`)
+        return { success: true }
+      } catch (error: unknown) {
+        const err = error as Error
+        console.error('[AppIPC] app:im-chat-clear error:', err.message)
         return { success: false, error: err.message }
       }
     }

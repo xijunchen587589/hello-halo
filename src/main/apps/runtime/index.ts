@@ -96,6 +96,7 @@ export {
   buildImSessionKey,
   cleanupAppChatBrowserContext,
   clearAppChat,
+  clearImSession,
 } from './app-chat'
 export type { AppChatRequest } from './app-chat'
 

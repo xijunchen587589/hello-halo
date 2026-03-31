@@ -1718,6 +1718,13 @@ export const api = {
     return httpRequest('GET', `/api/apps/${appId}/im-chat/messages?spaceId=${spaceId}&channel=${encodeURIComponent(channel)}&chatType=${chatType}&chatId=${encodeURIComponent(chatId)}`)
   },
 
+  appImChatClear: async (appId: string, spaceId: string, channel: string, chatType: 'direct' | 'group', chatId: string): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.appImChatClear({ appId, spaceId, channel, chatType, chatId })
+    }
+    return httpRequest('POST', `/api/apps/${appId}/im-chat/clear`, { spaceId, channel, chatType, chatId })
+  },
+
   // App Event Listeners
   onAppStatusChanged: (callback: (data: unknown) => void) =>
     onEvent('app:status_changed', callback),

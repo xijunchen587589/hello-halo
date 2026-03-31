@@ -138,7 +138,37 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
 
   // Only keep track of the LAST text block as the final reply
   // Intermediate text blocks are shown in thought process, not accumulated into message bubble
+  //
+  // TODO: lastTextContent can be corrupted by dual-path state interference.
+  //   The for-await loop processes both stream_events (token-level SSE) and SDK messages
+  //   (complete assistant/result messages). Both paths write to lastTextContent and share
+  //   the hadSubstantiveToolSinceLastText flag. When parseSDKMessage (message-utils.ts)
+  //   skips tool_use blocks for assistant messages, the SDK message path's text handler
+  //   resets hadSubstantiveToolSinceLastText without the corresponding tool_use ever
+  //   setting it — corrupting the stream_event path's merge/overwrite logic.
+  //
+  //   Current impact: IM channels (app-chat.ts) now bypass this by extracting text
+  //   directly from raw SDK messages (same principle as JSONL → AppChatView path).
+  //   Halo UI uses frontend delta accumulation (unaffected).
+  //   The main chat path (send-message.ts) persists finalContent via updateLastMessage —
+  //   investigate whether this path is also affected under certain provider/adapter configs.
+  //
+  //   Root fix options:
+  //   - Skip SDK message path writes to shared state when stream_events are active
+  //   - Make parseSDKMessage return tool_use thoughts for assistant messages
+  //   - Separate state tracking per path
   let lastTextContent = ''
+
+  // Authoritative final content locked at the SDK result thought.
+  // Set exactly once when the result message arrives. Unlike lastTextContent, this variable
+  // is never touched after the result thought, so subsequent stream_events (e.g. a trailing
+  // content_block_stop that re-fires after the result) cannot corrupt it.
+  //
+  // Note: this only protects against POST-result corruption. If lastTextContent is already
+  // wrong at result time (due to the dual-path issue above), lockedFinalContent locks a bad value.
+  // IM channels have a separate fix (see app-chat.ts lastAssistantText).
+  let lockedFinalContent = ''
+
   let capturedSessionId: string | undefined
 
   // Token usage tracking
@@ -594,6 +624,10 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
         } else if (thought.type === 'result') {
           // Final result - use the last text block as the final reply
           const finalContent = lastTextContent || thought.content
+          // Lock the final content now. lastTextContent is correct at this moment, but the stream
+          // loop may continue after the result thought and overwrite it with trailing events.
+          // lockedFinalContent captures the value here and is never written again.
+          lockedFinalContent = finalContent
           emitAgentEvent('agent:message', spaceId, conversationId, {
             type: 'message',
             content: finalContent,
@@ -710,8 +744,10 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
   // | 6    | no         | -             | -               | yes        | -               | no               |
   // | 7    | no         | no            | no              | no         | yes             | max turns notice |
 
-  // Merge content: prefer lastTextContent (confirmed), fallback to currentStreamingText (accumulated)
-  const finalContent = lastTextContent || currentStreamingText || ''
+  // Prefer lockedFinalContent (captured at result thought, immune to post-result stream mutations).
+  // Fall back to lastTextContent for interrupted streams that never reach a result thought,
+  // then to currentStreamingText for streams that ended mid-block without a text_block_stop.
+  const finalContent = lockedFinalContent || lastTextContent || currentStreamingText || ''
   const wasAborted = abortController.signal.aborted
   const hasErrorThought = sessionState.thoughts.some((t: Thought) => t.type === 'error')
   // Two independent interrupt reasons: SDK reported error_during_execution, or stream ended unexpectedly
@@ -724,7 +760,11 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
 
   // Log content source for debugging
   if (finalContent) {
-    const contentSource = lastTextContent ? 'lastTextContent' : 'currentStreamingText (fallback)'
+    const contentSource = lockedFinalContent
+      ? 'lockedFinalContent'
+      : lastTextContent
+        ? 'lastTextContent'
+        : 'currentStreamingText (fallback)'
     console.log(`[Agent][${conversationId}] Stream content from ${contentSource}: ${finalContent.length} chars`)
   } else {
     console.log(`[Agent][${conversationId}] No content from stream`)

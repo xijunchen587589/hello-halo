@@ -9,8 +9,8 @@
  * Reuses the same atomic chat components as AppChatView for consistency.
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { Loader2, AlertCircle, Radio } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { Loader2, AlertCircle, Radio, Trash2 } from 'lucide-react'
 import { api } from '../../api'
 import { useChatStore } from '../../stores/chat.store'
 import { MessageItem } from '../chat/MessageItem'
@@ -28,6 +28,8 @@ interface ImChatViewProps {
   appId: string
   spaceId: string
   session: ImSessionRecord
+  /** Incrementing key to trigger message reload after external clear (e.g., from ImSessionPanel) */
+  clearKey?: number
 }
 
 /** Channel labels for the info bar */
@@ -39,7 +41,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 
 type LoadState = 'loading' | 'loaded' | 'error' | 'empty'
 
-export function ImChatView({ appId, spaceId, session }: ImChatViewProps) {
+export function ImChatView({ appId, spaceId, session, clearKey }: ImChatViewProps) {
   const { t } = useTranslation()
 
   // Build conversationId matching backend's buildImSessionKey()
@@ -101,7 +103,7 @@ export function ImChatView({ appId, spaceId, session }: ImChatViewProps) {
     }
     load()
     return () => { cancelled = true }
-  }, [appId, spaceId, session.channel, session.chatType, session.chatId])
+  }, [appId, spaceId, session.channel, session.chatType, session.chatId, clearKey])
 
   // Reload when generation completes
   const prevIsGeneratingRef = useRef(isGenerating)
@@ -127,6 +129,25 @@ export function ImChatView({ appId, spaceId, session }: ImChatViewProps) {
     }
   }, [streamingContent, thoughts.length, isStreaming, isThinking])
 
+  // ── Clear session (with confirmation) ──
+  const resetSession = useChatStore(s => s.resetSession)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+
+  const handleClearSession = useCallback(async () => {
+    try {
+      const res = await api.appImChatClear(appId, spaceId, session.channel, session.chatType, session.chatId)
+      if (res.success) {
+        setMessages([])
+        setLoadState('empty')
+        resetSession(conversationId)
+      }
+    } catch (err) {
+      console.error('[ImChatView] Clear session error:', err)
+    } finally {
+      setShowClearConfirm(false)
+    }
+  }, [appId, spaceId, session.channel, session.chatType, session.chatId, conversationId, resetSession])
+
   const displayName = session.customName || session.displayName || session.chatId
   const channelLabel = CHANNEL_LABELS[session.channel] ?? session.channel
   const chatTypeLabel = session.chatType === 'group' ? t('Group') : t('Direct')
@@ -136,7 +157,7 @@ export function ImChatView({ appId, spaceId, session }: ImChatViewProps) {
   if (loadState === 'loading') {
     return (
       <div className="flex flex-col h-full">
-        <ImChatInfoBar name={displayName} channel={channelLabel} chatType={chatTypeLabel} isGenerating={false} t={t} />
+        <ImChatInfoBar name={displayName} channel={channelLabel} chatType={chatTypeLabel} isGenerating={false} hasMessages={false} showClearConfirm={false} onClearClick={() => {}} onClearConfirm={() => {}} onClearCancel={() => {}} t={t} />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -151,7 +172,7 @@ export function ImChatView({ appId, spaceId, session }: ImChatViewProps) {
   if (loadState === 'error') {
     return (
       <div className="flex flex-col h-full">
-        <ImChatInfoBar name={displayName} channel={channelLabel} chatType={chatTypeLabel} isGenerating={false} t={t} />
+        <ImChatInfoBar name={displayName} channel={channelLabel} chatType={chatTypeLabel} isGenerating={false} hasMessages={false} showClearConfirm={false} onClearClick={() => {}} onClearConfirm={() => {}} onClearCancel={() => {}} t={t} />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
             <AlertCircle className="w-5 h-5 text-destructive" />
@@ -164,7 +185,18 @@ export function ImChatView({ appId, spaceId, session }: ImChatViewProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <ImChatInfoBar name={displayName} channel={channelLabel} chatType={chatTypeLabel} isGenerating={isGenerating} t={t} />
+      <ImChatInfoBar
+        name={displayName}
+        channel={channelLabel}
+        chatType={chatTypeLabel}
+        isGenerating={isGenerating}
+        hasMessages={messages.length > 0}
+        showClearConfirm={showClearConfirm}
+        onClearClick={() => setShowClearConfirm(true)}
+        onClearConfirm={handleClearSession}
+        onClearCancel={() => setShowClearConfirm(false)}
+        t={t}
+      />
 
       {/* Message area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -268,10 +300,15 @@ interface ImChatInfoBarProps {
   channel: string
   chatType: string
   isGenerating: boolean
+  hasMessages: boolean
+  showClearConfirm: boolean
+  onClearClick: () => void
+  onClearConfirm: () => void
+  onClearCancel: () => void
   t: (key: string) => string
 }
 
-function ImChatInfoBar({ name, channel, chatType, isGenerating, t }: ImChatInfoBarProps) {
+function ImChatInfoBar({ name, channel, chatType, isGenerating, hasMessages, showClearConfirm, onClearClick, onClearConfirm, onClearCancel, t }: ImChatInfoBarProps) {
   return (
     <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/30 flex-shrink-0">
       <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -282,7 +319,36 @@ function ImChatInfoBar({ name, channel, chatType, isGenerating, t }: ImChatInfoB
       </div>
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         {isGenerating && <Radio className="w-3 h-3 text-primary animate-pulse" />}
-        <span>{t('Read-only · Interact via IM channel')}</span>
+        {showClearConfirm ? (
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground/80">{t('Clear?')}</span>
+            <button
+              onClick={onClearConfirm}
+              className="px-1.5 py-0.5 text-destructive hover:bg-destructive/10 rounded transition-colors"
+            >
+              {t('Confirm')}
+            </button>
+            <button
+              onClick={onClearCancel}
+              className="px-1.5 py-0.5 text-muted-foreground hover:bg-secondary rounded transition-colors"
+            >
+              {t('Cancel')}
+            </button>
+          </div>
+        ) : (
+          <>
+            {hasMessages && !isGenerating && (
+              <button
+                onClick={onClearClick}
+                className="p-1 rounded hover:bg-secondary transition-colors"
+                title={t('Clear session')}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-muted-foreground/60 hover:text-muted-foreground" />
+              </button>
+            )}
+            <span>{t('Read-only · Interact via IM channel')}</span>
+          </>
+        )}
       </div>
     </div>
   )

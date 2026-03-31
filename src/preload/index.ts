@@ -390,6 +390,7 @@ export interface HaloAPI {
   appChatSessionState: (appId: string) => Promise<IpcResponse>
   appChatClear: (input: { appId: string; spaceId: string }) => Promise<IpcResponse>
   appImChatMessages: (input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => Promise<IpcResponse>
+  appImChatClear: (input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => Promise<IpcResponse>
 
   // App Event Listeners
   onAppStatusChanged: (callback: (data: unknown) => void) => () => void
@@ -735,6 +736,7 @@ const api: HaloAPI = {
   appChatSessionState: (appId) => ipcRenderer.invoke('app:chat-session-state', appId),
   appChatClear: (input) => ipcRenderer.invoke('app:chat-clear', input),
   appImChatMessages: (input) => ipcRenderer.invoke('app:im-chat-messages', input),
+  appImChatClear: (input) => ipcRenderer.invoke('app:im-chat-clear', input),
 
   // App Event Listeners
   onAppStatusChanged: (callback) => createEventListener('app:status_changed', callback),

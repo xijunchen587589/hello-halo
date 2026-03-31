@@ -33,7 +33,7 @@ import {
 import { getTempSpacePath, getSpacesDir, getConfig as getServiceConfig } from '../../services/config.service'
 import { getSpace, getAllSpacePaths } from '../../services/space.service'
 import { getAppManager } from '../../apps/manager'
-import { getAppRuntime, getWecomBotSource, sendAppChatMessage, stopAppChat, isAppChatGenerating, loadAppChatMessages, loadImChatMessages, getAppChatSessionState, getAppChatConversationId } from '../../apps/runtime'
+import { getAppRuntime, getWecomBotSource, sendAppChatMessage, stopAppChat, isAppChatGenerating, loadAppChatMessages, loadImChatMessages, getAppChatSessionState, getAppChatConversationId, clearAppChat, clearImSession } from '../../apps/runtime'
 import type { AppListFilter, UninstallOptions, InstalledApp } from '../../apps/manager'
 import type { ActivityQueryOptions, EscalationResponse, AppChatRequest } from '../../apps/runtime'
 import { readSessionMessages } from '../../apps/runtime/session-store'
@@ -1601,6 +1601,51 @@ export function registerApiRoutes(app: Express): void {
       }
       const messages = loadImChatMessages(space.path, appId, channel, chatType, chatId)
       res.json({ success: true, data: messages })
+    } catch (error) {
+      res.json({ success: false, error: (error as Error).message })
+    }
+  })
+
+  // POST /api/apps/:appId/chat/clear — clear native Halo chat session
+  app.post('/api/apps/:appId/chat/clear', async (req: Request, res: Response) => {
+    try {
+      const { appId } = req.params
+      if (!appId) {
+        res.status(400).json({ success: false, error: 'Missing appId' })
+        return
+      }
+      const { spaceId } = req.body as { spaceId?: string }
+      if (!spaceId) {
+        res.status(400).json({ success: false, error: 'Missing spaceId in body' })
+        return
+      }
+      await clearAppChat(appId, spaceId)
+      console.log('[HTTP] POST /api/apps/%s/chat/clear', appId)
+      res.json({ success: true })
+    } catch (error) {
+      res.json({ success: false, error: (error as Error).message })
+    }
+  })
+
+  // POST /api/apps/:appId/im-chat/clear — clear an IM session
+  app.post('/api/apps/:appId/im-chat/clear', async (req: Request, res: Response) => {
+    try {
+      const { appId } = req.params
+      if (!appId) {
+        res.status(400).json({ success: false, error: 'Missing appId' })
+        return
+      }
+      const { spaceId, channel, chatType, chatId } = req.body as {
+        spaceId?: string; channel?: string; chatType?: string; chatId?: string
+      }
+      if (!spaceId || !channel || !chatType || !chatId) {
+        res.status(400).json({ success: false, error: 'Missing required body params: spaceId, channel, chatType, chatId' })
+        return
+      }
+      const resolvedChatType = chatType === 'group' ? 'group' as const : 'direct' as const
+      await clearImSession(appId, spaceId, channel, resolvedChatType, chatId)
+      console.log('[HTTP] POST /api/apps/%s/im-chat/clear channel=%s chatId=%s', appId, channel, chatId)
+      res.json({ success: true })
     } catch (error) {
       res.json({ success: false, error: (error as Error).message })
     }

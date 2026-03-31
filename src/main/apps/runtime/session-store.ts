@@ -13,7 +13,7 @@
  * existing MessageItem component renders them identically to main-chat messages.
  */
 
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 // ============================================
@@ -350,6 +350,86 @@ function buildThoughtsSummary(thoughts: ThoughtRecord[]): ThoughtsSummaryRecord 
     count: thoughts.length,
     types,
   }
+}
+
+// ============================================
+// Chat Session ID Persistence
+// ============================================
+
+/**
+ * Persists Claude SDK session IDs for app-chat conversations.
+ *
+ * When a V2 session is rebuilt (idle timeout, process crash, config change),
+ * the saved sessionId allows the SDK to restore conversation history from
+ * its on-disk session file — same mechanism as the main conversation
+ * (conversation.service.saveSessionId).
+ *
+ * Storage: {spacePath}/.halo/apps/{appId}/runs/_session-ids.json
+ * Format: { [runId]: sessionId }
+ */
+
+/** Path to the session-id map file for an app */
+function getSessionIdMapPath(spacePath: string, appId: string): string {
+  return join(getRunsDir(spacePath, appId), '_session-ids.json')
+}
+
+/** Read the full session-id map. Returns empty object on missing/corrupt file. */
+function readSessionIdMap(spacePath: string, appId: string): Record<string, string> {
+  const filePath = getSessionIdMapPath(spacePath, appId)
+  try {
+    const raw = readFileSync(filePath, 'utf8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>
+    }
+  } catch {
+    // File missing or corrupt — start fresh
+  }
+  return {}
+}
+
+/** Write the full session-id map to disk. */
+function writeSessionIdMap(spacePath: string, appId: string, map: Record<string, string>): void {
+  const dir = getRunsDir(spacePath, appId)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  const filePath = getSessionIdMapPath(spacePath, appId)
+  try {
+    writeFileSync(filePath, JSON.stringify(map), 'utf8')
+  } catch (err) {
+    console.error(`[SessionStore] Failed to write session-id map:`, err)
+  }
+}
+
+/**
+ * Save a Claude SDK sessionId for a chat session.
+ * Called after stream completion to enable session resume on V2 rebuild.
+ */
+export function saveChatSessionId(spacePath: string, appId: string, runId: string, sessionId: string): void {
+  const map = readSessionIdMap(spacePath, appId)
+  map[runId] = sessionId
+  writeSessionIdMap(spacePath, appId, map)
+}
+
+/**
+ * Load a previously saved Claude SDK sessionId.
+ * Returns undefined if no sessionId is saved for this chat session.
+ */
+export function loadChatSessionId(spacePath: string, appId: string, runId: string): string | undefined {
+  const map = readSessionIdMap(spacePath, appId)
+  return map[runId]
+}
+
+/**
+ * Delete a saved sessionId for a chat session.
+ * Called when clearing chat history to ensure a truly fresh start.
+ */
+export function deleteChatSessionId(spacePath: string, appId: string, runId: string): void {
+  const map = readSessionIdMap(spacePath, appId)
+  if (!(runId in map)) return
+  delete map[runId]
+  writeSessionIdMap(spacePath, appId, map)
 }
 
 // ============================================

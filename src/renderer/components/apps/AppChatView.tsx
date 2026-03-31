@@ -149,7 +149,9 @@ export function AppChatView({ appId, spaceId }: AppChatViewProps) {
     }
   }, [streamingContent, thoughts.length, isStreaming, isThinking, pendingQuestion])
 
-  // ── Clear chat ──
+  // ── Clear chat (with confirmation) ──
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+
   const handleClearChat = useCallback(async () => {
     try {
       const res = await api.appChatClear(appId, spaceId)
@@ -161,6 +163,8 @@ export function AppChatView({ appId, spaceId }: AppChatViewProps) {
       }
     } catch (err) {
       console.error('[AppChatView] Clear chat error:', err)
+    } finally {
+      setShowClearConfirm(false)
     }
   }, [appId, spaceId, conversationId, resetSession])
 
@@ -388,15 +392,35 @@ export function AppChatView({ appId, spaceId }: AppChatViewProps) {
       {/* Clear chat + Input area */}
       <div className="shrink-0 p-4">
         {messages.length > 0 && !isGenerating && (
-          <div className="flex justify-end mb-2">
-            <button
-              onClick={handleClearChat}
-              className="flex items-center gap-1 px-2 py-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors rounded"
-              title={t('Clear chat history')}
-            >
-              <Trash2 className="w-3 h-3" />
-              {t('Clear chat')}
-            </button>
+          <div className="mb-2">
+            {showClearConfirm ? (
+              <div className="flex items-center justify-end gap-2">
+                <span className="text-[11px] text-muted-foreground/80">{t('Clear all chat history?')}</span>
+                <button
+                  onClick={handleClearChat}
+                  className="px-2 py-0.5 text-[11px] text-destructive hover:bg-destructive/10 rounded transition-colors"
+                >
+                  {t('Confirm')}
+                </button>
+                <button
+                  onClick={() => setShowClearConfirm(false)}
+                  className="px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-secondary rounded transition-colors"
+                >
+                  {t('Cancel')}
+                </button>
+              </div>
+            ) : (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setShowClearConfirm(true)}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors rounded"
+                  title={t('Clear chat history')}
+                >
+                  <Trash2 className="w-3 h-3" />
+                  {t('Clear chat')}
+                </button>
+              </div>
+            )}
           </div>
         )}
         <InputArea
