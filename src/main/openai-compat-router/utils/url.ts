@@ -24,7 +24,7 @@ export function extractBaseUrl(endpointUrl: string): string {
  * @returns Normalized URL ready for use
  */
 export function normalizeApiUrl(apiUrl: string, provider: 'anthropic' | 'openai'): string {
-  const trimSlash = (s: string) => s.replace(/\/+$/, '')
+  const trimSlash = (s: string) => s.replace(/\s/g, '').replace(/\/+$/, '')
   let normalized = trimSlash(apiUrl)
 
   if (provider === 'anthropic') {
