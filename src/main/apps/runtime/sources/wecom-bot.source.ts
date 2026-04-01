@@ -437,14 +437,24 @@ export class WecomBotSource implements EventSourceAdapter, ImChannelAdapter {
       timestamp: Date.now(),
     }
 
-    // ── Construct ReplyHandle (wraps replyToChat with Promise interface) ──
+    // ── Construct ReplyHandle (wraps replyToChat with TTL-aware fallback) ──
+    // Normalize chatType once for the closure (body.chattype is 'single' | 'group')
+    const chatTypeNorm: 'direct' | 'group' = chatType === 'group' ? 'group' : 'direct'
     const reply: ReplyHandle = {
       channel: 'wecom-bot',
       chatId,
+      replyTtlMs: REQ_ID_TTL_MS,
       send: async (replyText: string): Promise<void> => {
-        const sent = this.replyToChat(chatId, replyText)
-        if (!sent) {
-          throw new Error(`Failed to send reply to chat ${chatId}`)
+        // Prefer synchronous reply (aibot_respond_msg, same req_id) — faster delivery.
+        const replied = this.replyToChat(chatId, replyText)
+        if (replied) return
+
+        // req_id expired or WebSocket unavailable — fall back to proactive push.
+        // aibot_send_msg has no TTL constraint and can be sent at any time.
+        console.log(`[WecomBotSource] req_id expired for chat ${chatId}, falling back to pushToChat`)
+        const pushed = this.pushToChat(chatId, replyText, chatTypeNorm)
+        if (!pushed) {
+          throw new Error(`[WecomBotSource] Both replyToChat and pushToChat failed for chat ${chatId}`)
         }
       },
     }

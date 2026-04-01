@@ -1101,7 +1101,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         console.log(`[ChatStore] Conversation reloaded from backend [${conversationId}]`)
       } else {
         // Conversation not found in backend (e.g. virtual conversationIds like "app-chat:*")
-        // Still must clear generating state to unblock UI
+        // Still must clear generating state to unblock UI.
+        // IMPORTANT: also clear thoughts and isThinking here — for IM sessions there is no
+        // sendMessage call to reset these between turns, so stale thoughts from a previous
+        // turn would otherwise accumulate and show up in the next turn's ThoughtProcess.
         set((state) => {
           const newSessions = new Map(state.sessions)
           const currentSession = newSessions.get(conversationId)
@@ -1109,9 +1112,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             newSessions.set(conversationId, {
               ...currentSession,
               isGenerating: false,
+              isThinking: false,
               streamingContent: '',
+              thoughts: [],
               compactInfo: null,
               pendingQuestion: null,
+              error: currentSession.errorType === 'interrupted' ? currentSession.error : null,
+              errorType: currentSession.errorType === 'interrupted' ? currentSession.errorType : null,
             })
           }
           return { sessions: newSessions }
@@ -1128,7 +1135,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           newSessions.set(conversationId, {
             ...currentSession,
             isGenerating: false,
+            isThinking: false,
             streamingContent: '',
+            thoughts: [],
             compactInfo: null,  // Clear temporary compact notification
             pendingQuestion: null  // Clear pending question
           })

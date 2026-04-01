@@ -150,6 +150,30 @@ export abstract class BaseStreamHandler {
     // Close any open block
     this.closeCurrentBlock()
 
+    // Some models return end_turn without emitting any text or thinking block.
+    // The downstream SDK (isResultSuccessful) requires the last content block to
+    // be 'text', 'thinking', or 'redacted_thinking' — otherwise the response is
+    // treated as an execution error. Inject an empty text block to satisfy this
+    // contract when the model itself did not produce one.
+    //
+    // Conditions (all must hold):
+    //   - stop_reason is end_turn (finish_reason: stop)
+    //   - no text block was emitted
+    //   - no thinking block was emitted (thinking is also a valid terminal type,
+    //     and reusing its block index would produce a duplicate index on the wire)
+    //   - message_start was sent (model actually responded)
+    if (
+      this.state.stopReason === 'end_turn' &&
+      !this.state.hasTextBlock &&
+      !this.state.hasThinkingBlock &&
+      this.state.started
+    ) {
+      const idx = this.state.contentBlockIndex
+      this.writer.writeTextBlockStart(idx)
+      this.writer.writeBlockStop(idx)
+      console.log(`[StreamHandler] Injected empty text block at index ${idx} (model=${this.state.model}, end_turn with no text content)`)
+    }
+
     // Write message_delta
     this.writer.writeMessageDelta(this.state.stopReason || 'end_turn', {
       inputTokens: this.state.usage.inputTokens,

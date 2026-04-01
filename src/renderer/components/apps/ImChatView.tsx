@@ -105,10 +105,14 @@ export function ImChatView({ appId, spaceId, session, clearKey }: ImChatViewProp
     return () => { cancelled = true }
   }, [appId, spaceId, session.channel, session.chatType, session.chatId, clearKey])
 
-  // Reload when generation completes
+  // Reload messages when generation starts (to show the incoming user IM message before
+  // thinking begins) and when generation completes (to show the assistant response).
   const prevIsGeneratingRef = useRef(isGenerating)
   useEffect(() => {
-    if (prevIsGeneratingRef.current && !isGenerating) {
+    const wasGenerating = prevIsGeneratingRef.current
+    prevIsGeneratingRef.current = isGenerating
+
+    if (wasGenerating !== isGenerating) {
       api.appImChatMessages(appId, spaceId, session.channel, session.chatType, session.chatId)
         .then(res => {
           if (res.success && res.data) {
@@ -119,7 +123,6 @@ export function ImChatView({ appId, spaceId, session, clearKey }: ImChatViewProp
         })
         .catch(err => console.error('[ImChatView] Reload error:', err))
     }
-    prevIsGeneratingRef.current = isGenerating
   }, [isGenerating, appId, spaceId, session.channel, session.chatType, session.chatId])
 
   // Auto-scroll during streaming
