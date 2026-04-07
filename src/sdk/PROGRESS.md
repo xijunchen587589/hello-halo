@@ -15,12 +15,10 @@ tsc --noEmit passes. Core architecture (types, LLM providers, tools, query loop,
 ### What's Missing / Stub
 - **WebSearchTool** — stub, returns placeholder message.
 - **TeamCreateTool** — stub when no agent runner registered.
-- **Hook system** — defined in config but never invoked in query loop.
 - **Effort level** — accepted in config but not mapped to provider request.
 - **Query control methods** — setModel/setMaxThinkingTokens/setPermissionMode are no-ops.
 
 ### Known Issues (not yet fixed)
-- microCompact skips array-typed tool_result content (only handles string)
 - Anthropic listModels() is hardcoded (3 models, no API call)
 - OpenAI-compat listModels() hardcodes contextWindow/maxOutputTokens for all models
 - TaskStopTool only updates metadata, doesn't actually kill processes
@@ -48,9 +46,32 @@ tsc --noEmit passes. Core architecture (types, LLM providers, tools, query loop,
 - **TodoWrite** — fixed schema mismatch (`id` → `activeForm`), tool was completely broken before.
 - **Exports** — `initOrchestrator`, `AgentRegistry`, `createSpawner`, `setSpawner`, `setMessageRouter` all public.
 
+### What Works (added Run 5)
+- **Hook system** — `core/hooks.ts` module with full PreToolUse/PostToolUse/PostToolUseFailure lifecycle. Hooks fire in the query loop around every tool execution, with tool-name matching, timeout enforcement, and sequential execution.
+- **PreToolUse hooks** — can deny tool execution, modify input, or add context. Fired before `canUseTool` permission check.
+- **PostToolUse hooks** — can append additional context to tool results. Fired after successful execution.
+- **PostToolUseFailure hooks** — fire on tool execution errors. Advisory only.
+- **microCompact array content** — now handles `string | ContentBlock[]` tool_result content. Previously only counted string content, silently ignoring array-typed content (images, nested blocks).
+- **buildTranscript array content** — full compact transcript builder now extracts text from array-typed tool_result content blocks instead of showing `[complex content]`.
+- **Generic hook runner** — `runEventHooks()` exported for SessionStart/SessionEnd/PreCompact/PostCompact and other lifecycle events.
+
 ---
 
 ## Changelog
+
+### 2026-04-08 — Run 5: Hook system + microCompact fix
+
+**Implemented hook system integration in query loop and fixed array-typed tool_result handling**
+
+Two important improvements: (1) the hook system was defined in config types but never invoked — now PreToolUse/PostToolUse/PostToolUseFailure hooks fire in the query loop around every tool execution, (2) microCompact was silently ignoring tool_result content when it was an array of content blocks (e.g., images, nested text blocks).
+
+**New files:**
+- `core/hooks.ts` — Hook execution engine. Exports `runHooks()` (generic), `runPreToolUseHooks()`, `runPostToolUseHooks()`, `runPostToolUseFailureHooks()`, `runEventHooks()`. Features: tool-name matching (exact + glob trailing `*`), configurable timeout (default 60s), sequential execution (order-preserving), graceful error handling (hooks are advisory — errors logged but don't break tool execution).
+
+**Changes:**
+- `core/query-loop.ts` — tool execution section now calls PreToolUse hooks before `canUseTool`, PostToolUse hooks after success, PostToolUseFailure hooks on error. PreToolUse hooks can: deny execution (returns error to LLM), modify input (merged before execution), add context (prepended to result). PostToolUse hooks can: append additional context to tool results.
+- `core/compact.ts` — `microCompact()` and `totalToolResultChars()` now handle `ContentBlock[]`-typed tool_result content via new `toolResultContentSize()` helper. Counts text blocks, nested tool_results, and base64 data blocks. `buildTranscript()` now extracts text from array-typed tool_result content blocks.
+- `index.ts` — exports `runHooks`, `runPreToolUseHooks`, `runPostToolUseHooks`, `runPostToolUseFailureHooks`, `runEventHooks`, `PreToolUseHookResult`, `PostToolUseHookResult`.
 
 ### 2026-04-08 — Run 4: Orchestrator + TodoWrite fix
 

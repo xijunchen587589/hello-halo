@@ -26,6 +26,11 @@ import type { SystemPromptConfig } from '../prompt/system-prompt.js';
 import { truncateToolResult } from '../utils/truncate.js';
 import { ProviderError, AbortError } from '../utils/errors.js';
 import {
+  runPreToolUseHooks,
+  runPostToolUseHooks,
+  runPostToolUseFailureHooks,
+} from './hooks.js';
+import {
   MAX_TOKENS_RECOVERY_LIMIT,
   MAX_TOKENS_RECOVERY_MSG,
   contextWindowForModel,
@@ -557,7 +562,38 @@ export async function* queryLoop(
         return { toolUseId: toolUse.id, content: errorContent, isError: true };
       }
 
-      // Check canUseTool permission callback
+      // --- PreToolUse hooks ---
+      const preHookResult = await runPreToolUseHooks(
+        config.hooks,
+        toolUse.name,
+        toolUse.input,
+        toolUse.id,
+        sessionId,
+        config.cwd,
+        config.abortSignal,
+      );
+
+      // Hook can deny tool execution
+      if (preHookResult.decision === 'deny') {
+        const reason = preHookResult.decisionReason || 'Denied by PreToolUse hook';
+        const doneMsg: SDKMessage = {
+          type: 'tool_progress',
+          toolName: toolUse.name,
+          toolUseId: toolUse.id,
+          status: 'error',
+          content: reason,
+        };
+        pendingToolProgress.push(doneMsg);
+        options?.onProgress?.(doneMsg);
+        return { toolUseId: toolUse.id, content: reason, isError: true };
+      }
+
+      // Hook can modify tool input
+      if (preHookResult.updatedInput) {
+        Object.assign(toolUse.input, preHookResult.updatedInput);
+      }
+
+      // Check canUseTool permission callback (after hooks, so hooks can modify input first)
       if (config.canUseTool) {
         try {
           const permResult = await config.canUseTool(toolUse.name, toolUse.input, {
@@ -588,6 +624,41 @@ export async function* queryLoop(
       }
 
       const result = await executeTool(tool, toolUse.input, toolCtx, config.toolResultBudget);
+
+      // --- PostToolUse / PostToolUseFailure hooks ---
+      if (result.isError) {
+        await runPostToolUseFailureHooks(
+          config.hooks,
+          toolUse.name,
+          toolUse.input,
+          result.content,
+          toolUse.id,
+          sessionId,
+          config.cwd,
+          config.abortSignal,
+        );
+      } else {
+        const postResult = await runPostToolUseHooks(
+          config.hooks,
+          toolUse.name,
+          toolUse.input,
+          result.content,
+          toolUse.id,
+          sessionId,
+          config.cwd,
+          config.abortSignal,
+        );
+
+        // PostToolUse hooks can append additional context
+        if (postResult.additionalContext) {
+          result.content += `\n\n${postResult.additionalContext}`;
+        }
+      }
+
+      // Prepend additional context from PreToolUse hooks (if any)
+      if (preHookResult.additionalContext) {
+        result.content = `${preHookResult.additionalContext}\n\n${result.content}`;
+      }
 
       const completedMsg: SDKMessage = {
         type: 'tool_progress',

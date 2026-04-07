@@ -90,11 +90,35 @@ export function shouldAutoCompact(
 const TOOL_RESULT_TRUNCATED = '[tool result truncated to save context]';
 
 /**
+ * Estimate the character size of a ToolResultBlock's content.
+ * Handles both string content and array-typed content (ContentBlock[]).
+ */
+function toolResultContentSize(content: ToolResultBlock['content']): number {
+  if (typeof content === 'string') return content.length;
+  if (!Array.isArray(content)) return 0;
+  let size = 0;
+  for (const block of content) {
+    if (block.type === 'text') {
+      size += block.text.length;
+    } else if (block.type === 'tool_result') {
+      // Nested tool_result — recurse
+      size += toolResultContentSize((block as ToolResultBlock).content);
+    } else if (block.type === 'image' || block.type === 'document') {
+      // base64 data blocks — count the data field
+      const src = (block as { source: { data: string } }).source;
+      size += src?.data?.length ?? 0;
+    }
+  }
+  return size;
+}
+
+/**
  * Micro-compact: when cumulative tool-result content exceeds `budget`
  * characters, walk from oldest to newest and replace individual
  * tool_result content with a placeholder until under budget.
  *
  * Mirrors CC `apply_tool_result_budget` from query/src/lib.rs.
+ * Handles both string and array-typed tool_result content.
  */
 export function microCompact(
   messages: Message[],
@@ -116,9 +140,7 @@ export function microCompact(
       if (toShed <= 0) return block;
       if (block.type !== 'tool_result') return block;
       const trBlock = block as ToolResultBlock;
-      const size = typeof trBlock.content === 'string'
-        ? trBlock.content.length
-        : 0;
+      const size = toolResultContentSize(trBlock.content);
       if (size === 0) return block;
 
       truncatedCount++;
@@ -141,10 +163,7 @@ function totalToolResultChars(messages: Message[]): number {
     if (msg.role !== 'user' || typeof msg.content === 'string') continue;
     for (const block of msg.content as ContentBlock[]) {
       if (block.type === 'tool_result') {
-        const trBlock = block as ToolResultBlock;
-        if (typeof trBlock.content === 'string') {
-          total += trBlock.content.length;
-        }
+        total += toolResultContentSize((block as ToolResultBlock).content);
       }
     }
   }
@@ -358,9 +377,21 @@ function buildTranscript(messages: Message[]): string {
             parts.push(`[Tool Call: ${block.name} (id=${block.id})]\nInput: ${JSON.stringify(block.input)}`);
             break;
           case 'tool_result': {
-            const content = typeof block.content === 'string' ? block.content : '[complex content]';
-            const errorFlag = block.is_error ? ' [ERROR]' : '';
-            parts.push(`[Tool Result (id=${block.tool_use_id})${errorFlag}]\n${content}`);
+            const trBlock = block as ToolResultBlock;
+            let content: string;
+            if (typeof trBlock.content === 'string') {
+              content = trBlock.content;
+            } else if (Array.isArray(trBlock.content)) {
+              // Extract text from array-typed content blocks
+              content = trBlock.content
+                .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+                .map((b) => b.text)
+                .join('\n') || '[complex content]';
+            } else {
+              content = '[complex content]';
+            }
+            const errorFlag = trBlock.is_error ? ' [ERROR]' : '';
+            parts.push(`[Tool Result (id=${trBlock.tool_use_id})${errorFlag}]\n${content}`);
             break;
           }
           case 'thinking':

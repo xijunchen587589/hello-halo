@@ -29,6 +29,17 @@ export {
   formatCompactSummary,
   getCompactPrompt,
 } from './core/compact.js';
+export {
+  runHooks,
+  runPreToolUseHooks,
+  runPostToolUseHooks,
+  runPostToolUseFailureHooks,
+  runEventHooks,
+} from './core/hooks.js';
+export type {
+  PreToolUseHookResult,
+  PostToolUseHookResult,
+} from './core/hooks.js';
 
 // ---------------------------------------------------------------------------
 // query() — the primary public API
