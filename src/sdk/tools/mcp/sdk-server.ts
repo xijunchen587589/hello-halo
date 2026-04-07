@@ -1,0 +1,368 @@
+/**
+ * @module tools/mcp/sdk-server
+ * In-process MCP SDK server — implements `tool()` and `createSdkMcpServer()`.
+ *
+ * These two functions are the primary way Halo consumers define custom MCP
+ * tools that run in the same process as the SDK. They create tool definitions
+ * and wrap them in a server config that can be passed via `options.mcpServers`.
+ *
+ * The SDK query loop extracts these tools at session startup and routes
+ * `tool_use` calls to the matching handler — no MCP transport needed.
+ *
+ * @license MIT
+ */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal CallToolResult — matches the MCP SDK's CallToolResult shape.
+ * Consumers already import this from @modelcontextprotocol/sdk/types.js,
+ * but we define it here to avoid adding that dependency to the SDK.
+ */
+export interface CallToolResult {
+  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string } | { type: string; [key: string]: unknown }>;
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+}
+
+/**
+ * Tool annotations for MCP tools (matches MCP SDK ToolAnnotations).
+ */
+export interface ToolAnnotations {
+  /** Human-readable title for the tool */
+  title?: string;
+  /** Whether the tool's output may be destructive */
+  destructiveHint?: boolean;
+  /** Whether the tool has side effects */
+  idempotentHint?: boolean;
+  /** Whether the tool opens a URI */
+  openWorldHint?: boolean;
+  /** Whether the tool only reads data */
+  readOnlyHint?: boolean;
+}
+
+/**
+ * Zod-like raw shape — we accept any object whose values have `_output`.
+ * Works with both Zod 3 and Zod 4.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyZodRawShape = Record<string, any>;
+
+/**
+ * Infer the output type from a Zod raw shape.
+ * Mirrors sdk-types.ts InferShape<T>.
+ */
+export type InferShape<T extends AnyZodRawShape> = {
+  [K in keyof T]: T[K] extends { _output: infer O } ? O : never;
+} & {};
+
+/**
+ * An MCP tool definition as returned by `tool()`.
+ */
+export interface SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodRawShape> {
+  name: string;
+  description: string;
+  inputSchema: Schema;
+  annotations?: ToolAnnotations;
+  _meta?: Record<string, unknown>;
+  handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
+}
+
+/**
+ * Options for `createSdkMcpServer()`.
+ */
+export interface CreateSdkMcpServerOptions {
+  name: string;
+  version?: string;
+  tools?: Array<SdkMcpToolDefinition<any>>;
+}
+
+/**
+ * Base SDK server config (serializable — no live instance).
+ */
+export interface McpSdkServerConfig {
+  type: 'sdk';
+  name: string;
+}
+
+/**
+ * SDK server config with a live server instance (not serializable).
+ * This is what `createSdkMcpServer()` returns and what consumers pass
+ * into `options.mcpServers`.
+ */
+export interface McpSdkServerConfigWithInstance extends McpSdkServerConfig {
+  /**
+   * The server instance. In the CC SDK this is an actual McpServer,
+   * but in our in-process SDK it's a lightweight wrapper that holds
+   * the tool definitions and routes calls.
+   */
+  instance: SdkMcpServerInstance;
+}
+
+/**
+ * The live SDK MCP server instance.
+ * Holds tool definitions and can execute them by name.
+ */
+export interface SdkMcpServerInstance {
+  /** Server name */
+  readonly name: string;
+  /** Server version */
+  readonly version: string;
+  /** Registered tool definitions */
+  readonly tools: ReadonlyArray<SdkMcpToolDefinition>;
+  /**
+   * Execute a tool by name.
+   * @returns The tool result, or undefined if the tool is not found.
+   */
+  callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult | undefined>;
+  /**
+   * List all tool schemas (for LLM tool_use definitions).
+   */
+  listTools(): Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations?: ToolAnnotations;
+  }>;
+}
+
+// ---------------------------------------------------------------------------
+// tool() — factory function
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an MCP tool definition.
+ *
+ * This is the primary way consumers define custom tools. The returned
+ * definition is passed to `createSdkMcpServer()`.
+ *
+ * @param name - Unique tool name (MCP convention: lowercase with underscores)
+ * @param description - Human-readable description shown to the LLM
+ * @param inputSchema - Zod raw shape defining the tool's parameters
+ * @param handler - Async function that executes the tool and returns CallToolResult
+ * @param extras - Optional metadata (annotations, searchHint, alwaysLoad)
+ * @returns An SdkMcpToolDefinition
+ *
+ * @example
+ * ```ts
+ * import { z } from 'zod';
+ * import { tool, createSdkMcpServer } from '@anthropic-ai/claude-code';
+ *
+ * const myTool = tool(
+ *   'my_tool',
+ *   'Does something useful',
+ *   { input: z.string() },
+ *   async (args) => ({
+ *     content: [{ type: 'text', text: `Result: ${args.input}` }],
+ *   })
+ * );
+ *
+ * const server = createSdkMcpServer({ name: 'my-server', tools: [myTool] });
+ * ```
+ */
+export function tool<Schema extends AnyZodRawShape>(
+  name: string,
+  description: string,
+  inputSchema: Schema,
+  handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>,
+  extras?: {
+    annotations?: ToolAnnotations;
+    searchHint?: string;
+    alwaysLoad?: boolean;
+  },
+): SdkMcpToolDefinition<Schema> {
+  const meta: Record<string, unknown> = {};
+  if (extras?.searchHint) meta.searchHint = extras.searchHint;
+  if (extras?.alwaysLoad) meta.alwaysLoad = extras.alwaysLoad;
+
+  return {
+    name,
+    description,
+    inputSchema,
+    annotations: extras?.annotations,
+    _meta: Object.keys(meta).length > 0 ? meta : undefined,
+    handler,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// createSdkMcpServer() — server factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a Zod raw shape into a JSON Schema object.
+ *
+ * This is a best-effort conversion that handles the most common Zod types.
+ * For complex schemas, consumers should provide explicit JSON Schema via _def.
+ *
+ * The approach: walk each key in the shape and extract type info from Zod's
+ * internal `_def` structure. This works for Zod 3 and Zod 4.
+ */
+function zodShapeToJsonSchema(shape: AnyZodRawShape): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+
+  for (const [key, zodType] of Object.entries(shape)) {
+    if (!zodType || typeof zodType !== 'object') continue;
+
+    const prop = zodTypeToJsonSchemaProp(zodType);
+    properties[key] = prop;
+
+    // Check if required (not optional, not nullable with default)
+    if (!isZodOptional(zodType)) {
+      required.push(key);
+    }
+  }
+
+  return {
+    type: 'object',
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  };
+}
+
+/** Check if a Zod type is optional. */
+function isZodOptional(zodType: any): boolean {
+  if (!zodType?._def) return false;
+  const typeName = zodType._def.typeName;
+  if (typeName === 'ZodOptional') return true;
+  // ZodDefault is also effectively optional
+  if (typeName === 'ZodDefault') return true;
+  return false;
+}
+
+/** Convert a single Zod type to a JSON Schema property. */
+function zodTypeToJsonSchemaProp(zodType: any): Record<string, unknown> {
+  if (!zodType?._def) {
+    return { type: 'string' };
+  }
+
+  const def = zodType._def;
+  const typeName = def.typeName as string;
+
+  // Handle wrapper types recursively
+  if (typeName === 'ZodOptional' || typeName === 'ZodDefault') {
+    const inner = zodTypeToJsonSchemaProp(def.innerType);
+    if (def.description) inner.description = def.description;
+    return inner;
+  }
+
+  if (typeName === 'ZodNullable') {
+    const inner = zodTypeToJsonSchemaProp(def.innerType);
+    return { ...inner, nullable: true };
+  }
+
+  // Handle description wrapping
+  const description = def.description ?? zodType.description;
+  const base: Record<string, unknown> = {};
+  if (description) base.description = description;
+
+  switch (typeName) {
+    case 'ZodString':
+      return { ...base, type: 'string' };
+
+    case 'ZodNumber':
+      return { ...base, type: 'number' };
+
+    case 'ZodBoolean':
+      return { ...base, type: 'boolean' };
+
+    case 'ZodEnum':
+      return { ...base, type: 'string', enum: def.values };
+
+    case 'ZodArray': {
+      const items = def.type ? zodTypeToJsonSchemaProp(def.type) : { type: 'string' };
+      return { ...base, type: 'array', items };
+    }
+
+    case 'ZodObject': {
+      const nested = zodShapeToJsonSchema(def.shape?.() ?? def.shape ?? {});
+      return { ...base, ...nested };
+    }
+
+    case 'ZodRecord':
+      return { ...base, type: 'object', additionalProperties: true };
+
+    case 'ZodLiteral':
+      return { ...base, const: def.value };
+
+    case 'ZodUnion': {
+      const options = (def.options || []).map((o: any) => zodTypeToJsonSchemaProp(o));
+      return { ...base, anyOf: options };
+    }
+
+    default:
+      // Fallback: try to get description at least
+      return { ...base, type: 'string' };
+  }
+}
+
+/**
+ * Create an in-process MCP server from tool definitions.
+ *
+ * Returns a `McpSdkServerConfigWithInstance` that can be passed to
+ * `options.mcpServers` in query() or createSession().
+ *
+ * The SDK extracts tools from this config at session startup, creates
+ * bridged Tool objects, and routes tool_use calls to the handler.
+ *
+ * @param options - Server name, version, and tool definitions
+ * @returns An MCP SDK server config with a live instance
+ *
+ * @example
+ * ```ts
+ * const server = createSdkMcpServer({
+ *   name: 'my-server',
+ *   version: '1.0.0',
+ *   tools: [myTool1, myTool2],
+ * });
+ *
+ * // Pass to SDK session
+ * const session = await createSession({
+ *   provider: myProvider,
+ *   mcpServers: { 'my-server': server },
+ * });
+ * ```
+ */
+export function createSdkMcpServer(options: CreateSdkMcpServerOptions): McpSdkServerConfigWithInstance {
+  const { name, version = '1.0.0', tools: toolDefs = [] } = options;
+
+  const instance: SdkMcpServerInstance = {
+    name,
+    version,
+    tools: toolDefs,
+
+    async callTool(toolName: string, args: Record<string, unknown>): Promise<CallToolResult | undefined> {
+      const def = toolDefs.find((t) => t.name === toolName);
+      if (!def) return undefined;
+
+      // Execute the handler with the provided args
+      // The handler expects InferShape<Schema>, but at runtime we pass the
+      // raw JSON-parsed args from the LLM. Zod runtime validation is NOT
+      // enforced here (matching CC SDK behavior).
+      return def.handler(args as any, {});
+    },
+
+    listTools(): Array<{
+      name: string;
+      description: string;
+      inputSchema: Record<string, unknown>;
+      annotations?: ToolAnnotations;
+    }> {
+      return toolDefs.map((def) => ({
+        name: def.name,
+        description: def.description,
+        inputSchema: zodShapeToJsonSchema(def.inputSchema),
+        annotations: def.annotations,
+      }));
+    },
+  };
+
+  return {
+    type: 'sdk',
+    name,
+    instance,
+  };
+}

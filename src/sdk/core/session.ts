@@ -13,6 +13,7 @@ import { resolveQueryConfig } from './context.js';
 import { queryLoop } from './query-loop.js';
 import type { SDKMessage } from './query-loop.js';
 import { getAllTools, filterTools } from '../tools/registry.js';
+import { extractSdkMcpTools } from '../tools/mcp/bridge.js';
 
 // ---------------------------------------------------------------------------
 // SDKSession interface
@@ -86,9 +87,10 @@ export async function createSession(options: Options): Promise<SDKSession> {
   const abortController = options.abortController ?? new AbortController();
 
   // Build tool list:
-  // - If customTools are provided, merge them with built-in tools (custom overrides built-in by name)
-  // - If only built-in tools are specified, use those
-  // - Then apply allowedTools/disallowedTools filtering
+  // 1. Start with built-in tools
+  // 2. Merge customTools (custom overrides built-in by name)
+  // 3. Bridge SDK MCP server tools
+  // 4. Apply allowedTools/disallowedTools filtering
   let tools: Tool[];
   if (options.customTools && options.customTools.length > 0) {
     const customToolNames = new Set(options.customTools.map((t) => t.name));
@@ -97,6 +99,17 @@ export async function createSession(options: Options): Promise<SDKSession> {
   } else {
     tools = getAllTools();
   }
+
+  // Bridge SDK MCP server tools into the tool list
+  const mcpTools = extractSdkMcpTools(
+    options.mcpServers as Record<string, unknown> | undefined,
+  );
+  if (mcpTools.length > 0) {
+    const mcpToolNames = new Set(mcpTools.map((t) => t.name));
+    tools = tools.filter((t) => !mcpToolNames.has(t.name));
+    tools.push(...mcpTools);
+  }
+
   tools = filterTools(tools, {
     allowedTools: config.allowedTools,
     disallowedTools: config.disallowedTools,

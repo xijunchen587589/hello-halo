@@ -41,6 +41,7 @@ import { queryLoop } from './core/query-loop.js';
 import type { SDKMessage } from './core/query-loop.js';
 import { resolveQueryConfig } from './core/context.js';
 import { getAllTools, filterTools } from './tools/registry.js';
+import { extractSdkMcpTools } from './tools/mcp/bridge.js';
 
 /**
  * The Query object — an AsyncGenerator<SDKMessage> with additional
@@ -101,7 +102,7 @@ export function query(params: {
   const abortController = options.abortController ?? new AbortController();
   const configWithSignal = { ...config, abortSignal: abortController.signal };
 
-  // Build tool list
+  // Build tool list (built-in + custom + MCP SDK tools)
   let tools: Tool[];
   if (options.customTools && options.customTools.length > 0) {
     const customToolNames = new Set(options.customTools.map((t) => t.name));
@@ -110,6 +111,17 @@ export function query(params: {
   } else {
     tools = getAllTools();
   }
+
+  // Bridge SDK MCP server tools into the tool list
+  const mcpTools = extractSdkMcpTools(
+    options.mcpServers as Record<string, unknown> | undefined,
+  );
+  if (mcpTools.length > 0) {
+    const mcpToolNames = new Set(mcpTools.map((t) => t.name));
+    tools = tools.filter((t) => !mcpToolNames.has(t.name));
+    tools.push(...mcpTools);
+  }
+
   tools = filterTools(tools, {
     allowedTools: config.allowedTools,
     disallowedTools: config.disallowedTools,
@@ -276,6 +288,21 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { getAllTools, filterTools, findToolByName } from './tools/registry.js';
+
+// MCP SDK server — tool() and createSdkMcpServer()
+export { tool, createSdkMcpServer } from './tools/mcp/sdk-server.js';
+export type {
+  SdkMcpToolDefinition,
+  CallToolResult,
+  ToolAnnotations as McpToolAnnotations,
+  CreateSdkMcpServerOptions,
+  McpSdkServerConfig,
+  McpSdkServerConfigWithInstance,
+  SdkMcpServerInstance,
+  AnyZodRawShape,
+  InferShape,
+} from './tools/mcp/sdk-server.js';
+export { bridgeSdkMcpTools, extractSdkMcpTools, isSdkMcpServerConfig } from './tools/mcp/bridge.js';
 
 // ---------------------------------------------------------------------------
 // Prompt

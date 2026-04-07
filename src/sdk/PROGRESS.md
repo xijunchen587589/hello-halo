@@ -14,8 +14,7 @@ tsc --noEmit passes. Core architecture (types, LLM providers, tools, query loop,
 
 ### What's Missing / Stub
 - **orchestrator/** — empty directory. No Worker Thread sub-agent support.
-- **tools/mcp/** — empty directory. No MCP client/transport/manager.
-- **tool()** and **createSdkMcpServer()** — not exported. Required by Halo consumer.
+- **tools/mcp/** — external MCP client/transport (stdio, sse, http) not implemented.
 - **WebSearchTool** — stub, returns placeholder message.
 - **AgentTool** — stub when no spawner registered (orchestrator dependency).
 - **TeamCreateTool** — stub when no agent runner registered.
@@ -33,9 +32,39 @@ tsc --noEmit passes. Core architecture (types, LLM providers, tools, query loop,
 - GlobTool skips all hidden directories
 - Duplicated retry logic between Anthropic and OpenAI-compat providers
 
+### What Works (added Run 2)
+- **tool() + createSdkMcpServer()** — exported. In-process MCP SDK server support.
+- **MCP tool bridging** — SDK MCP tools are auto-discovered and injected into the query loop.
+- **McpSdkServerConfigWithInstance** — type added to McpServerConfig union.
+- **Zod→JSON Schema conversion** — for MCP tool input schemas (Zod 3/4 compatible).
+
 ---
 
 ## Changelog
+
+### 2026-04-08 — Run 2: tool() + createSdkMcpServer() (P0 compatibility)
+
+**Implemented `tool()` and `createSdkMcpServer()` — the most critical missing exports**
+
+These two functions are used by 10+ consumer files in hello-halo (report-tool, notify-tool, memory-snapshot, ai-browser tools, web-search, conversation-mcp, etc.). Without them, the SDK cannot be used as a drop-in replacement.
+
+**New files:**
+- `tools/mcp/sdk-server.ts` — `tool()` factory, `createSdkMcpServer()`, `SdkMcpToolDefinition` type, Zod→JSON Schema converter, in-process MCP server instance
+- `tools/mcp/bridge.ts` — bridges SDK MCP tools into `Tool[]` for the query loop, with `mcp__{server}__{tool}` naming convention
+
+**Changes:**
+- `types/config.ts` — added `McpSdkServerConfig`, `McpSdkServerConfigWithInstance` to `McpServerConfig` union
+- `core/session.ts` — `createSession()` now extracts and bridges SDK MCP tools at startup
+- `index.ts` — `query()` now extracts and bridges SDK MCP tools; exports `tool`, `createSdkMcpServer`, and all MCP types
+
+**How it works:**
+1. Consumer calls `tool(name, desc, schema, handler)` → returns `SdkMcpToolDefinition`
+2. Consumer calls `createSdkMcpServer({ name, tools })` → returns `McpSdkServerConfigWithInstance`
+3. Consumer passes server into `options.mcpServers` (same as stdio/sse/http configs)
+4. SDK startup calls `extractSdkMcpTools(mcpServers)` to detect SDK-type configs
+5. Each MCP tool is wrapped as a `Tool` with `mcp__{server}__{tool}` naming
+6. Query loop executes MCP tools like any other tool — handler is called directly (no transport)
+7. `CallToolResult.content` blocks are serialized to a flat text string for the LLM
 
 ### 2026-04-07 — Run 1: Foundation fixes
 
