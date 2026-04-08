@@ -21,6 +21,7 @@ import {
 } from '../tools/mcp/connection-manager.js';
 import { initOrchestrator } from '../orchestrator/init.js';
 import type { OrchestratorHandle } from '../orchestrator/init.js';
+import { runEventHooks } from './hooks.js';
 
 // ---------------------------------------------------------------------------
 // SDKSession interface
@@ -220,6 +221,18 @@ export async function createSession(options: Options): Promise<SDKSession> {
     exitListeners: new Set(),
   };
 
+  // Fire SessionStart hook (fire-and-forget; advisory, does not block init)
+  void runEventHooks(
+    configWithSignal.hooks,
+    'SessionStart',
+    {
+      hook_event_name: 'SessionStart',
+      session_id: sessionId,
+      cwd: configWithSignal.cwd,
+    },
+    abortController.signal,
+  ).catch(() => {});
+
   return createSessionProxy(state);
 }
 
@@ -316,7 +329,34 @@ function createSessionProxy(state: SessionState): SDKSession {
       throw new Error('Session is closed');
     }
 
-    const text = typeof message === 'string' ? message : message.content;
+    let text = typeof message === 'string' ? message : message.content;
+
+    // Fire UserPromptSubmit hook — hooks can inject additionalContext
+    if (state.config.hooks?.UserPromptSubmit) {
+      try {
+        const results = await runEventHooks(
+          state.config.hooks,
+          'UserPromptSubmit',
+          {
+            hook_event_name: 'UserPromptSubmit',
+            session_id: state.sessionId,
+            cwd: state.config.cwd,
+            user_message: text,
+          },
+          state.abortController.signal,
+        );
+        const ctx = results
+          .filter((r) => !('hookError' in r) && r.additionalContext)
+          .map((r) => String(r.additionalContext))
+          .join('\n');
+        if (ctx) {
+          text = `${text}\n\n${ctx}`;
+        }
+      } catch {
+        // Advisory — hook errors don't block message delivery
+      }
+    }
+
     state.pendingMessages.push(text);
     // Wake up stream() if it is waiting for a message.
     state.pendingWakeUp?.();
@@ -398,6 +438,18 @@ function createSessionProxy(state: SessionState): SDKSession {
 
   session.close = function close(): void {
     if (!state.closed) {
+      // Fire SessionEnd hook (fire-and-forget with fresh signal — main signal is about to be aborted)
+      void runEventHooks(
+        state.config.hooks,
+        'SessionEnd',
+        {
+          hook_event_name: 'SessionEnd',
+          session_id: state.sessionId,
+          cwd: state.config.cwd,
+        },
+        new AbortController().signal,
+      ).catch(() => {});
+
       state.closed = true;
       state.abortController.abort();
       // Wake up stream() if it is waiting — it will see closed=true and return.

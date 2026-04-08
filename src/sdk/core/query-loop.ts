@@ -20,7 +20,7 @@ import { CostTracker } from './cost.js';
 import type { ModelUsageEntry } from './cost.js';
 import { TokenBudget } from './token-budget.js';
 import { buildUserMessage, buildToolResultMessage, extractToolUseBlocks } from './messages.js';
-import { microCompact, apiCompact, autoCompactIfNeeded, AutoCompactState } from './compact.js';
+import { microCompact, apiCompact, autoCompactIfNeeded, AutoCompactState, shouldAutoCompact } from './compact.js';
 import { assembleSystemPrompt, splitAtBoundary } from '../prompt/system-prompt.js';
 import type { SystemPromptConfig } from '../prompt/system-prompt.js';
 import { truncateToolResult } from '../utils/truncate.js';
@@ -29,11 +29,11 @@ import {
   runPreToolUseHooks,
   runPostToolUseHooks,
   runPostToolUseFailureHooks,
+  runEventHooks,
 } from './hooks.js';
 import {
   MAX_TOKENS_RECOVERY_LIMIT,
   MAX_TOKENS_RECOVERY_MSG,
-  contextWindowForModel,
 } from '../prompt/constants.js';
 import type { EffortLevel, ThinkingConfig as CfgThinkingConfig } from '../types/config.js';
 import type { ThinkingConfig } from '../types/provider.js';
@@ -725,19 +725,48 @@ export async function* queryLoop(
     options?.onProgress?.(assistantMsg);
 
     // Tier 3: Auto-compact (full compact) — LLM-based summarization if needed
-    if (shouldTriggerAutoCompact(accumulated.usage.input_tokens, config.model)) {
+    if (shouldAutoCompact(accumulated.usage.input_tokens, config.model, compactState)) {
+      const preTokens = accumulated.usage.input_tokens;
+
+      // Fire PreCompact hook before the LLM compaction call
+      await runEventHooks(
+        config.hooks,
+        'PreCompact',
+        {
+          hook_event_name: 'PreCompact',
+          session_id: sessionId,
+          cwd: config.cwd,
+          context_length: preTokens,
+        },
+        config.abortSignal,
+      ).catch(() => {});
+
       const compactResult = await autoCompactIfNeeded(
         messages,
-        accumulated.usage.input_tokens,
+        preTokens,
         config.model,
         provider,
         systemPrompt,
         compactState,
       );
       if (compactResult) {
-        const preTokens = accumulated.usage.input_tokens;
         messages.length = 0;
         messages.push(...compactResult.messages);
+
+        // Fire PostCompact hook after successful compaction
+        await runEventHooks(
+          config.hooks,
+          'PostCompact',
+          {
+            hook_event_name: 'PostCompact',
+            session_id: sessionId,
+            cwd: config.cwd,
+            summary: compactResult.summary,
+            tokens_freed: compactResult.tokensFreed,
+          },
+          config.abortSignal,
+        ).catch(() => {});
+
         const compactMsg: SDKMessage = {
           type: 'system',
           subtype: 'compact_boundary',
@@ -964,8 +993,3 @@ export async function* queryLoop(
   }
 }
 
-/** Check if auto-compact should be triggered. */
-function shouldTriggerAutoCompact(inputTokens: number, model: string): boolean {
-  const window = contextWindowForModel(model);
-  return inputTokens >= Math.floor(window * 0.9);
-}
