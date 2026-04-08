@@ -147,8 +147,47 @@ export abstract class BaseStreamHandler {
       console.log(`[StreamHandler] Accumulated text:\n${this.state.accumulatedText}`)
     }
 
+    // LLM response sample — one line per turn, always-on
+    {
+      const tools = [...this.toolCallMap.values()].map(t => t.name)
+      const textPreview = this.state.accumulatedText
+        ? this.state.accumulatedText.slice(0, 80).replace(/\n/g, '↵')
+        : ''
+      if (tools.length > 0) {
+        console.log(`[LLM] model=${this.state.model} stop=${this.state.stopReason} → tool_calls=[${tools.join(',')}]`)
+      } else if (textPreview) {
+        console.log(`[LLM] model=${this.state.model} stop=${this.state.stopReason} → text="${textPreview}"`)
+      } else {
+        console.log(`[LLM] model=${this.state.model} stop=${this.state.stopReason} → (empty)`)
+      }
+    }
+
     // Close any open block
     this.closeCurrentBlock()
+
+    // Some models return end_turn without emitting any text or thinking block.
+    // The downstream SDK (isResultSuccessful) requires the last content block to
+    // be 'text', 'thinking', or 'redacted_thinking' — otherwise the response is
+    // treated as an execution error. Inject an empty text block to satisfy this
+    // contract when the model itself did not produce one.
+    //
+    // Conditions (all must hold):
+    //   - stop_reason is end_turn (finish_reason: stop)
+    //   - no text block was emitted
+    //   - no thinking block was emitted (thinking is also a valid terminal type,
+    //     and reusing its block index would produce a duplicate index on the wire)
+    //   - message_start was sent (model actually responded)
+    if (
+      this.state.stopReason === 'end_turn' &&
+      !this.state.hasTextBlock &&
+      !this.state.hasThinkingBlock &&
+      this.state.started
+    ) {
+      const idx = this.state.contentBlockIndex
+      this.writer.writeTextBlockStart(idx)
+      this.writer.writeBlockStop(idx)
+      console.log(`[StreamHandler] Injected empty text block at index ${idx} (model=${this.state.model}, end_turn with no text content)`)
+    }
 
     // Write message_delta
     this.writer.writeMessageDelta(this.state.stopReason || 'end_turn', {

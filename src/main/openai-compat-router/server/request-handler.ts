@@ -210,9 +210,29 @@ async function fetchAnthropicUpstream(
     const hasAuthHeader = Object.keys(customHeaders || {}).some(
       k => k.toLowerCase() === 'authorization'
     )
+
+    // Merge anthropic-beta headers from SDK and provider instead of overwriting.
+    // The CC subprocess sets betas for features it uses (context-management, etc.)
+    // and the provider adds its own (oauth, interleaved-thinking).
+    // Both must be present — overwriting drops CC's betas, causing API rejections.
+    const sdkBeta = Object.entries(sdkHeaders || {}).find(([k]) => k.toLowerCase() === 'anthropic-beta')?.[1]
+    const customBeta = Object.entries(customHeaders || {}).find(([k]) => k.toLowerCase() === 'anthropic-beta')?.[1]
+    let mergedBeta: string | undefined
+    if (sdkBeta && customBeta) {
+      const seen = new Set<string>()
+      const all = [...sdkBeta.split(','), ...customBeta.split(',')]
+        .map(s => s.trim()).filter(Boolean)
+        .filter(s => seen.has(s) ? false : (seen.add(s), true))
+      mergedBeta = all.join(',')
+    } else {
+      mergedBeta = customBeta || sdkBeta
+    }
+
     const headers: Record<string, string> = {
       ...(sdkHeaders || {}),
       ...(customHeaders || {}),
+      // Override with merged beta (covers both SDK and provider betas)
+      ...(mergedBeta && { 'anthropic-beta': mergedBeta }),
       // Skip x-api-key when the provider already injected an Authorization header
       // (e.g. GitHub Copilot uses Bearer token instead of x-api-key)
       ...(!hasAuthHeader && { 'x-api-key': apiKey }),
@@ -428,11 +448,7 @@ async function handleOpenAIConversion(
     anthropicRequest.model = model
   }
 
-  if (debug) {
-    console.log('[RequestHandler] Backend:', backendUrl)
-    console.log('[RequestHandler] API Key:', apiKey.slice(0, 8) + '...')
-    console.log('[RequestHandler] ApiType:', apiType)
-  }
+  console.log(`[RequestHandler] model=${anthropicRequest.model} apiKey=${apiKey ? apiKey.slice(0, 8) + '...' : 'none'}`)
 
   // Use request queue to prevent concurrent requests
   const queueKey = generateQueueKey(backendUrl, apiKey)

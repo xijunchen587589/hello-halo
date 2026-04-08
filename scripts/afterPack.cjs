@@ -32,6 +32,16 @@ const WATCHER_TARGETS = {
   'linux-x64':    'watcher-linux-x64-glibc',
 };
 
+// Maps platform-arch to the node-pty prebuilds directory name to KEEP.
+// node-pty ships prebuilds for mac and win in the npm package.
+// Linux is intentionally excluded: no public prebuilds available; the terminal
+// panel feature is disabled on Linux at runtime via a platform check.
+const NODE_PTY_PREBUILD_TARGETS = {
+  'darwin-arm64': 'darwin-arm64',
+  'darwin-x64':   'darwin-x64',
+  'win32-x64':    'win32-x64',
+};
+
 /**
  * Resolve the app.asar.unpacked directory from electron-builder context.
  *
@@ -133,12 +143,74 @@ function swapBetterSqlite3Binary(context) {
   console.log(`[afterPack] ${key}: swapped better-sqlite3 binary (${sizeMB} MB)`);
 }
 
+/**
+ * Remove non-target node-pty prebuild directories and strip .pdb debug symbols.
+ *
+ * node-pty ships prebuilds for all platforms inside the npm package:
+ *   prebuilds/darwin-arm64/, darwin-x64/, win32-arm64/, win32-x64/
+ * Plus linux-x64/ when prepared via prepare-binaries.mjs.
+ *
+ * We keep only the target platform directory and remove .pdb files (Windows
+ * debug symbols, ~30 MB each) that are not needed at runtime.
+ */
+function cleanNodePtyPrebuilds(context) {
+  const platform = context.electronPlatformName;
+  const archStr = ARCH_NAMES[context.arch] || String(context.arch);
+  const key = `${platform}-${archStr}`;
+  const targetDir = NODE_PTY_PREBUILD_TARGETS[key];
+
+  if (!targetDir) {
+    // Linux: terminal panel is not supported, node-pty prebuilds are not included.
+    console.log(`[afterPack] ${key}: node-pty not included (terminal panel disabled on Linux)`);
+    return;
+  }
+
+  const unpackedDir = getUnpackedDir(context);
+  const prebuildsDir = path.join(unpackedDir, 'node_modules', 'node-pty', 'prebuilds');
+
+  if (!fs.existsSync(prebuildsDir)) {
+    console.warn(`[afterPack] node-pty prebuilds not found in unpacked output: ${prebuildsDir}`);
+    console.warn(`[afterPack] Check that asarUnpack includes "node_modules/node-pty/prebuilds/**"`);
+    return;
+  }
+
+  const entries = fs.readdirSync(prebuildsDir, { withFileTypes: true });
+  const removed = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === targetDir) {
+      // Target platform: strip .pdb debug symbols (Windows only, ~30 MB each)
+      const targetPath = path.join(prebuildsDir, entry.name);
+      const pdbFiles = fs.readdirSync(targetPath).filter(f => f.endsWith('.pdb'));
+      for (const pdb of pdbFiles) {
+        fs.rmSync(path.join(targetPath, pdb));
+      }
+      if (pdbFiles.length > 0) {
+        console.log(`[afterPack] ${key}: removed ${pdbFiles.length} .pdb file(s) from node-pty/${targetDir}`);
+      }
+    } else {
+      // Non-target platform: remove entirely
+      fs.rmSync(path.join(prebuildsDir, entry.name), { recursive: true });
+      removed.push(entry.name);
+    }
+  }
+
+  if (removed.length > 0) {
+    console.log(`[afterPack] ${key}: removed ${removed.length} non-target node-pty prebuild(s): ${removed.join(', ')}`);
+  }
+  console.log(`[afterPack] ${key}: keeping node-pty prebuilds/${targetDir}`);
+}
+
 module.exports = async function(context) {
   // Clean non-target watcher packages from unpacked output
   cleanNonTargetWatchers(context);
 
   // Swap better-sqlite3 native binary for the target platform
   swapBetterSqlite3Binary(context);
+
+  // Clean non-target node-pty prebuild directories and strip .pdb files
+  cleanNodePtyPrebuilds(context);
 
   // macOS ad-hoc signing (other platforms skip)
   if (context.electronPlatformName !== 'darwin') {

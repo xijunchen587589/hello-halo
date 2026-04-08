@@ -13,15 +13,16 @@
  * existing MessageItem component renders them identically to main-chat messages.
  */
 
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { TRANSPARENT_TOOLS } from '../../services/agent/constants'
 
 // ============================================
 // Types
 // ============================================
 
 /** A serialized SDK stream event stored as a JSONL line */
-interface StoredEvent {
+export interface StoredEvent {
   /** Timestamp when the event was captured */
   _ts: string
   /** SDK event type (assistant, user, result, system, etc.) */
@@ -176,39 +177,43 @@ export function sessionExists(spacePath: string, appId: string, runId: string): 
 // Event → Message Conversion
 // ============================================
 
-/** Incrementing counter for generating unique IDs within a session read */
-let _thoughtIdx = 0
-
-function generateThoughtId(): string {
-  return `session-thought-${++_thoughtIdx}`
+/** Create a thought ID generator scoped to a single convertEventsToMessages() call.
+ *  Avoids module-level mutable state that could race under concurrent reads. */
+function createThoughtIdGenerator(): () => string {
+  let idx = 0
+  return () => `session-thought-${++idx}`
 }
+
+// TRANSPARENT_TOOLS imported from services/agent/constants — single source of truth.
 
 /**
  * Convert stored SDK events into renderer-compatible Message[] with full thoughts.
  *
- * Strategy — accumulate-and-flush (optimized for automation runs):
+ * Strategy — deferred flush, merge per agent turn (aligned with main-space behavior):
  *
  * An automation run's agent loop produces many rounds of:
- *   assistant (thinking + tool_use) → user (tool_result) → assistant (thinking + tool_use) → ...
+ *   assistant (thinking + tool_use) → user (tool_result) → assistant (text) → ...
  *
- * Unlike the main chat where each round is a visible message exchange, automation runs
- * are a single task execution. Showing each round as a separate "thought process" block
- * creates visual clutter (many collapsed "思考过程 0.0s" blocks).
+ * The main-space conversation shows each agent turn as a single message bubble
+ * with one merged thought-process block. Previously, this function flushed on
+ * every assistant text event, producing 5-8 fragmented messages per run.
  *
- * Instead, we:
- * 1. Accumulate all thinking/tool_use blocks across consecutive assistant events
- *    into one shared thoughts[] array.
- * 2. Tool-result user events merge into the corresponding tool_use thought (no visible message).
- * 3. Only when an assistant event contains actual text output do we "flush" — creating
- *    a single Message with all accumulated thoughts + the text content.
- * 4. Non-tool user events (trigger messages) are always shown as separate messages
- *    and cause a flush of any pending thoughts.
+ * New strategy:
+ * 1. Text does NOT trigger a flush. Only a user message (new conversation turn)
+ *    or end-of-events triggers a flush.
+ * 2. Intermediate text blocks are demoted to 'text' type thoughts visible in the
+ *    collapsed thought process (same as stream-processor.ts:586).
+ * 3. Text merging follows the main-space rule:
+ *    - Consecutive text (no substantive tool in between) → concatenate.
+ *    - Substantive tool in between → previous text demoted to thought, replaced.
+ * 4. Tool-result user events merge into the corresponding tool_use thought.
+ * 5. Non-tool user events (trigger, escalation) flush and start a new turn.
  *
- * Result: one large collapsed thought block with the full execution trace,
- * and text outputs displayed as clean message bubbles below.
+ * Result: one agent turn = one collapsed thought-process block + one message bubble,
+ * identical to the main-space rendering.
  */
-function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
-  _thoughtIdx = 0  // Reset per read
+export function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
+  const generateThoughtId = createThoughtIdGenerator()
 
   const messages: MessageRecord[] = []
   let msgIdx = 0
@@ -220,15 +225,22 @@ function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
   let pendingThoughts: ThoughtRecord[] = []
   let lastThoughtTs = ''
 
-  /** Flush accumulated thoughts + text into one Message */
-  function flush(textContent: string, textTs: string): void {
-    if (pendingThoughts.length === 0 && !textContent) return
+  // ── Text merge state (mirrors stream-processor.ts logic) ──
+  // lastText holds the candidate final text for the current turn.
+  // hadSubstantiveTool tracks whether a non-transparent tool appeared since lastText was set.
+  let lastText = ''
+  let lastTextTs = ''
+  let hadSubstantiveTool = false
+
+  /** Flush accumulated thoughts + lastText into one assistant Message, then reset state. */
+  function flush(): void {
+    if (pendingThoughts.length === 0 && !lastText) return
 
     const record: MessageRecord = {
       id: `session-msg-${++msgIdx}`,
       role: 'assistant',
-      content: textContent,
-      timestamp: textTs || lastThoughtTs || new Date().toISOString(),
+      content: lastText,
+      timestamp: lastTextTs || lastThoughtTs || new Date().toISOString(),
     }
 
     if (pendingThoughts.length > 0) {
@@ -237,8 +249,13 @@ function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
     }
 
     messages.push(record)
+
+    // Reset all turn state
     pendingThoughts = []
     lastThoughtTs = ''
+    lastText = ''
+    lastTextTs = ''
+    hadSubstantiveTool = false
   }
 
   for (const event of events) {
@@ -264,8 +281,8 @@ function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
         }
       } else {
         // Normal user message (trigger or escalation response).
-        // Flush any pending thoughts before showing the user message.
-        flush('', ts)
+        // Flush the current turn before showing the user message.
+        flush()
         const textContent = extractTextContent(content)
         if (textContent) {
           messages.push({
@@ -283,8 +300,6 @@ function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
     if (event.type === 'assistant') {
       const content = event.message?.content
       if (!Array.isArray(content)) continue
-
-      const textContent = extractTextContent(content)
 
       // Extract thinking and tool_use blocks into the accumulator
       for (const block of content) {
@@ -310,16 +325,44 @@ function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
           pendingThoughts.push(thought)
           lastThoughtTs = ts
 
+          // Mark substantive tool — breaks text continuity
+          if (!TRANSPARENT_TOOLS.has(block.name || '')) {
+            hadSubstantiveTool = true
+          }
+
           if (block.id) {
             toolUseMap.set(block.id, thought)
           }
         }
       }
 
-      // If this assistant event has text output, flush everything:
-      // all accumulated thoughts become the collapsed block above the text bubble.
+      // Handle text output — deferred flush, merge into current turn
+      const textContent = extractTextContent(content)
       if (textContent) {
-        flush(textContent, ts)
+        if (hadSubstantiveTool) {
+          // A substantive tool occurred since last text — previous text was transitional.
+          // Demote it to a 'text' type thought so it remains visible in the thought process.
+          if (lastText) {
+            pendingThoughts.push({
+              id: generateThoughtId(),
+              type: 'text',
+              content: lastText,
+              timestamp: lastTextTs,
+            })
+          }
+          // Replace with current text
+          lastText = textContent
+          lastTextTs = ts
+          hadSubstantiveTool = false
+        } else {
+          // Consecutive text (no substantive tool in between) — concatenate
+          if (lastText) {
+            lastText += '\n\n' + textContent
+          } else {
+            lastText = textContent
+          }
+          lastTextTs = ts
+        }
       }
 
       continue
@@ -328,10 +371,8 @@ function convertEventsToMessages(events: StoredEvent[]): MessageRecord[] {
     // Skip 'result', 'system' events — they are metadata, not displayable messages
   }
 
-  // Flush any trailing thoughts that weren't followed by text output.
-  // This happens when the AI only did thinking/tool calls without producing text
-  // (common for runs where all output goes through report_to_user).
-  flush('', lastThoughtTs)
+  // Flush any remaining turn (the common case — most runs are a single turn).
+  flush()
 
   return messages
 }
@@ -350,6 +391,86 @@ function buildThoughtsSummary(thoughts: ThoughtRecord[]): ThoughtsSummaryRecord 
     count: thoughts.length,
     types,
   }
+}
+
+// ============================================
+// Chat Session ID Persistence
+// ============================================
+
+/**
+ * Persists Claude SDK session IDs for app-chat conversations.
+ *
+ * When a V2 session is rebuilt (idle timeout, process crash, config change),
+ * the saved sessionId allows the SDK to restore conversation history from
+ * its on-disk session file — same mechanism as the main conversation
+ * (conversation.service.saveSessionId).
+ *
+ * Storage: {spacePath}/.halo/apps/{appId}/runs/_session-ids.json
+ * Format: { [runId]: sessionId }
+ */
+
+/** Path to the session-id map file for an app */
+function getSessionIdMapPath(spacePath: string, appId: string): string {
+  return join(getRunsDir(spacePath, appId), '_session-ids.json')
+}
+
+/** Read the full session-id map. Returns empty object on missing/corrupt file. */
+function readSessionIdMap(spacePath: string, appId: string): Record<string, string> {
+  const filePath = getSessionIdMapPath(spacePath, appId)
+  try {
+    const raw = readFileSync(filePath, 'utf8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>
+    }
+  } catch {
+    // File missing or corrupt — start fresh
+  }
+  return {}
+}
+
+/** Write the full session-id map to disk. */
+function writeSessionIdMap(spacePath: string, appId: string, map: Record<string, string>): void {
+  const dir = getRunsDir(spacePath, appId)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  const filePath = getSessionIdMapPath(spacePath, appId)
+  try {
+    writeFileSync(filePath, JSON.stringify(map), 'utf8')
+  } catch (err) {
+    console.error(`[SessionStore] Failed to write session-id map:`, err)
+  }
+}
+
+/**
+ * Save a Claude SDK sessionId for a chat session.
+ * Called after stream completion to enable session resume on V2 rebuild.
+ */
+export function saveChatSessionId(spacePath: string, appId: string, runId: string, sessionId: string): void {
+  const map = readSessionIdMap(spacePath, appId)
+  map[runId] = sessionId
+  writeSessionIdMap(spacePath, appId, map)
+}
+
+/**
+ * Load a previously saved Claude SDK sessionId.
+ * Returns undefined if no sessionId is saved for this chat session.
+ */
+export function loadChatSessionId(spacePath: string, appId: string, runId: string): string | undefined {
+  const map = readSessionIdMap(spacePath, appId)
+  return map[runId]
+}
+
+/**
+ * Delete a saved sessionId for a chat session.
+ * Called when clearing chat history to ensure a truly fresh start.
+ */
+export function deleteChatSessionId(spacePath: string, appId: string, runId: string): void {
+  const map = readSessionIdMap(spacePath, appId)
+  if (!(runId in map)) return
+  delete map[runId]
+  writeSessionIdMap(spacePath, appId, map)
 }
 
 // ============================================

@@ -98,6 +98,7 @@ export default function App() {
     handleAgentThoughtDelta,
     handleAgentCompact,
     handleAgentSessionInfo,
+    handleAgentTurnStart,
     handleAskQuestion,
     currentSpaceId,
     setCurrentSpace: setChatCurrentSpace,
@@ -480,8 +481,9 @@ export default function App() {
 
     // Primary thought listener - handles all agent reasoning events
     const unsubThought = api.onAgentThought((data) => {
-      console.log('[App] Received agent:thought event:', data)
-      handleAgentThought(data as AgentEventBase & { thought: Thought })
+      const _d = data as AgentEventBase & { thought: Thought }
+      console.log(`[App][+${Date.now() % 100000}ms] Received agent:thought: type=${_d.thought?.type} id=${_d.thought?.id}`)
+      handleAgentThought(_d)
     })
 
     // Thought delta listener - handles incremental updates to streaming thoughts
@@ -500,7 +502,10 @@ export default function App() {
 
     // Message events (with session IDs)
     const unsubMessage = api.onAgentMessage((data) => {
-      // console.log('[App] Received agent:message event:', data)
+      const _m = data as AgentEventBase & { content?: string; delta?: string; isComplete?: boolean; isNewTextBlock?: boolean }
+      if (_m.isComplete || _m.isNewTextBlock) {
+        console.log(`[App][+${Date.now() % 100000}ms] agent:message: isComplete=${_m.isComplete} isNewTextBlock=${_m.isNewTextBlock} contentLen=${(_m.content ?? '').length}`)
+      }
       handleAgentMessage(data as AgentEventBase & { content: string; isComplete: boolean })
     })
 
@@ -520,7 +525,7 @@ export default function App() {
     })
 
     const unsubComplete = api.onAgentComplete((data) => {
-      console.log('[App] Received agent:complete event:', data)
+      console.log(`[App][+${Date.now() % 100000}ms] Received agent:complete event:`, data)
       handleAgentComplete(data as AgentEventBase)
     })
 
@@ -538,6 +543,12 @@ export default function App() {
     // Session info from SDK system:init — slash_commands / skills / agents for autocomplete
     const unsubSessionInfo = api.onAgentSessionInfo((data) => {
       handleAgentSessionInfo(data as AgentEventBase & SessionInitInfo)
+    })
+
+    // Autonomous turn start — CC produced output without user send (e.g., Agent Team)
+    const unsubTurnStart = api.onAgentTurnStart((data) => {
+      console.log('[App] Received agent:turn-start event:', data)
+      handleAgentTurnStart(data as AgentEventBase & { autonomous?: boolean })
     })
 
     // MCP status updates (global - not per-conversation)
@@ -560,6 +571,7 @@ export default function App() {
       unsubCompact()
       unsubAskQuestion()
       unsubSessionInfo()
+      unsubTurnStart()
       unsubMcpStatus()
     }
   }, [
@@ -572,6 +584,7 @@ export default function App() {
     handleAgentThoughtDelta,
     handleAgentCompact,
     handleAgentSessionInfo,
+    handleAgentTurnStart,
     handleAskQuestion,
     setMcpStatus
   ])

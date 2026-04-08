@@ -17,14 +17,11 @@
 
 import { useEffect, useRef, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso'
-import { MessageItem } from './MessageItem'
-import { ThoughtProcess } from './ThoughtProcess'
-import { CollapsedThoughtProcess, LazyCollapsedThoughtProcess } from './CollapsedThoughtProcess'
+import { MessageRow } from './MessageRow'
+import { StreamingSection } from './StreamingSection'
+import { useBrowserToolCalls, type BrowserToolCall } from './useBrowserToolCalls'
 import { CompactNotice } from './CompactNotice'
 import { InterruptedBubble } from './InterruptedBubble'
-import { StreamingBubble } from './StreamingBubble'
-import { BrowserTaskCard, isBrowserTool } from '../tool/BrowserTaskCard'
-import { AskUserQuestionCard } from './AskUserQuestionCard'
 import type { Message, Thought, CompactInfo, AgentErrorType, PendingQuestion } from '../../types'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chat.store'
@@ -64,52 +61,34 @@ interface StreamingRevision {
   thoughts: Thought[]
   isThinking: boolean
   textBlockVersion: number
-  streamingBrowserToolCalls: { id: string; name: string; status: 'running' | 'success'; input: any }[]
+  streamingBrowserToolCalls: BrowserToolCall[]
   pendingQuestion: PendingQuestion | null
   onAnswerQuestion?: (answers: Record<string, string>) => void
 }
 
 function StreamingFooterContent({ revisionRef }: { revisionRef: React.RefObject<StreamingRevision> }) {
-  // Subscribe to session changes so this component re-renders when thoughts/streaming update.
+  // Subscribe to full session changes so this component re-renders when thoughts/streaming update.
   // Data is read from the ref (always fresh); this selector just triggers the re-render.
-  useChatStore(s => s.sessions.get(s.getCurrentSpaceState().currentConversationId ?? ''))
+  // IMPORTANT: Must watch the entire session object — watching only queuedMessages breaks
+  // streaming re-renders because queuedMessages never changes during normal streaming.
+  const session = useChatStore(s =>
+    s.sessions.get(s.getCurrentSpaceState().currentConversationId ?? '')
+  )
+  const queuedMessages = session?.queuedMessages ?? []
 
   const rev = revisionRef.current!
   return (
-    <div className="flex justify-start animate-fade-in pb-4">
-      <div className="w-[85%] relative">
-        {/* Real-time thought process at top */}
-        {(rev.thoughts.length > 0 || rev.isThinking) && (
-          <ThoughtProcess thoughts={rev.thoughts} isThinking={rev.isThinking} />
-        )}
-
-        {/* Real-time browser task card - shows AI browser operations as they happen */}
-        {rev.streamingBrowserToolCalls.length > 0 && (
-          <div className="mb-4">
-            <BrowserTaskCard
-              browserToolCalls={rev.streamingBrowserToolCalls}
-              isActive={rev.isThinking}
-            />
-          </div>
-        )}
-
-        {/* Streaming bubble with accumulated content and auto-scroll */}
-        <StreamingBubble
-          content={rev.streamingContent}
-          isStreaming={rev.isStreaming}
-          thoughts={rev.thoughts}
-          textBlockVersion={rev.textBlockVersion}
-        />
-
-        {/* AskUserQuestion card - shown when AI needs user input */}
-        {rev.pendingQuestion && rev.onAnswerQuestion && (
-          <AskUserQuestionCard
-            pendingQuestion={rev.pendingQuestion}
-            onAnswer={rev.onAnswerQuestion}
-          />
-        )}
-      </div>
-    </div>
+    <StreamingSection
+      streamingContent={rev.streamingContent}
+      isStreaming={rev.isStreaming}
+      thoughts={rev.thoughts}
+      isThinking={rev.isThinking}
+      textBlockVersion={rev.textBlockVersion}
+      browserToolCalls={rev.streamingBrowserToolCalls}
+      pendingQuestion={rev.pendingQuestion}
+      onAnswerQuestion={rev.onAnswerQuestion}
+      queuedMessages={queuedMessages}
+    />
   )
 }
 
@@ -160,18 +139,42 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     },
   }), [])
 
-  // Filter out empty assistant placeholder message during generation
-  // (Backend adds empty assistant message as placeholder, we show streaming content instead)
+  // Filter out injection messages (shown as annotations on assistant bubbles, not as independent bubbles)
+  // and empty assistant placeholder message during generation
   const displayMessages = useMemo(() => {
+    let filtered = messages.filter(msg => msg.source !== 'injection')
     if (isGenerating) {
-      return messages.filter((msg, idx) => {
-        const isLastMessage = idx === messages.length - 1
+      filtered = filtered.filter((msg, idx) => {
+        const isLastMessage = idx === filtered.length - 1
         const isEmptyAssistant = msg.role === 'assistant' && !msg.content
         return !(isLastMessage && isEmptyAssistant)
       })
     }
-    return messages
+    return filtered
   }, [messages, isGenerating])
+
+  // Pre-compute injection map: assistant message ID → injection messages that follow it.
+  // Injection messages are consecutive user messages with source='injection' after an assistant message.
+  // O(n) scan, recomputed only when messages change.
+  const injectionMap = useMemo(() => {
+    const map = new Map<string, Message[]>()
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === 'assistant') {
+        const injections: Message[] = []
+        for (let j = i + 1; j < messages.length; j++) {
+          if (messages[j].source === 'injection') {
+            injections.push(messages[j])
+          } else {
+            break
+          }
+        }
+        if (injections.length > 0) {
+          map.set(messages[i].id, injections)
+        }
+      }
+    }
+    return map
+  }, [messages])
 
   // Pre-compute cost map: index → previous assistant cost (O(n) once, then O(1) per lookup)
   // This avoids a useCallback dependency on displayMessages that would cascade to itemContent
@@ -189,20 +192,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   }, [displayMessages])
 
   // Extract real-time browser tool calls from streaming thoughts
-  // This enables BrowserTaskCard to show operations as they happen
-  const streamingBrowserToolCalls = useMemo(() => {
-    return thoughts
-      .filter(t => t.type === 'tool_use' && t.toolName && isBrowserTool(t.toolName))
-      .map(t => ({
-        id: t.id,
-        name: t.toolName!,
-        // Determine status from merged toolResult (set by backend via agent:thought-delta)
-        status: t.toolResult
-          ? (t.toolResult.isError ? 'error' as const : 'success' as const)
-          : 'running' as const,
-        input: t.toolInput || {},
-      }))
-  }, [thoughts])
+  const streamingBrowserToolCalls = useBrowserToolCalls(thoughts)
 
   // Track at-bottom state via native DOM scroll events (independent of Virtuoso).
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
@@ -248,46 +238,22 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   // Render a single message item (called by Virtuoso)
   const itemContent = useCallback((index: number, message: Message) => {
     const previousCost = previousCostMap.get(index) ?? 0
-    const hasInlineThoughts = Array.isArray(message.thoughts) && message.thoughts.length > 0
-    const hasSeparatedThoughts = message.thoughts === null && !!message.thoughtsSummary
-
-    // Show collapsed thoughts ABOVE assistant messages, in same container for consistent width
-    if (message.role === 'assistant' && (hasInlineThoughts || hasSeparatedThoughts)) {
-      return (
-        <div className={`flex justify-start pb-4 ${contentWidthClass}`}>
-          {/* Fixed width container - prevents width jumping when content changes */}
-          <div className="w-[85%]">
-            {/* Collapsed thought process above the message */}
-            {hasInlineThoughts ? (
-              <CollapsedThoughtProcess
-                thoughts={message.thoughts as Thought[]}
-                defaultExpanded={expandedThoughtIds.current.has(message.id)}
-              />
-            ) : (
-              <LazyCollapsedThoughtProcess
-                thoughtsSummary={message.thoughtsSummary!}
-                onLoadThoughts={
-                  currentSpaceId && currentConversationId
-                    ? () => {
-                        expandedThoughtIds.current.add(message.id)
-                        return loadMessageThoughts(currentSpaceId, currentConversationId, message.id)
-                      }
-                    : () => Promise.resolve([])
-                }
-              />
-            )}
-            {/* Then the message itself (without embedded thoughts) */}
-            <MessageItem message={message} previousCost={previousCost} hideThoughts isInContainer />
-          </div>
-        </div>
-      )
-    }
     return (
-      <div className={`pb-4 ${contentWidthClass}`}>
-        <MessageItem message={message} previousCost={previousCost} />
-      </div>
+      <MessageRow
+        message={message}
+        previousCost={previousCost}
+        defaultThoughtsExpanded={expandedThoughtIds.current.has(message.id)}
+        onLoadThoughts={(messageId) => {
+          expandedThoughtIds.current.add(messageId)
+          return currentSpaceId && currentConversationId
+            ? loadMessageThoughts(currentSpaceId, currentConversationId, messageId)
+            : Promise.resolve([])
+        }}
+        injectionMessages={injectionMap.get(message.id)}
+        className={contentWidthClass}
+      />
     )
-  }, [previousCostMap, currentSpaceId, currentConversationId, loadMessageThoughts, contentWidthClass])
+  }, [previousCostMap, currentSpaceId, currentConversationId, loadMessageThoughts, injectionMap, contentWidthClass])
 
   // Ref for onContinue — keeps Footer callback stable when parent re-renders
   const onContinueRef = useRef(onContinue)

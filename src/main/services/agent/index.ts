@@ -14,7 +14,8 @@
  * - permission-handler.ts - Tool permission handling
  * - message-utils.ts   - Message building and parsing
  * - stream-processor.ts - Core stream processing (shared by send-message + app-chat)
- * - send-message.ts    - Main conversation message sending
+ * - session-consumer.ts - Persistent REPL consumer (mirrors CC's REPL model)
+ * - send-message.ts    - Main conversation message sending (send-only, consumer handles response)
  * - control.ts         - Generation control (stop, status)
  */
 
@@ -63,6 +64,9 @@ export type {
 // Send message to agent
 export { sendMessage } from './send-message'
 
+// Inject message into active session mid-turn (Agent Team / deadlock recovery)
+export { injectMessage } from './inject-message'
+
 // Stream processor (shared core for main agent + app chat)
 export { processStream } from './stream-processor'
 export type { ProcessStreamParams, StreamCallbacks, StreamResult } from './stream-processor'
@@ -102,5 +106,5 @@ export {
 export { createCanUseTool, resolveQuestion, rejectQuestion, rejectAllQuestions } from './permission-handler'
 export { getWorkingDir, getApiCredentials } from './helpers'
 export { parseSDKMessage, buildMessageContent, formatCanvasContext } from './message-utils'
-export { getOrCreateV2Session, activeSessions, v2Sessions } from './session-manager'
+export { getOrCreateV2Session, activeSessions, v2Sessions, getConsumerHandle } from './session-manager'
 export { broadcastMcpStatus } from './mcp-manager'

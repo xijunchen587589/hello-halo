@@ -22,7 +22,7 @@
  * correctly, so we don't need to add/strip the mcp_ prefix ourselves.
  */
 
-import { randomBytes, createHash } from 'crypto'
+import { randomBytes, createHash, randomUUID } from 'crypto'
 import { proxyFetch } from '../../proxy-fetch'
 import type {
   OAuthAISourceProvider,
@@ -140,12 +140,21 @@ class ClaudeProvider implements OAuthAISourceProvider {
       return null
     }
 
-    const model = c.model || 'claude-sonnet-4-6'
+    const rawModel = c.model || 'claude-sonnet-4-6'
+    const is1mContext = /\[1m\]$/i.test(rawModel)
+    // Strip [1m] suffix — it's a client-side marker for 1M context, not part of the API model ID
+    const model = rawModel.replace(/\[1m\]$/i, '')
+
+    // Append 1M context beta header when user selected a [1m] model variant
+    const betas = is1mContext
+      ? [...REQUIRED_BETAS, 'context-1m-2025-08-07']
+      : REQUIRED_BETAS
 
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${c.accessToken}`,
-      'anthropic-beta': REQUIRED_BETAS.join(','),
-      'user-agent': CLAUDE_USER_AGENT
+      'anthropic-beta': betas.join(','),
+      'user-agent': CLAUDE_USER_AGENT,
+      'x-client-request-id': randomUUID()
     }
 
     // The URL includes ?beta=true as required by the OAuth endpoint.
@@ -170,10 +179,13 @@ class ClaudeProvider implements OAuthAISourceProvider {
 
   async getAvailableModels(_config: AISourcesConfig): Promise<string[]> {
     // Claude OAuth uses the same models as regular Anthropic API
+    // [1m] suffix indicates 1M context window variant (stripped before API call)
     return [
       'claude-opus-4-6',
+      'claude-opus-4-6[1m]',
       'claude-opus-4-5-20251101',
       'claude-sonnet-4-6',
+      'claude-sonnet-4-6[1m]',
       'claude-sonnet-4-5-20250929',
       'claude-haiku-4-5-20251001'
     ]
@@ -303,8 +315,10 @@ class ClaudeProvider implements OAuthAISourceProvider {
       const models = await this.getAvailableModels({} as AISourcesConfig)
       const modelNames: Record<string, string> = {
         'claude-opus-4-6': 'Claude Opus 4.6',
+        'claude-opus-4-6[1m]': 'Claude Opus 4.6 (1M context)',
         'claude-opus-4-5-20251101': 'Claude Opus 4.5',
         'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+        'claude-sonnet-4-6[1m]': 'Claude Sonnet 4.6 (1M context)',
         'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
         'claude-haiku-4-5-20251001': 'Claude Haiku 4.5'
       }
@@ -455,8 +469,10 @@ class ClaudeProvider implements OAuthAISourceProvider {
       const models = await this.getAvailableModels(config)
       const modelNames: Record<string, string> = {
         'claude-opus-4-6': 'Claude Opus 4.6',
+        'claude-opus-4-6[1m]': 'Claude Opus 4.6 (1M context)',
         'claude-opus-4-5-20251101': 'Claude Opus 4.5',
         'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+        'claude-sonnet-4-6[1m]': 'Claude Sonnet 4.6 (1M context)',
         'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
         'claude-haiku-4-5-20251001': 'Claude Haiku 4.5'
       }

@@ -60,6 +60,13 @@ export interface InboundHistoryEntry {
  *
  * Minimal interface: only `send` is required. `sendTyping` is optional
  * for platforms that support typing indicators.
+ *
+ * Channel TTL notes:
+ * - WeCom bot: req_id expires after 5 minutes — adapter auto-falls back to pushToChat()
+ * - Feishu/DingTalk: similar protocol-level TTLs — adapters handle internally
+ * - Webhook/Schedule: no TTL — reply path is always available
+ *
+ * Adapters are responsible for TTL fallback internally; callers use `send()` uniformly.
  */
 export interface ReplyHandle {
   /** Send a text reply to the originating conversation. */
@@ -70,4 +77,14 @@ export interface ReplyHandle {
   channel: string
   /** Target conversation ID (for logging). */
   chatId: string
+  /**
+   * TTL (ms) of the synchronous reply path for this channel.
+   * After this duration, `send()` will automatically fall back to a proactive push.
+   * Undefined means no TTL — the synchronous reply path is always valid.
+   *
+   * Examples:
+   *   WeCom bot: 5 * 60 * 1000 (req_id expires after 5 minutes)
+   *   Webhook:   undefined (HTTP response is immediate, no TTL)
+   */
+  replyTtlMs?: number
 }

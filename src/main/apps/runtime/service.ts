@@ -292,17 +292,19 @@ export function createAppRuntimeService(deps: AppRuntimeDeps): AppRuntimeService
     const text = pushText.slice(0, MAX_PUSH_LENGTH)
 
     for (const session of sessions) {
-      const adapter = getChannelAdapter(session.channel)
+      // Prefer instanceId lookup (new multi-instance path), fall back to channel type
+      const adapterKey = session.instanceId || session.channel
+      const adapter = getChannelAdapter(adapterKey)
       if (!adapter?.isConnected()) {
-        console.warn(`[Runtime] IM forward skipped: adapter "${session.channel}" not connected`)
+        console.warn(`[Runtime] IM forward skipped: adapter "${adapterKey}" not connected`)
         continue
       }
 
       const sent = adapter.pushToChat(session.chatId, text, session.chatType)
       if (sent) {
-        console.log(`[Runtime] IM forward: channel=${session.channel}, chat=${session.chatId}, len=${text.length}`)
+        console.log(`[Runtime] IM forward: channel=${session.channel}, instanceId=${session.instanceId || '(legacy)'}, chat=${session.chatId}, len=${text.length}`)
       } else {
-        console.error(`[Runtime] IM forward failed: channel=${session.channel}, chat=${session.chatId}`)
+        console.error(`[Runtime] IM forward failed: channel=${session.channel}, instanceId=${session.instanceId || '(legacy)'}, chat=${session.chatId}`)
       }
     }
   }
@@ -439,6 +441,14 @@ export function createAppRuntimeService(deps: AppRuntimeDeps): AppRuntimeService
         const entries = store.getEntriesForApp(app.id, { type: 'escalation', limit: 1 })
         const pendingEntry = entries.find(e => !e.userResponse)
         if (pendingEntry) {
+          // Close any orphan escalation entries from previous runs before
+          // setting the new pendingEscalationId. This prevents stale entries
+          // from triggering false timeouts when the app re-enters waiting_user.
+          const closed = store.closeOrphanEscalations(app.id, pendingEntry.id)
+          if (closed > 0) {
+            console.log(`[Runtime] Closed ${closed} orphan escalation(s) before entering waiting_user: app=${app.id}`)
+          }
+
           appManager.updateStatus(app.id, 'waiting_user', {
             pendingEscalationId: pendingEntry.id,
           })
@@ -552,6 +562,23 @@ export function createAppRuntimeService(deps: AppRuntimeDeps): AppRuntimeService
 
         // Only process apps that are actually in waiting_user state
         if (app.status !== 'waiting_user') continue
+
+        // ── Orphan detection ─────────────────────────────────────
+        // An orphan is a pending escalation that does NOT match the app's
+        // current pendingEscalationId. This happens when the app leaves
+        // waiting_user (e.g. pause → resume) without resolving the entry,
+        // then later re-enters waiting_user for a NEW escalation. The old
+        // entry's user_response_json is still NULL, so it appears in
+        // getAllPendingEscalations(). If we timeout the orphan, the app
+        // instantly errors out — which is the bug we're fixing.
+        if (app.pendingEscalationId && entry.id !== app.pendingEscalationId) {
+          store.closeOrphanEscalations(app.id, app.pendingEscalationId)
+          console.log(
+            `[Runtime] Closed orphan escalation: app=${app.id}, orphan=${entry.id}, ` +
+            `active=${app.pendingEscalationId}`
+          )
+          continue
+        }
 
         // Determine timeout from app spec (default: 24 hours)
         const timeoutHours = (app.spec.type === 'automation' ? app.spec.escalation?.timeout_hours : undefined) ?? DEFAULT_ESCALATION_TIMEOUT_HOURS
@@ -964,9 +991,14 @@ export function createAppRuntimeService(deps: AppRuntimeDeps): AppRuntimeService
         // which is the same path as pause → resume in the UI.
         console.log(`[Runtime] app:trigger recovering from error state: ${appId}`)
         appManager.resume(appId)
+      } else if (app.status === 'paused') {
+        // Manual trigger from paused state: auto-resume so the user can
+        // run on demand without a separate resume step.  The scheduler
+        // is re-activated, and the trigger continues below.
+        console.log(`[Runtime] app:trigger auto-resuming paused app: ${appId}`)
+        appManager.resume(appId)
       } else if (app.status !== 'active') {
-        // Paused, waiting_user, and any other non-active states are not runnable.
-        // Paused apps must be explicitly resumed before they can be triggered.
+        // waiting_user and any other non-active states are not runnable.
         throw new AppNotRunnableError(appId, app.status)
       }
 
@@ -1264,7 +1296,22 @@ export function createAppRuntimeService(deps: AppRuntimeDeps): AppRuntimeService
   })
 
   // ── Listen for App status changes ───────────────────
-  appManager.onAppStatusChange((appId: string, _oldStatus: AppStatus, newStatus: AppStatus) => {
+  appManager.onAppStatusChange((appId: string, oldStatus: AppStatus, newStatus: AppStatus) => {
+    // ── Orphan escalation cleanup ───────────────────────
+    // When an app leaves waiting_user for any reason OTHER than the normal
+    // timeout path (which already resolves the entry), close all remaining
+    // pending escalation entries so they don't cause false timeouts later.
+    if (oldStatus === 'waiting_user' && newStatus !== 'waiting_user') {
+      try {
+        const closed = store.closeOrphanEscalations(appId)
+        if (closed > 0) {
+          console.log(`[Runtime] Closed ${closed} orphan escalation(s) on state change: app=${appId}, ${oldStatus} -> ${newStatus}`)
+        }
+      } catch (err) {
+        console.error(`[Runtime] Failed to close orphan escalations: app=${appId}:`, err)
+      }
+    }
+
     // When an app is paused, deactivate it
     if (newStatus === 'paused' || newStatus === 'error') {
       service.deactivate(appId).catch(err => {

@@ -28,6 +28,7 @@ import { getOnboardingPrompt } from '../onboarding/onboardingData'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { processImage, isValidImageType, formatFileSize } from '../../utils/imageProcessor'
 import type { ImageAttachment, Artifact } from '../../types'
+import { getCurrentSource, supportsVision } from '../../types'
 import { useTranslation } from '../../i18n'
 import { SlashCommandMenu, filterSlashCommands } from './SlashCommandMenu'
 import type { SlashCommandItem } from '../../types/slash-command'
@@ -73,6 +74,8 @@ function formatArtifactReference(relativePath: string): string {
 
 interface InputAreaProps {
   onSend: (content: string, images?: ImageAttachment[], thinkingEnabled?: boolean) => void
+  /** Called when user submits a message while generation is in progress (mid-turn inject) */
+  onInject?: (content: string) => void
   onStop: () => void
   isGenerating: boolean
   placeholder?: string
@@ -93,9 +96,19 @@ interface ImageError {
   message: string
 }
 
-export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact = false, slashCommands = [], mentionArtifacts = [] }: InputAreaProps) {
+export function InputArea({ onSend, onInject, onStop, isGenerating, placeholder, isCompact = false, slashCommands = [], mentionArtifacts = [] }: InputAreaProps) {
   const { t } = useTranslation()
   const sendKeyMode = useAppStore(state => state.config?.chat?.sendKeyMode ?? 'enter')
+
+  // Vision support detection — block image input for non-multimodal models
+  const aiSources = useAppStore(state => state.config?.aiSources)
+  const visionEnabled = useMemo(() => {
+    if (!aiSources) return true
+    const source = getCurrentSource(aiSources)
+    if (!source) return true
+    const model = source.availableModels.find(m => m.id === source.model)
+    return model ? supportsVision(model) : true
+  }, [aiSources])
   const [content, setContent] = useState('')
   const [isFocused, setIsFocused] = useState(false)
   const [images, setImages] = useState<ImageAttachment[]>([])
@@ -231,6 +244,10 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
 
     if (imageFiles.length > 0) {
       e.preventDefault()  // Prevent default only if we're handling images
+      if (!visionEnabled) {
+        showError(t('Current model does not support image input'))
+        return
+      }
       await addImages(imageFiles)
     }
   }
@@ -285,6 +302,10 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
     const files = Array.from(e.dataTransfer.files).filter(file => isValidImageType(file))
 
     if (files.length > 0) {
+      if (!visionEnabled) {
+        showError(t('Current model does not support image input'))
+        return
+      }
       await addImages(files)
     }
   }
@@ -303,6 +324,11 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
 
   // Handle image button click (from attachment menu)
   const handleImageButtonClick = () => {
+    if (!visionEnabled) {
+      showError(t('Current model does not support image input'))
+      setShowAttachMenu(false)
+      return
+    }
     setShowAttachMenu(false)
     fileInputRef.current?.click()
   }
@@ -427,12 +453,24 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
     })
   }
 
-  // Handle send
+  // Handle send — routes to inject path when generation is in progress
   const handleSend = () => {
     const textToSend = isOnboardingSendStep ? onboardingPrompt : content.trim()
-    const hasContent = textToSend || images.length > 0
 
-    if (hasContent && !isGenerating) {
+    if (isGenerating) {
+      // Mid-turn inject: text only (no images, no thinking toggle)
+      if (textToSend && onInject) {
+        onInject(textToSend)
+        setContent('')
+        handleMentionClose()
+        handleSlashClose()
+        if (textareaRef.current) textareaRef.current.style.height = 'auto'
+      }
+      return
+    }
+
+    const hasContent = textToSend || images.length > 0
+    if (hasContent) {
       onSend(textToSend, images.length > 0 ? images : undefined, thinkingEnabled)
 
       if (!isOnboardingSendStep) {
@@ -549,7 +587,13 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
 
   // In onboarding mode, can always send (prefilled content)
   // Can send if has text OR has images (and not processing/generating)
-  const canSend = isOnboardingSendStep || ((content.trim().length > 0 || images.length > 0) && !isGenerating && !isProcessingImages)
+  // During generation (inject mode): only plain text is allowed, no images
+  // Normal mode: text or images, not currently processing
+  const canSend = isOnboardingSendStep ||
+    (isGenerating
+      ? (content.trim().length > 0 && !!onInject)
+      : ((content.trim().length > 0 || images.length > 0) && !isProcessingImages)
+    )
   const hasImages = images.length > 0
 
   return (
@@ -586,7 +630,6 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
               ? 'ring-1 ring-primary/30 bg-card shadow-sm'
               : 'bg-secondary/50 hover:bg-secondary/70'
             }
-            ${isGenerating ? 'opacity-60' : ''}
             ${isDragOver ? 'ring-2 ring-primary/50 bg-primary/5' : ''}
           `}
           onDragOver={handleDragOver}
@@ -707,7 +750,6 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
               placeholder={placeholder || t('Type a message, let Halo help you...')}
-              disabled={isGenerating}
               readOnly={isOnboardingSendStep}
               rows={1}
               className={`w-full bg-transparent resize-none
@@ -737,6 +779,7 @@ export function InputArea({ onSend, onStop, isGenerating, placeholder, isCompact
             onSend={handleSend}
             onStop={onStop}
             sendKeyMode={sendKeyMode}
+            visionEnabled={visionEnabled}
           />
         </div>
       </div>
@@ -768,6 +811,7 @@ interface InputToolbarProps {
   onSend: () => void
   onStop: () => void
   sendKeyMode: 'enter' | 'ctrl-enter'
+  visionEnabled: boolean
 }
 
 function InputToolbar({
@@ -787,7 +831,8 @@ function InputToolbar({
   canSend,
   onSend,
   onStop,
-  sendKeyMode
+  sendKeyMode,
+  visionEnabled
 }: InputToolbarProps) {
   const { t } = useTranslation()
   return (
@@ -819,18 +864,24 @@ function InputToolbar({
                 rounded-xl shadow-lg min-w-[160px] z-20 animate-fade-in">
                 <button
                   onClick={onImageClick}
-                  disabled={imageCount >= maxImages}
+                  disabled={!visionEnabled || imageCount >= maxImages}
                   className={`w-full px-3 py-2 flex items-center gap-3 text-sm
                     transition-colors duration-150
-                    ${imageCount >= maxImages
+                    ${!visionEnabled || imageCount >= maxImages
                       ? 'text-muted-foreground/40 cursor-not-allowed'
                       : 'text-foreground hover:bg-muted/50'
                     }
                   `}
+                  title={!visionEnabled ? t('Current model does not support image input') : undefined}
                 >
                   <ImagePlus size={16} className="text-muted-foreground" />
                   <span>{t('Add image')}</span>
-                  {imageCount > 0 && (
+                  {!visionEnabled && (
+                    <span className="ml-auto text-xs text-muted-foreground/60">
+                      {t('Not supported')}
+                    </span>
+                  )}
+                  {visionEnabled && imageCount > 0 && (
                     <span className="ml-auto text-xs text-muted-foreground">
                       {imageCount}/{maxImages}
                     </span>
@@ -883,9 +934,9 @@ function InputToolbar({
         )}
       </div>
 
-      {/* Right section: action button only */}
-      <div className="flex items-center">
-        {isGenerating ? (
+      {/* Right section: Stop (when generating) + Send */}
+      <div className="flex items-center gap-1">
+        {isGenerating && (
           <button
             onClick={onStop}
             className="w-8 h-8 flex items-center justify-center
@@ -896,7 +947,8 @@ function InputToolbar({
           >
             <div className="w-3 h-3 border-2 border-current rounded-sm" />
           </button>
-        ) : (
+        )}
+        {!isOnboarding && (
           <button
             data-onboarding="send-button"
             onClick={onSend}
@@ -909,9 +961,11 @@ function InputToolbar({
               }
             `}
             title={
-              sendKeyMode === 'ctrl-enter'
-                ? (thinkingEnabled ? t('Send (Deep Thinking) — Ctrl+Enter') : t('Send — Ctrl+Enter'))
-                : (thinkingEnabled ? t('Send (Deep Thinking) — Enter') : t('Send — Enter'))
+              isGenerating
+                ? t('Add to queue')
+                : sendKeyMode === 'ctrl-enter'
+                  ? (thinkingEnabled ? t('Send (Deep Thinking) — Ctrl+Enter') : t('Send — Ctrl+Enter'))
+                  : (thinkingEnabled ? t('Send (Deep Thinking) — Enter') : t('Send — Enter'))
             }
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>

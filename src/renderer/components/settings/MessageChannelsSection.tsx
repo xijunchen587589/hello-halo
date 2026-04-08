@@ -2,13 +2,12 @@
  * Message Channels Section Component (消息渠道)
  *
  * Unified settings section that merges:
+ * - IM Channels (bidirectional, multi-instance: WeCom Bot, Feishu Bot, etc.)
  * - Notification Channels (one-way push: email, wecom app, dingtalk, feishu, webhook)
- * - WeCom Intelligent Bot (bidirectional WebSocket)
  *
- * Each channel is an expandable card showing:
- * - Channel name, description, direction badge (one-way / bidirectional)
- * - Status indicator (configured/connected/unconfigured)
- * - Credential fields when expanded
+ * IM Channels support multiple instances per provider type, each bound to
+ * a specific digital human. Instances are rendered as an accordion list
+ * inside the provider's card.
  *
  * IM Sessions are NOT shown here — they live in the digital human config.
  */
@@ -17,6 +16,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Mail, MessageSquare, Bell, Webhook, Loader2,
   CheckCircle, XCircle, ChevronDown, RefreshCw, Bot,
+  Plus, Trash2, MoreVertical,
 } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import { api } from '../../api'
@@ -27,6 +27,10 @@ import type {
   NotificationChannelType,
   NotificationChannelsConfig,
 } from '../../../shared/types/notification-channels'
+import type {
+  ImChannelInstanceConfig,
+  ImChannelInstanceStatus,
+} from '../../../shared/types/im-channel'
 
 // ============================================
 // Types
@@ -53,49 +57,29 @@ interface FieldDef {
   nested?: string
 }
 
-/** Unified channel descriptor */
-interface ChannelDef {
-  /** Unique channel key */
+/** Notification channel descriptor */
+interface NotifyChannelDef {
   id: string
-  /** Channel type for notification channels, or 'wecom-bot' for the bot */
-  notifyType?: NotificationChannelType
+  notifyType: NotificationChannelType
   icon: typeof Mail
   labelKey: string
   descriptionKey: string
-  /** 'one-way' = push only, 'bidirectional' = send + receive */
-  direction: 'one-way' | 'bidirectional'
   fields: FieldDef[]
   defaults: Record<string, unknown>
 }
 
 // ============================================
-// Channel Definitions
+// Notification Channel Definitions
 // ============================================
 
-function buildChannelDefs(): ChannelDef[] {
+function buildNotifyChannelDefs(): NotifyChannelDef[] {
   return [
-    // ── Bidirectional channels ──
-    {
-      id: 'wecom-bot',
-      icon: MessageSquare,
-      labelKey: 'WeCom Intelligent Bot',
-      descriptionKey: 'Bidirectional messaging via WeCom AI Bot WebSocket',
-      direction: 'bidirectional',
-      fields: [
-        { key: 'botId', label: 'Bot ID', type: 'text', placeholder: 'aib-xxx', required: true },
-        { key: 'secret', label: 'Secret', type: 'password', required: true },
-        { key: 'wsUrl', label: 'WebSocket URL', type: 'text', placeholder: 'wss://openws.work.weixin.qq.com' },
-      ],
-      defaults: { enabled: false, botId: '', secret: '', wsUrl: '' },
-    },
-    // ── One-way notification channels ──
     {
       id: 'email',
       notifyType: 'email',
       icon: Mail,
       labelKey: NOTIFICATION_CHANNEL_META.email.labelKey,
       descriptionKey: NOTIFICATION_CHANNEL_META.email.descriptionKey,
-      direction: 'one-way',
       fields: [
         { key: 'smtp.host', label: 'SMTP Host', type: 'text', placeholder: 'smtp.gmail.com', required: true, nested: 'smtp.host' },
         { key: 'smtp.port', label: 'SMTP Port', type: 'number', placeholder: '465', required: true, nested: 'smtp.port' },
@@ -112,7 +96,6 @@ function buildChannelDefs(): ChannelDef[] {
       icon: MessageSquare,
       labelKey: NOTIFICATION_CHANNEL_META.wecom.labelKey,
       descriptionKey: NOTIFICATION_CHANNEL_META.wecom.descriptionKey,
-      direction: 'one-way',
       fields: [
         { key: 'corpId', label: 'Corp ID', type: 'text', placeholder: 'ww...', required: true },
         { key: 'agentId', label: 'Agent ID', type: 'number', placeholder: '1000002', required: true },
@@ -128,7 +111,6 @@ function buildChannelDefs(): ChannelDef[] {
       icon: Bell,
       labelKey: NOTIFICATION_CHANNEL_META.dingtalk.labelKey,
       descriptionKey: NOTIFICATION_CHANNEL_META.dingtalk.descriptionKey,
-      direction: 'one-way',
       fields: [
         { key: 'appKey', label: 'App Key', type: 'text', required: true },
         { key: 'appSecret', label: 'App Secret', type: 'password', required: true },
@@ -144,7 +126,6 @@ function buildChannelDefs(): ChannelDef[] {
       icon: MessageSquare,
       labelKey: NOTIFICATION_CHANNEL_META.feishu.labelKey,
       descriptionKey: NOTIFICATION_CHANNEL_META.feishu.descriptionKey,
-      direction: 'one-way',
       fields: [
         { key: 'appId', label: 'App ID', type: 'text', required: true },
         { key: 'appSecret', label: 'App Secret', type: 'password', required: true },
@@ -159,7 +140,6 @@ function buildChannelDefs(): ChannelDef[] {
       icon: Webhook,
       labelKey: NOTIFICATION_CHANNEL_META.webhook.labelKey,
       descriptionKey: NOTIFICATION_CHANNEL_META.webhook.descriptionKey,
-      direction: 'one-way',
       fields: [
         { key: 'url', label: 'URL', type: 'text', placeholder: 'https://example.com/webhook', required: true },
         {
@@ -174,7 +154,7 @@ function buildChannelDefs(): ChannelDef[] {
   ]
 }
 
-const CHANNEL_DEFS = buildChannelDefs()
+const NOTIFY_CHANNEL_DEFS = buildNotifyChannelDefs()
 
 // ============================================
 // Helpers
@@ -198,6 +178,15 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
   const [head, ...rest] = parts
   const child = (obj[head] != null && typeof obj[head] === 'object') ? obj[head] as Record<string, unknown> : {}
   return { ...obj, [head]: setNestedValue(child, rest.join('.'), value) }
+}
+
+function generateId(): string {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function truncateId(id: string, len = 12): string {
+  if (id.length <= len) return id
+  return id.slice(0, len) + '...'
 }
 
 // ============================================
@@ -305,26 +294,318 @@ function ChannelField({ field, value, onChange }: ChannelFieldProps) {
 }
 
 // ============================================
-// Channel Card
+// IM Channel Instance Card (Sub-card)
 // ============================================
 
-interface ChannelCardProps {
-  def: ChannelDef
+interface InstanceCardProps {
+  instance: ImChannelInstanceConfig
+  status: ImChannelInstanceStatus | undefined
+  automationApps: { id: string; spec: { name: string } }[]
+  isExpanded: boolean
+  onToggle: () => void
+  onChange: (instance: ImChannelInstanceConfig) => void
+  onDelete: () => void
+  onReconnect: () => void
+}
+
+function InstanceCard({
+  instance,
+  status,
+  automationApps,
+  isExpanded,
+  onToggle,
+  onChange,
+  onDelete,
+  onReconnect,
+}: InstanceCardProps) {
+  const { t } = useTranslation()
+  const isConnected = status?.connected ?? false
+  const isEnabled = instance.enabled
+  const cfg = instance.config as Record<string, unknown>
+  const botId = (cfg.botId as string) || ''
+
+  // Resolve bound app name
+  const boundApp = automationApps.find(a => a.id === instance.appId)
+  const displayName = boundApp?.spec.name || t('Not bound')
+
+  // Status indicator
+  const statusDot = !isEnabled
+    ? 'bg-muted-foreground/30'
+    : isConnected
+      ? 'bg-green-500'
+      : 'bg-amber-500'
+
+  const statusText = !isEnabled
+    ? t('Disabled')
+    : isConnected
+      ? t('Connected')
+      : t('Disconnected')
+
+  const [showMenu, setShowMenu] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!showMenu) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false)
+        setShowDeleteConfirm(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showMenu])
+
+  // Debounced save for config fields.
+  // pendingSaveRef always holds the most-recent unsaved value so we can
+  // flush it synchronously on unmount (e.g. card collapsed within 500 ms).
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingSaveRef = useRef<ImChannelInstanceConfig | null>(null)
+  // Keep a stable ref to onChange so the unmount cleanup can call it without
+  // adding onChange to the flush effect's dependency array.
+  const onChangeRef = useRef(onChange)
+  useEffect(() => { onChangeRef.current = onChange })
+
+  const scheduleChange = useCallback((updated: ImChannelInstanceConfig) => {
+    pendingSaveRef.current = updated
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      onChangeRef.current(updated)
+      pendingSaveRef.current = null
+      saveTimerRef.current = null
+    }, 500)
+  }, [])
+
+  // Flush any pending debounced save when the card unmounts (e.g. card
+  // collapsed or parent component unmounts before the 500 ms timer fires).
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current !== null && pendingSaveRef.current !== null) {
+        clearTimeout(saveTimerRef.current)
+        onChangeRef.current(pendingSaveRef.current)
+        saveTimerRef.current = null
+        pendingSaveRef.current = null
+      }
+    }
+  }, [])
+
+  // Use local draft to avoid cursor jumping
+  const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
+  const currentCfg = draft ?? cfg
+
+  const handleConfigChange = (key: string, value: unknown) => {
+    const newCfg = { ...currentCfg, [key]: value }
+    setDraft(newCfg)
+    scheduleChange({ ...instance, config: newCfg })
+  }
+
+  const handleEnabledChange = () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    setDraft(null)
+    onChange({ ...instance, enabled: !isEnabled })
+  }
+
+  const handleAppChange = (appId: string) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    setDraft(null)
+    onChange({ ...instance, appId })
+  }
+
+  return (
+    <div className="border border-border/60 rounded-lg overflow-hidden bg-card/50">
+      {/* Instance header */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-muted/30 transition-colors"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot}`} />
+          <div className="text-left min-w-0">
+            <p className="text-sm font-medium truncate">{displayName}</p>
+            <p className="text-[11px] text-muted-foreground truncate">
+              Bot ID: {truncateId(botId) || t('Not set')}
+              {!isEnabled ? '' : isConnected ? '' : ` · ${statusText}`}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Context menu */}
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu) }}
+              className="p-1 rounded hover:bg-muted transition-colors"
+            >
+              <MoreVertical className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+            {showMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg z-10 min-w-[140px] py-1">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowMenu(false); onReconnect() }}
+                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition-colors flex items-center gap-2"
+                  disabled={!isEnabled}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {t('Reconnect')}
+                </button>
+                {showDeleteConfirm ? (
+                  // Inline confirmation — avoids misclick on a destructive action
+                  <div className="px-3 py-2 space-y-1.5">
+                    <p className="text-xs text-muted-foreground">{t('Delete this instance?')}</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setShowMenu(false); setShowDeleteConfirm(false); onDelete() }}
+                        className="flex-1 px-2 py-1 text-xs rounded bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                      >
+                        {t('Confirm')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(false) }}
+                        className="flex-1 px-2 py-1 text-xs rounded hover:bg-muted text-muted-foreground transition-colors"
+                      >
+                        {t('Cancel')}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true) }}
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted text-destructive transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {t('Delete')}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+          />
+        </div>
+      </button>
+
+      {/* Instance body */}
+      {isExpanded && (
+        <div className="px-3 pb-3 pt-2 border-t border-border/60 space-y-3 animate-in slide-in-from-top-1 duration-150">
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">{t('Enabled')}</p>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isEnabled}
+                onChange={handleEnabledChange}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
+                <div
+                  className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform ${
+                    isEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                  } mt-0.5`}
+                />
+              </div>
+            </label>
+          </div>
+
+          {/* Config fields */}
+          <div className="space-y-2.5">
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">
+                Bot ID <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={(currentCfg.botId as string) ?? ''}
+                onChange={(e) => handleConfigChange('botId', e.target.value)}
+                placeholder="aib-xxx"
+                className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">
+                Secret <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="password"
+                value={(currentCfg.secret as string) ?? ''}
+                onChange={(e) => handleConfigChange('secret', e.target.value)}
+                className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">WebSocket URL</label>
+              <input
+                type="text"
+                value={(currentCfg.wsUrl as string) ?? ''}
+                onChange={(e) => handleConfigChange('wsUrl', e.target.value)}
+                placeholder="wss://openws.work.weixin.qq.com"
+                className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          </div>
+
+          {/* Digital Human selector */}
+          <div className="space-y-1">
+            <label className="text-sm text-muted-foreground">
+              {t('Digital Human')} <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <Bot className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <select
+                value={instance.appId || ''}
+                onChange={(e) => handleAppChange(e.target.value)}
+                className="w-full bg-muted border border-border rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
+              >
+                <option value="">{t('Select digital human')}</option>
+                {automationApps.map(app => (
+                  <option key={app.id} value={app.id}>
+                    {app.spec.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t('All messages from this Bot will be handled by this digital human')}
+            </p>
+          </div>
+
+          {/* Connection status */}
+          {isEnabled && (
+            <div className={`flex items-center gap-1.5 text-sm ${isConnected ? 'text-green-500' : 'text-amber-500'}`}>
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-amber-500'}`} />
+              <span>{isConnected ? t('Connected') : t('Disconnected')}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================
+// Notification Channel Card
+// ============================================
+
+interface NotifyChannelCardProps {
+  def: NotifyChannelDef
   channelConfig: Record<string, unknown>
   isExpanded: boolean
   onToggleExpand: () => void
-  onSave: (def: ChannelDef, config: Record<string, unknown>) => Promise<void>
-  onTest?: (channelType: string) => void
-  isTesting?: boolean
+  onSave: (def: NotifyChannelDef, config: Record<string, unknown>) => Promise<void>
+  onTest: (channelType: string) => void
+  isTesting: boolean
   testResult?: TestResult
-  /** WeCom Bot specific: connection status */
-  botStatus?: { connected: boolean }
-  onReconnect?: () => void
-  /** Custom content rendered after fields (e.g. default digital human selector) */
-  children?: React.ReactNode
 }
 
-function ChannelCard({
+function NotifyChannelCard({
   def,
   channelConfig,
   isExpanded,
@@ -333,15 +614,11 @@ function ChannelCard({
   onTest,
   isTesting,
   testResult,
-  botStatus,
-  onReconnect,
-  children,
-}: ChannelCardProps) {
+}: NotifyChannelCardProps) {
   const { t } = useTranslation()
   const Icon = def.icon
   const isEnabled = Boolean(channelConfig?.enabled)
 
-  // Local draft state for debounced saves
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const currentConfig = draft ?? channelConfig
@@ -374,18 +651,11 @@ function ChannelCard({
     return getNestedValue(currentConfig || {}, path)
   }
 
-  // Status display
-  const statusLabel = def.id === 'wecom-bot'
-    ? (isEnabled && botStatus?.connected ? t('Connected') : isEnabled ? t('Disconnected') : t('Not configured'))
-    : (isEnabled ? t('Configured') : t('Not configured'))
-
-  const statusColor = def.id === 'wecom-bot'
-    ? (isEnabled && botStatus?.connected ? 'bg-green-500' : isEnabled ? 'bg-amber-500' : 'bg-muted-foreground/30')
-    : (isEnabled ? 'bg-green-500' : 'bg-muted-foreground/30')
+  const statusLabel = isEnabled ? t('Configured') : t('Not configured')
+  const statusColor = isEnabled ? 'bg-green-500' : 'bg-muted-foreground/30'
 
   return (
     <div className="border border-border rounded-lg overflow-hidden">
-      {/* Card Header */}
       <button
         type="button"
         onClick={onToggleExpand}
@@ -396,12 +666,8 @@ function ChannelCard({
           <div className="text-left min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className="font-medium text-sm">{t(def.labelKey)}</p>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                def.direction === 'bidirectional'
-                  ? 'bg-primary/10 text-primary'
-                  : 'bg-muted text-muted-foreground'
-              }`}>
-                {def.direction === 'bidirectional' ? t('Bidirectional') : t('One-way')}
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-muted text-muted-foreground">
+                {t('One-way')}
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5 hidden sm:block">{t(def.descriptionKey)}</p>
@@ -410,39 +676,25 @@ function ChannelCard({
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <span className="text-xs text-muted-foreground hidden sm:inline">{statusLabel}</span>
           <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-          <ChevronDown
-            className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-          />
+          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
         </div>
       </button>
 
-      {/* Card Body */}
       {isExpanded && (
         <div className="px-4 pb-4 pt-2 border-t border-border space-y-4 animate-in slide-in-from-top-1 duration-150">
-          {/* Enable toggle */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">{t('Enabled')}</p>
               <p className="text-xs text-muted-foreground">{t('Enable this channel')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isEnabled}
-                onChange={handleToggleEnabled}
-                className="sr-only peer"
-              />
+              <input type="checkbox" checked={isEnabled} onChange={handleToggleEnabled} className="sr-only peer" />
               <div className="w-11 h-6 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
-                <div
-                  className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform ${
-                    isEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                  } mt-0.5`}
-                />
+                <div className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform ${isEnabled ? 'translate-x-5' : 'translate-x-0.5'} mt-0.5`} />
               </div>
             </label>
           </div>
 
-          {/* Channel fields */}
           <div className="space-y-3">
             {def.fields.map((field) => (
               <ChannelField
@@ -454,61 +706,20 @@ function ChannelCard({
             ))}
           </div>
 
-          {/* Custom content (e.g. default digital human selector) */}
-          {children}
-
-          {/* Action buttons */}
           <div className="flex items-center gap-3 pt-2 flex-wrap">
-            {/* Test button (notification channels only) */}
-            {onTest && def.notifyType && (
-              <button
-                type="button"
-                onClick={() => onTest(def.notifyType!)}
-                disabled={isTesting || !isEnabled}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isTesting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Bell className="w-4 h-4" />
-                )}
-                {isTesting ? t('Testing...') : t('Test')}
-              </button>
-            )}
-
-            {/* Reconnect button (WeCom Bot only) */}
-            {def.id === 'wecom-bot' && isEnabled && onReconnect && (
-              <button
-                type="button"
-                onClick={onReconnect}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors"
-              >
-                <RefreshCw className="w-4 h-4" />
-                {t('Reconnect')}
-              </button>
-            )}
-
-            {/* Test result */}
+            <button
+              type="button"
+              onClick={() => onTest(def.notifyType)}
+              disabled={isTesting || !isEnabled}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}
+              {isTesting ? t('Testing...') : t('Test')}
+            </button>
             {testResult && (
               <div className={`flex items-center gap-1.5 text-sm ${testResult.success ? 'text-green-500' : 'text-red-500'}`}>
-                {testResult.success ? (
-                  <CheckCircle className="w-4 h-4" />
-                ) : (
-                  <XCircle className="w-4 h-4" />
-                )}
-                <span>
-                  {testResult.success
-                    ? t('Test passed')
-                    : testResult.error || t('Test failed')}
-                </span>
-              </div>
-            )}
-
-            {/* WeCom Bot connection status detail */}
-            {def.id === 'wecom-bot' && isEnabled && botStatus && (
-              <div className={`flex items-center gap-1.5 text-sm ${botStatus.connected ? 'text-green-500' : 'text-amber-500'}`}>
-                <div className={`w-2 h-2 rounded-full ${botStatus.connected ? 'bg-green-500' : 'bg-amber-500'}`} />
-                <span>{botStatus.connected ? t('Connected') : t('Disconnected')}</span>
+                {testResult.success ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                <span>{testResult.success ? t('Test passed') : testResult.error || t('Test failed')}</span>
               </div>
             )}
           </div>
@@ -526,131 +737,151 @@ export function MessageChannelsSection({ config, setConfig }: MessageChannelsSec
   const { t } = useTranslation()
 
   const [expandedChannels, setExpandedChannels] = useState<Set<string>>(new Set())
+  const [expandedInstances, setExpandedInstances] = useState<Set<string>>(new Set())
   const [testingChannel, setTestingChannel] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
-  const [botStatus, setBotStatus] = useState<{ connected: boolean }>({ connected: false })
+  const [imStatuses, setImStatuses] = useState<ImChannelInstanceStatus[]>([])
 
-  // Load automation apps for the default digital human selector
+  // Load automation apps for the digital human selector
   const { apps, loadApps } = useAppsStore()
   const automationApps = apps.filter(a => a.spec.type === 'automation')
 
-  useEffect(() => {
-    loadApps()
-  }, [loadApps])
+  useEffect(() => { loadApps() }, [loadApps])
 
-  // Poll WeCom Bot status
+  // Poll IM channel statuses
   useEffect(() => {
     let cancelled = false
-    async function fetchBotStatus() {
+    async function fetchStatuses() {
       try {
-        const res = await api.getWecomBotStatus() as { success: boolean; data?: { connected: boolean } }
+        const res = await api.imChannelsStatus() as { success: boolean; data?: ImChannelInstanceStatus[] }
         if (!cancelled && res.success && res.data) {
-          setBotStatus({ connected: res.data.connected })
+          setImStatuses(res.data)
         }
-      } catch {
-        // Ignore
-      }
+      } catch { /* ignore */ }
     }
-    fetchBotStatus()
-    const interval = setInterval(fetchBotStatus, 10_000)
+    fetchStatuses()
+    const interval = setInterval(fetchStatuses, 10_000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
+  // ── IM Channel instances from config ────────────────────────────
+  const instances = config?.imChannels?.instances ?? []
+
+  const saveInstances = useCallback(async (newInstances: ImChannelInstanceConfig[]) => {
+    if (!config) return
+    const imChannels = { ...config.imChannels, instances: newInstances }
+    try {
+      await api.setConfig({ imChannels })
+      setConfig({ ...config, imChannels } as HaloConfig)
+      // Reload instances in the backend so new config takes effect
+      api.imChannelsReload().catch(() => {})
+    } catch (error) {
+      console.error('[MessageChannelsSection] Failed to save IM instances:', error)
+    }
+  }, [config, setConfig])
+
+  const handleInstanceChange = useCallback((updated: ImChannelInstanceConfig) => {
+    const newInstances = instances.map(i => i.id === updated.id ? updated : i)
+    saveInstances(newInstances)
+  }, [instances, saveInstances])
+
+  const handleAddInstance = useCallback(() => {
+    const newInstance: ImChannelInstanceConfig = {
+      id: generateId(),
+      type: 'wecom-bot',
+      enabled: false,
+      appId: '',
+      config: { botId: '', secret: '', wsUrl: '' },
+    }
+    const newInstances = [...instances, newInstance]
+    saveInstances(newInstances)
+    setExpandedInstances(prev => new Set(prev).add(newInstance.id))
+  }, [instances, saveInstances])
+
+  const handleDeleteInstance = useCallback((instanceId: string) => {
+    const newInstances = instances.filter(i => i.id !== instanceId)
+    saveInstances(newInstances)
+  }, [instances, saveInstances])
+
+  const handleReconnectInstance = useCallback(async (instanceId: string) => {
+    try {
+      await api.imChannelsReconnect(instanceId)
+    } catch { /* ignore */ }
+  }, [])
+
+  // ── Notification channel handling ──────────────────────────────
   const toggleExpanded = useCallback((channelId: string) => {
-    setExpandedChannels((prev) => {
+    setExpandedChannels(prev => {
       const next = new Set(prev)
-      if (next.has(channelId)) {
-        next.delete(channelId)
-      } else {
-        next.add(channelId)
-      }
+      if (next.has(channelId)) next.delete(channelId)
+      else next.add(channelId)
       return next
     })
   }, [])
 
-  const handleSaveChannel = useCallback(async (def: ChannelDef, channelConfig: Record<string, unknown>) => {
-    if (!config) return
+  const toggleInstanceExpanded = useCallback((instanceId: string) => {
+    setExpandedInstances(prev => {
+      const next = new Set(prev)
+      if (next.has(instanceId)) next.delete(instanceId)
+      else next.add(instanceId)
+      return next
+    })
+  }, [])
 
-    if (def.id === 'wecom-bot') {
-      // Save WeCom Bot config
-      const updatedConfig = {
-        ...config,
-        wecomBot: channelConfig,
-      } as HaloConfig
-      try {
-        await api.setConfig({ wecomBot: updatedConfig.wecomBot })
-        setConfig(updatedConfig)
-      } catch (error) {
-        console.error('[MessageChannelsSection] Failed to save WeCom Bot config:', error)
-      }
-    } else if (def.notifyType) {
-      // Save notification channel config
-      const updatedConfig = {
-        ...config,
-        notificationChannels: {
-          ...config.notificationChannels,
-          [def.notifyType]: channelConfig,
-        },
-      } as HaloConfig
-      try {
-        await api.setConfig({ notificationChannels: updatedConfig.notificationChannels })
-        setConfig(updatedConfig)
-        api.clearNotificationChannelCache().catch(() => {})
-      } catch (error) {
-        console.error('[MessageChannelsSection] Failed to save channel config:', error)
-      }
+  const handleSaveNotifyChannel = useCallback(async (def: NotifyChannelDef, channelConfig: Record<string, unknown>) => {
+    if (!config) return
+    const updatedConfig = {
+      ...config,
+      notificationChannels: {
+        ...config.notificationChannels,
+        [def.notifyType]: channelConfig,
+      },
+    } as HaloConfig
+    try {
+      await api.setConfig({ notificationChannels: updatedConfig.notificationChannels })
+      setConfig(updatedConfig)
+      api.clearNotificationChannelCache().catch(() => {})
+    } catch (error) {
+      console.error('[MessageChannelsSection] Failed to save channel config:', error)
     }
   }, [config, setConfig])
 
   const handleTestChannel = useCallback(async (channelType: string) => {
     setTestingChannel(channelType)
-    setTestResults((prev) => {
-      const next = { ...prev }
-      delete next[channelType]
-      return next
-    })
+    setTestResults(prev => { const next = { ...prev }; delete next[channelType]; return next })
     try {
       const result = await api.testNotificationChannel(channelType) as { data: TestResult }
-      setTestResults((prev) => ({ ...prev, [channelType]: result.data }))
+      setTestResults(prev => ({ ...prev, [channelType]: result.data }))
     } catch {
-      setTestResults((prev) => ({ ...prev, [channelType]: { success: false, error: t('Test failed') } }))
+      setTestResults(prev => ({ ...prev, [channelType]: { success: false, error: t('Test failed') } }))
     } finally {
       setTestingChannel(null)
     }
   }, [t])
 
-  const handleReconnect = useCallback(async () => {
-    try {
-      await api.reconnectWecomBot()
-    } catch {
-      // Ignore
-    }
-  }, [])
-
-  const handleDefaultAppChange = useCallback(async (appId: string) => {
-    if (!config) return
-    const imChannels = { ...config.imChannels, defaultAppId: appId || undefined }
-    try {
-      await api.setConfig({ imChannels })
-      setConfig({ ...config, imChannels } as HaloConfig)
-    } catch (error) {
-      console.error('[MessageChannelsSection] Failed to save default app:', error)
-    }
-  }, [config, setConfig])
-
-  const getChannelConfig = (def: ChannelDef): Record<string, unknown> => {
-    if (def.id === 'wecom-bot') {
-      const bot = config?.wecomBot as Record<string, unknown> | undefined
-      return bot ?? {}
-    }
-    if (def.notifyType) {
-      const channels = config?.notificationChannels as NotificationChannelsConfig | undefined
-      if (!channels) return {}
-      const raw = channels[def.notifyType]
-      return raw ? (raw as unknown as Record<string, unknown>) : {}
-    }
-    return {}
+  const getNotifyConfig = (def: NotifyChannelDef): Record<string, unknown> => {
+    const channels = config?.notificationChannels as NotificationChannelsConfig | undefined
+    if (!channels) return {}
+    const raw = channels[def.notifyType]
+    return raw ? (raw as unknown as Record<string, unknown>) : {}
   }
+
+  // Summary for the IM channel card header
+  const wecomInstances = instances.filter(i => i.type === 'wecom-bot')
+  const connectedCount = imStatuses.filter(s => s.connected).length
+  const imStatusSummary = wecomInstances.length === 0
+    ? t('Not configured')
+    : connectedCount > 0
+      ? `${connectedCount} ${t('connected')}`
+      : t('Disconnected')
+
+  const imStatusColor = wecomInstances.length === 0
+    ? 'bg-muted-foreground/30'
+    : connectedCount > 0
+      ? 'bg-green-500'
+      : 'bg-amber-500'
+
+  const isImExpanded = expandedChannels.has('im-wecom-bot')
 
   return (
     <section id="message-channels" className="bg-card rounded-xl border border-border p-4 sm:p-6">
@@ -662,47 +893,84 @@ export function MessageChannelsSection({ config, setConfig }: MessageChannelsSec
       </div>
 
       <div className="space-y-3">
-        {CHANNEL_DEFS.map((def) => (
-          <ChannelCard
-            key={def.id}
-            def={def}
-            channelConfig={getChannelConfig(def)}
-            isExpanded={expandedChannels.has(def.id)}
-            onToggleExpand={() => toggleExpanded(def.id)}
-            onSave={handleSaveChannel}
-            onTest={def.notifyType ? handleTestChannel : undefined}
-            isTesting={testingChannel === def.notifyType}
-            testResult={def.notifyType ? testResults[def.notifyType] : undefined}
-            botStatus={def.id === 'wecom-bot' ? botStatus : undefined}
-            onReconnect={def.id === 'wecom-bot' ? handleReconnect : undefined}
+        {/* ── WeCom Intelligent Bot (multi-instance) ─────────────────── */}
+        <div className="border border-border rounded-lg overflow-hidden">
+          {/* Provider card header */}
+          <button
+            type="button"
+            onClick={() => toggleExpanded('im-wecom-bot')}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
           >
-            {/* Default Digital Human selector — WeCom Bot only */}
-            {def.id === 'wecom-bot' && (
-              <div className="space-y-1">
-                <label className="text-sm text-muted-foreground">
-                  {t('Default Digital Human')}
-                </label>
-                <div className="relative">
-                  <Bot className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                  <select
-                    value={config?.imChannels?.defaultAppId || ''}
-                    onChange={(e) => handleDefaultAppChange(e.target.value)}
-                    className="w-full bg-muted border border-border rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
-                  >
-                    <option value="">{t('Not configured')}</option>
-                    {automationApps.map(app => (
-                      <option key={app.id} value={app.id}>
-                        {app.spec.name}
-                      </option>
-                    ))}
-                  </select>
+            <div className="flex items-center gap-3 min-w-0">
+              <MessageSquare className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+              <div className="text-left min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-medium text-sm">{t('WeCom Intelligent Bot')}</p>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-primary/10 text-primary">
+                    {t('Bidirectional')}
+                  </span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {t('Inbound messages will be routed to this digital human for conversation')}
+                <p className="text-xs text-muted-foreground mt-0.5 hidden sm:block">
+                  {t('Bidirectional messaging via WeCom AI Bot WebSocket')}
                 </p>
               </div>
-            )}
-          </ChannelCard>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+              <span className="text-xs text-muted-foreground hidden sm:inline">{imStatusSummary}</span>
+              <div className={`w-2 h-2 rounded-full ${imStatusColor}`} />
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${isImExpanded ? 'rotate-180' : ''}`} />
+            </div>
+          </button>
+
+          {/* Instance list */}
+          {isImExpanded && (
+            <div className="px-4 pb-4 pt-2 border-t border-border space-y-2.5 animate-in slide-in-from-top-1 duration-150">
+              {wecomInstances.length === 0 && (
+                <p className="text-sm text-muted-foreground py-2 text-center">
+                  {t('No Bot instances configured. Click the button below to add one.')}
+                </p>
+              )}
+
+              {wecomInstances.map(inst => (
+                <InstanceCard
+                  key={inst.id}
+                  instance={inst}
+                  status={imStatuses.find(s => s.id === inst.id)}
+                  automationApps={automationApps}
+                  isExpanded={expandedInstances.has(inst.id)}
+                  onToggle={() => toggleInstanceExpanded(inst.id)}
+                  onChange={handleInstanceChange}
+                  onDelete={() => handleDeleteInstance(inst.id)}
+                  onReconnect={() => handleReconnectInstance(inst.id)}
+                />
+              ))}
+
+              {/* Add instance button */}
+              <button
+                type="button"
+                onClick={handleAddInstance}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg text-muted-foreground hover:text-foreground hover:border-primary/50 hover:bg-muted/30 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                {t('Add Bot')}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ── Notification channels (one-way) ───────────────────────── */}
+        {NOTIFY_CHANNEL_DEFS.map((def) => (
+          <NotifyChannelCard
+            key={def.id}
+            def={def}
+            channelConfig={getNotifyConfig(def)}
+            isExpanded={expandedChannels.has(def.id)}
+            onToggleExpand={() => toggleExpanded(def.id)}
+            onSave={handleSaveNotifyChannel}
+            onTest={handleTestChannel}
+            isTesting={testingChannel === def.notifyType}
+            testResult={testResults[def.notifyType]}
+          />
         ))}
       </div>
     </section>

@@ -35,6 +35,7 @@ import { getApiCredentials, getApiCredentialsForSource, getHeadlessElectronPath,
 import { resolveCredentialsForSdk, buildBaseSdkOptions } from '../../services/agent/sdk-config'
 import { getOrCreateV2Session } from '../../services/agent/session-manager'
 import { createAIBrowserMcpServer, createScopedBrowserContext } from '../../services/ai-browser'
+import { createWebSearchMcpServer } from '../../services/web-search'
 import { getConfig } from '../../services/config.service'
 import { getSpace } from '../../services/space.service'
 import { openSessionWriter, type SessionWriter } from './session-store'
@@ -319,7 +320,6 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
       electronPath,
       spaceId: app.spaceId!,
       conversationId: sessionKey, // Use session key as conversation ID
-      abortController,
       stderrHandler: (data: string) => {
         console.error(`[Runtime][${app.id}] CLI stderr:`, data)
       },
@@ -328,6 +328,7 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
         'halo-memory': memoryMcpServer,     // built-in: persistent memory
         'halo-report': reportMcpServer,     // built-in: completion signal
         'halo-notify': notifyMcpServer,     // built-in: user notification
+        'web-search': createWebSearchMcpServer(), // built-in: web search
         ...(usesAIBrowser ? { 'ai-browser': createAIBrowserMcpServer(scopedBrowserCtx, workDir) } : {}),
       },
     })
@@ -603,20 +604,15 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
     }
   } finally {
     // ── 8. Close session ────────────────────────────────────
-    // On escalation, keep the session alive so the follow-up run can
-    // potentially reuse the in-memory process (fast path). The session
-    // process will be reclaimed by the OS when Electron exits, or die
-    // naturally when idle. Disk-persisted history ensures recovery
-    // regardless of process state.
-    if (session && !escalationEntryId) {
+    // Always close the session. Escalation follow-up recovers context
+    // via CC's disk-based resume (sessionId), not process reuse.
+    if (session) {
       try {
         session.close()
         console.log(`[Runtime][${runTag}] Session closed`)
       } catch (closeErr) {
         console.error(`[Runtime] Failed to close session: run=${runId}:`, closeErr)
       }
-    } else if (session && escalationEntryId) {
-      console.log(`[Runtime][${runTag}] Session kept alive for escalation context recovery`)
     }
 
     // ── 9. Destroy scoped browser context (cleans up owned views) ──

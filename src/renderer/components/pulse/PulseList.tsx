@@ -75,16 +75,26 @@ export function PulseList({ maxHeight, onItemClick, compact = false }: PulseList
   const haloSpace = useSpaceStore(state => state.haloSpace)
   const spaces = useSpaceStore(state => state.spaces)
 
-  // Enrich items with proper space names from space store
+  // Build set of valid space IDs for filtering orphan items
+  const validSpaceIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (haloSpace) ids.add(haloSpace.id)
+    for (const s of spaces) ids.add(s.id)
+    return ids
+  }, [haloSpace, spaces])
+
+  // Enrich items with proper space names and filter out orphans from deleted spaces
   const items = useMemo(() => {
-    return rawItems.map(item => {
-      if (item.spaceName !== item.spaceId) return item
-      const space = haloSpace?.id === item.spaceId
-        ? haloSpace
-        : spaces.find(s => s.id === item.spaceId)
-      return space ? { ...item, spaceName: space.isTemp ? 'Halo' : space.name } : item
-    })
-  }, [rawItems, haloSpace, spaces])
+    return rawItems
+      .filter(item => validSpaceIds.has(item.spaceId))
+      .map(item => {
+        if (item.spaceName !== item.spaceId) return item
+        const space = haloSpace?.id === item.spaceId
+          ? haloSpace
+          : spaces.find(s => s.id === item.spaceId)
+        return space ? { ...item, spaceName: space.isTemp ? 'Halo' : space.name } : item
+      })
+  }, [rawItems, haloSpace, spaces, validSpaceIds])
 
   const handleItemClick = useCallback((item: PulseItem) => {
     navigateToConversation(item.spaceId, item.conversationId)

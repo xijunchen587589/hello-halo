@@ -21,7 +21,7 @@
 
 import { create } from 'zustand'
 import { api } from '../api'
-import type { Conversation, ConversationMeta, Message, ToolCall, Artifact, Thought, AgentEventBase, ImageAttachment, CompactInfo, CanvasContext, AgentErrorType, PendingQuestion, Question, TaskStatus, PulseItem } from '../types'
+import type { Conversation, ConversationMeta, Message, ToolCall, Artifact, Thought, AgentEventBase, ImageAttachment, CompactInfo, CanvasContext, AgentErrorType, PendingQuestion, Question, TaskStatus, PulseItem, TaskProgress } from '../types'
 import type { SessionInitInfo } from '../types/slash-command'
 import { PULSE_READ_GRACE_PERIOD_MS } from '../types'
 import { canvasLifecycle } from '../services/canvas-lifecycle'
@@ -54,6 +54,11 @@ interface SessionState {
   textBlockVersion: number
   // Pending question from AskUserQuestion tool
   pendingQuestion: PendingQuestion | null
+  // Messages queued for mid-turn injection (shown below StreamingBubble during generation)
+  queuedMessages: string[]
+  // Monotonically increasing turn counter — used to detect stale handleAgentComplete callbacks.
+  // Incremented by sendMessage() and handleAgentTurnStart(); checked by handleAgentComplete().
+  turnId: number
 }
 
 // Create empty session state
@@ -69,7 +74,9 @@ function createEmptySessionState(): SessionState {
     errorType: null,
     compactInfo: null,
     textBlockVersion: 0,
-    pendingQuestion: null
+    pendingQuestion: null,
+    queuedMessages: [],
+    turnId: 0,
   }
 }
 
@@ -143,6 +150,7 @@ interface ChatState {
   // Messaging
   sendMessage: (content: string, images?: ImageAttachment[], aiBrowserEnabled?: boolean, thinkingEnabled?: boolean) => Promise<void>
   stopGeneration: (conversationId?: string) => Promise<void>
+  injectMessage: (conversationId: string, message: string) => Promise<void>
 
   // Tool approval
   approveTool: (conversationId: string) => Promise<void>
@@ -168,9 +176,11 @@ interface ChatState {
     isToolInput?: boolean
     toolResult?: { output: string; isError: boolean; timestamp: string }
     isToolResult?: boolean
+    taskProgress?: TaskProgress
   }) => void
   handleAgentCompact: (data: AgentEventBase & { trigger: 'manual' | 'auto'; preTokens: number }) => void
   handleAgentSessionInfo: (data: AgentEventBase & SessionInitInfo) => void
+  handleAgentTurnStart: (data: AgentEventBase & { autonomous?: boolean }) => void
 
   // AskUserQuestion handlers
   handleAskQuestion: (data: AgentEventBase & { id: string; questions: Question[] }) => void
@@ -188,6 +198,7 @@ interface ChatState {
 
   // Session management
   resetSession: (conversationId: string) => void
+  setSessionError: (conversationId: string, error: string) => void
 
   // Cleanup
   reset: () => void
@@ -394,14 +405,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Select conversation (changes pointer, loads full conversation on-demand)
   selectConversation: async (conversationId) => {
-    const { currentSpaceId, spaceStates, conversationCache } = get()
+    let { currentSpaceId } = get()
     if (!currentSpaceId) return
 
-    const spaceState = spaceStates.get(currentSpaceId)
+    let spaceState = get().spaceStates.get(currentSpaceId)
     if (!spaceState) return
 
-    const conversationMeta = spaceState.conversations.find((c) => c.id === conversationId)
-    if (!conversationMeta) return
+    let conversationMeta = spaceState.conversations.find((c) => c.id === conversationId)
+
+    // Conversation may have been created remotely — reload and retry
+    if (!conversationMeta) {
+      console.log(`[ChatStore] selectConversation: meta not found for ${conversationId}, reloading space ${currentSpaceId}`)
+      await get().loadConversations(currentSpaceId)
+      spaceState = get().spaceStates.get(currentSpaceId)
+      if (!spaceState) return
+      conversationMeta = spaceState.conversations.find((c) => c.id === conversationId)
+
+      if (!conversationMeta) {
+        // Still not found after reload — clean up stale pulse state to prevent stuck entries
+        console.log(`[ChatStore] selectConversation: ${conversationId} not found after reload, cleaning up stale state`)
+        set((s) => {
+          const newUnseenCompletions = new Map(s.unseenCompletions)
+          newUnseenCompletions.delete(conversationId)
+          const newPulseReadAt = new Map(s.pulseReadAt)
+          newPulseReadAt.delete(conversationId)
+          return { unseenCompletions: newUnseenCompletions, pulseReadAt: newPulseReadAt }
+        })
+        return
+      }
+    }
 
     // Subscribe to conversation events (for remote mode)
     api.subscribeToConversation(conversationId)
@@ -409,8 +441,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Update the pointer + move unseen/error items to readAt grace period
     set((state) => {
       const newSpaceStates = new Map(state.spaceStates)
-      newSpaceStates.set(currentSpaceId, {
-        ...spaceState,
+      const latestSpaceState = newSpaceStates.get(currentSpaceId!)
+      if (!latestSpaceState) return state
+      newSpaceStates.set(currentSpaceId!, {
+        ...latestSpaceState,
         currentConversationId: conversationId
       })
 
@@ -467,7 +501,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().cleanupPulseReadAt()
 
     // Load full conversation if not in cache
-    if (!conversationCache.has(conversationId)) {
+    if (!get().conversationCache.has(conversationId)) {
       set({ isLoadingConversation: true })
       console.log(`[ChatStore] Loading full conversation: ${conversationId}`)
 
@@ -693,6 +727,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Initialize/reset session state for this conversation
       set((state) => {
         const newSessions = new Map(state.sessions)
+        const prevSession = newSessions.get(conversationId)
         newSessions.set(conversationId, {
           isGenerating: true,
           streamingContent: '',
@@ -704,7 +739,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           errorType: null,
           compactInfo: null,
           textBlockVersion: 0,
-          pendingQuestion: null
+          pendingQuestion: null,
+          queuedMessages: [],
+          turnId: (prevSession?.turnId ?? 0) + 1,
         })
         return { sessions: newSessions }
       })
@@ -829,6 +866,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch (error) {
       console.error('Failed to stop generation:', error)
+    }
+  },
+
+  // Inject a mid-turn message into an active session (Agent Team mode).
+  // The message is optimistically shown in the queued panel, then sent to the main process.
+  injectMessage: async (conversationId: string, message: string) => {
+    const trimmed = message.trim()
+    if (!trimmed) return
+
+    // Optimistic UI: add to queue for immediate feedback
+    set((state) => {
+      const newSessions = new Map(state.sessions)
+      const session = newSessions.get(conversationId) || createEmptySessionState()
+      newSessions.set(conversationId, {
+        ...session,
+        queuedMessages: [...session.queuedMessages, trimmed]
+      })
+      return { sessions: newSessions }
+    })
+
+    try {
+      await api.injectMessage({ conversationId, message: trimmed })
+    } catch (error) {
+      console.error('[ChatStore] injectMessage failed:', error)
+      // Roll back on failure
+      set((state) => {
+        const newSessions = new Map(state.sessions)
+        const session = newSessions.get(conversationId)
+        if (session) {
+          newSessions.set(conversationId, {
+            ...session,
+            queuedMessages: session.queuedMessages.filter((m) => m !== trimmed)
+          })
+        }
+        return { sessions: newSessions }
+      })
     }
   },
 
@@ -1005,16 +1078,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!isUserViewingThisConversation) {
       // Find the conversation title from any space state
       let title = 'Conversation'
+      let metaFound = false
       for (const [, ss] of state.spaceStates) {
         const meta = ss.conversations.find(c => c.id === conversationId)
-        if (meta) { title = meta.title; break }
+        if (meta) { title = meta.title; metaFound = true; break }
       }
+
+      // Conversation may have been created remotely (web/mobile) — sync local state
+      if (!metaFound) {
+        console.log(`[ChatStore] handleAgentComplete: conversation ${conversationId} not in local state, reloading space ${spaceId}`)
+        await get().loadConversations(spaceId)
+        // Re-read title from freshly loaded data
+        for (const [, ss] of get().spaceStates) {
+          const meta = ss.conversations.find(c => c.id === conversationId)
+          if (meta) { title = meta.title; break }
+        }
+      }
+
       set((s) => {
         const newUnseenCompletions = new Map(s.unseenCompletions)
         newUnseenCompletions.set(conversationId, { spaceId, title })
         return { unseenCompletions: newUnseenCompletions }
       })
     }
+
+    // Capture turnId BEFORE any async work. If a new turn starts (sendMessage or
+    // handleAgentTurnStart) while we're awaiting getConversation, turnId will have
+    // incremented. We use this to avoid overwriting the new turn's session state.
+    const completeTurnId = get().sessions.get(conversationId)?.turnId ?? 0
 
     // First, just stop streaming indicator but keep isGenerating=true
     // This keeps the streaming bubble visible during backend load
@@ -1072,24 +1163,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
             })
           }
 
-          // Clear session state atomically with conversation update
-          // Error is now persisted in message.error, so clear session-level error.
-          // IMPORTANT: interrupted errors arrive AFTER agent:complete via a separate IPC event.
-          // Because this reload is async, handleAgentError may have already written the
-          // interrupted error into the session by the time we get here. We must NOT clear it.
+          // Check if a new turn has started while we were awaiting getConversation.
+          // If so, skip session state clearing to avoid overwriting the new turn's state
+          // (isGenerating, streamingContent, thoughts, etc.).
           const newSessions = new Map(state.sessions)
           const currentSession = newSessions.get(conversationId)
-          if (currentSession) {
+          if (currentSession && currentSession.turnId === completeTurnId) {
+            // Same turn — safe to clear session state
+            // Error is now persisted in message.error, so clear session-level error.
+            // IMPORTANT: interrupted errors arrive AFTER agent:complete via a separate IPC event.
+            // Because this reload is async, handleAgentError may have already written the
+            // interrupted error into the session by the time we get here. We must NOT clear it.
             newSessions.set(conversationId, {
               ...currentSession,
               isGenerating: false,
               streamingContent: '',
               compactInfo: null,  // Clear temporary compact notification
               pendingQuestion: null,  // Clear pending question
+              queuedMessages: [],  // Clear mid-turn queued messages
               // Preserve interrupted errors — they may have arrived during the async reload
               error: currentSession.errorType === 'interrupted' ? currentSession.error : null,
               errorType: currentSession.errorType === 'interrupted' ? currentSession.errorType : null
             })
+          } else if (currentSession) {
+            console.log(`[ChatStore] Skipping session clear for [${conversationId}]: new turn started (completeTurnId=${completeTurnId}, currentTurnId=${currentSession.turnId})`)
           }
 
           return {
@@ -1101,18 +1198,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
         console.log(`[ChatStore] Conversation reloaded from backend [${conversationId}]`)
       } else {
         // Conversation not found in backend (e.g. virtual conversationIds like "app-chat:*")
-        // Still must clear generating state to unblock UI
+        // Still must clear generating state to unblock UI.
+        // IMPORTANT: also clear thoughts and isThinking here — for IM sessions there is no
+        // sendMessage call to reset these between turns, so stale thoughts from a previous
+        // turn would otherwise accumulate and show up in the next turn's ThoughtProcess.
         set((state) => {
           const newSessions = new Map(state.sessions)
           const currentSession = newSessions.get(conversationId)
-          if (currentSession) {
+          if (currentSession && currentSession.turnId === completeTurnId) {
             newSessions.set(conversationId, {
               ...currentSession,
               isGenerating: false,
+              isThinking: false,
               streamingContent: '',
+              thoughts: [],
               compactInfo: null,
               pendingQuestion: null,
+              queuedMessages: [],  // Clear mid-turn queued messages
+              error: currentSession.errorType === 'interrupted' ? currentSession.error : null,
+              errorType: currentSession.errorType === 'interrupted' ? currentSession.errorType : null,
             })
+          } else if (currentSession) {
+            console.log(`[ChatStore] Skipping session clear for [${conversationId}]: new turn started`)
           }
           return { sessions: newSessions }
         })
@@ -1120,17 +1227,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch (error) {
       console.error('[ChatStore] Failed to reload conversation:', error)
-      // Even on error, must clear state to avoid stale content
+      // Even on error, must clear state to avoid stale content — but only if turn hasn't changed
       set((state) => {
         const newSessions = new Map(state.sessions)
         const currentSession = newSessions.get(conversationId)
-        if (currentSession) {
+        if (currentSession && currentSession.turnId === completeTurnId) {
           newSessions.set(conversationId, {
             ...currentSession,
             isGenerating: false,
+            isThinking: false,
             streamingContent: '',
+            thoughts: [],
             compactInfo: null,  // Clear temporary compact notification
-            pendingQuestion: null  // Clear pending question
+            pendingQuestion: null,  // Clear pending question
+            queuedMessages: [],  // Clear mid-turn queued messages
           })
         }
         return { sessions: newSessions }
@@ -1166,10 +1276,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Handle thought delta - incremental update to a streaming thought
   handleAgentThoughtDelta: (data) => {
-    const { conversationId, thoughtId, delta, content, toolInput, isComplete, isReady, isToolInput, toolResult, isToolResult } = data
-    // Don't log every delta to reduce console noise (only log on complete or toolResult)
-    if (isComplete || isToolResult) {
-      console.log(`[ChatStore] handleAgentThoughtDelta [${conversationId}]: thought ${thoughtId} ${isToolResult ? 'toolResult merged' : 'complete'}`)
+    const { conversationId, thoughtId, delta, content, toolInput, isComplete, isReady, isToolInput, toolResult, isToolResult, taskProgress } = data
+    // Don't log every delta to reduce console noise (only log on complete, toolResult, or taskProgress)
+    if (isComplete || isToolResult || taskProgress) {
+      console.log(`[ChatStore] handleAgentThoughtDelta [${conversationId}]: thought ${thoughtId} ${isToolResult ? 'toolResult merged' : taskProgress ? 'taskProgress' : 'complete'}`)
     }
 
     set((state) => {
@@ -1189,7 +1299,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const thought = { ...newThoughts[thoughtIndex] }
 
       // Apply delta or content update
-      if (isToolResult && toolResult) {
+      if (taskProgress) {
+        // Task/Agent lifecycle update — update progress on the parent Task thought
+        thought.taskProgress = taskProgress
+      } else if (isToolResult && toolResult) {
         // Tool result merge - add result to tool_use thought
         thought.toolResult = toolResult
       } else if (isToolInput) {
@@ -1247,6 +1360,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newSessionInitInfo = new Map(state.sessionInitInfo)
       newSessionInitInfo.set(conversationId, { slashCommands, skills, agents })
       return { sessionInitInfo: newSessionInitInfo }
+    })
+  },
+
+  // Handle autonomous turn start — CC produced output without user send
+  // (e.g., Agent Team sub-agent message triggered a new turn)
+  handleAgentTurnStart: (data) => {
+    const { conversationId } = data as AgentEventBase & { autonomous?: boolean }
+    console.log(`[ChatStore] handleAgentTurnStart [${conversationId}]: autonomous turn detected`)
+
+    set((state) => {
+      const newSessions = new Map(state.sessions)
+      const prevSession = newSessions.get(conversationId)
+      newSessions.set(conversationId, {
+        isGenerating: true,
+        streamingContent: '',
+        isStreaming: false,
+        thoughts: [],
+        isThinking: true,
+        pendingToolApproval: null,
+        error: null,
+        errorType: null,
+        compactInfo: null,
+        textBlockVersion: 0,
+        pendingQuestion: null,
+        queuedMessages: [],
+        turnId: (prevSession?.turnId ?? 0) + 1,
+      })
+      return { sessions: newSessions }
     })
   },
 
@@ -1383,6 +1524,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
+  // Set error state on a session (e.g., app chat send failure)
+  setSessionError: (conversationId: string, error: string) => {
+    set((state) => {
+      const newSessions = new Map(state.sessions)
+      const session = newSessions.get(conversationId) || createEmptySessionState()
+      newSessions.set(conversationId, {
+        ...session,
+        error,
+        isGenerating: false,
+        isThinking: false,
+      })
+      return { sessions: newSessions }
+    })
+  },
+
   // Reset all state (use sparingly - e.g., logout)
   reset: () => {
     if (_pulseCleanupTimer) { clearTimeout(_pulseCleanupTimer); _pulseCleanupTimer = null }
@@ -1402,12 +1558,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  // Reset a specific space's state (use when needed)
+  // Reset a specific space's state — cleans up all conversation-level data
+  // associated with the space (cache, sessions, pulse entries).
+  // Called when a space is deleted to prevent orphan data.
   resetSpace: (spaceId: string) => {
     set((state) => {
+      // Collect conversationIds belonging to this space before removing the entry
+      const spaceState = state.spaceStates.get(spaceId)
+      const orphanIds = new Set(
+        spaceState?.conversations.map(c => c.id) ?? []
+      )
+
       const newSpaceStates = new Map(state.spaceStates)
       newSpaceStates.delete(spaceId)
-      return { spaceStates: newSpaceStates }
+
+      // Clean up conversation-level maps for orphan IDs
+      const newCache = new Map(state.conversationCache)
+      const newSessions = new Map(state.sessions)
+      const newUnseen = new Map(state.unseenCompletions)
+      const newPulseReadAt = new Map(state.pulseReadAt)
+
+      for (const id of orphanIds) {
+        newCache.delete(id)
+        newSessions.delete(id)
+        newUnseen.delete(id)
+        newPulseReadAt.delete(id)
+      }
+
+      // Also clean unseenCompletions/pulseReadAt that reference this spaceId
+      // but weren't in the conversations list (e.g. completed after last metadata load)
+      for (const [id, info] of newUnseen) {
+        if (info.spaceId === spaceId) newUnseen.delete(id)
+      }
+      for (const [id, info] of newPulseReadAt) {
+        if (info.spaceId === spaceId) newPulseReadAt.delete(id)
+      }
+
+      return {
+        spaceStates: newSpaceStates,
+        conversationCache: newCache,
+        sessions: newSessions,
+        unseenCompletions: newUnseen,
+        pulseReadAt: newPulseReadAt,
+      }
     })
   }
 }))

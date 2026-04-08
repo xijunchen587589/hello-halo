@@ -48,6 +48,7 @@ import { initAppRuntime, shutdownAppRuntime } from '../apps/runtime'
 import { registerAppHandlers } from '../ipc/app'
 import { registerNotificationChannelHandlers } from '../ipc/notification-channels'
 import { registerWecomBotHandlers } from '../ipc/wecom-bot'
+import { registerImChannelHandlers } from '../ipc/im-channels'
 import { registerImSessionHandlers } from '../ipc/im-sessions'
 import { registerStoreHandlers } from '../ipc/store'
 import { registerCliConfigHandlers } from '../ipc/cli-config'
@@ -175,8 +176,11 @@ export function initializeExtendedServices(): void {
   // Notification channel IPC handlers (notify-channels:test, etc.)
   registerNotificationChannelHandlers()
 
-  // WeCom Bot IPC handlers (wecom-bot:status, wecom-bot:reconnect)
+  // WeCom Bot IPC handlers — legacy compat, delegates to ImChannelManager
   registerWecomBotHandlers()
+
+  // IM Channel IPC handlers (multi-instance: im-channels:status, im-channels:reconnect, etc.)
+  registerImChannelHandlers()
 
   // IM Session IPC handlers (im-sessions:list, im-sessions:set-proactive)
   registerImSessionHandlers()

@@ -11,7 +11,8 @@
  *
  * The V2 session is keyed by "app-chat:{appId}" for reuse across messages.
  * Messages are persisted to JSONL ({spacePath}/.halo/apps/{appId}/runs/chat.jsonl)
- * for reload recovery.
+ * for reload recovery. Session IDs are persisted for SDK-level resume when the
+ * V2 process is rebuilt (idle timeout, crash, config change).
  *
  * Design:
  * - Uses stream-processor.ts for all streaming logic (shared with main agent)
@@ -35,6 +36,7 @@ import {
 } from '../../services/agent/helpers'
 import { emitAgentEvent } from '../../services/agent/events'
 import { resolveCredentialsForSdk, buildBaseSdkOptions } from '../../services/agent/sdk-config'
+import { createCanUseTool } from '../../services/agent/permission-handler'
 import { createAIBrowserMcpServer, createScopedBrowserContext } from '../../services/ai-browser'
 import type { BrowserContext } from '../../services/ai-browser/context'
 import { processStream } from '../../services/agent/stream-processor'
@@ -55,9 +57,13 @@ import { createNotifyToolServer } from './notify-tool'
 import { createHaloAppsMcpServer } from '../conversation-mcp'
 import { createWebSearchMcpServer } from '../../services/web-search'
 import { getSpace } from '../../services/space.service'
-import { openSessionWriter, readSessionMessages } from './session-store'
+import { openSessionWriter, readSessionMessages, saveChatSessionId, loadChatSessionId, deleteChatSessionId } from './session-store'
 import { getAppMemoryService, getActivityStore } from './index'
 import { createMemoryStatusMcpServer } from '../../platform/memory/snapshot'
+// Key builders live in shared/ so the renderer can import them without
+// depending on main-process modules.
+import { getAppChatConversationId, buildImSessionKey } from '../../../shared/apps/im-keys'
+export { getAppChatConversationId, buildImSessionKey }
 
 // ============================================
 // Types
@@ -97,28 +103,6 @@ export interface AppChatRequest {
 /** Fixed runId used for chat session JSONL storage */
 const CHAT_RUN_ID = 'chat'
 
-/**
- * Build the virtual conversationId for app chat.
- * Used for V2 session keying, active session tracking, and renderer event routing.
- */
-export function getAppChatConversationId(appId: string): string {
-  return `app-chat:${appId}`
-}
-
-/**
- * Build a fully-qualified session key for IM channel conversations.
- * Format: "app-chat:{appId}:{channel}:{chatType}:{chatId}"
- *
- * This ensures complete session isolation across channels, chat types, and chats.
- */
-export function buildImSessionKey(
-  appId: string,
-  channel: string,
-  chatType: 'direct' | 'group',
-  chatId: string
-): string {
-  return `app-chat:${appId}:${channel}:${chatType}:${chatId}`
-}
 
 /**
  * Derive a storage-safe JSONL runId from a conversationId.
@@ -265,7 +249,6 @@ export async function sendAppChatMessage(
     electronPath,
     spaceId,
     conversationId,
-    abortController,
     stderrHandler: (data: string) => {
       console.error(`[AppChat][${appId}] CLI stderr:`, data)
     },
@@ -275,15 +258,36 @@ export async function sendAppChatMessage(
   // Override for app chat context
   sdkOptions.systemPrompt = systemPrompt
 
+  // Non-native sessions (IM channels, etc.) are non-interactive — the user
+  // cannot respond to interactive tool prompts, so deny them preemptively
+  const defaultConvId = getAppChatConversationId(appId)
+  if (conversationId !== defaultConvId) {
+    sdkOptions.canUseTool = createCanUseTool({
+      spaceId,
+      conversationId,
+      nonInteractive: true,
+    })
+  }
+
+  // ── Resolve space path and run ID early (needed for both session resume and JSONL) ──
+  const spacePath = getSpace(spaceId)?.path ?? ''
+  const chatRunId = deriveRunId(conversationId, appId)
+
   try {
     const t0 = Date.now()
 
     // ── 6. Get or create V2 session (reused across messages) ──
+    // Load saved sessionId for resume when V2 session is rebuilt after idle
+    // timeout, process crash, or config change (same pattern as send-message.ts)
+    const savedSessionId = spacePath
+      ? loadChatSessionId(spacePath, appId, chatRunId)
+      : undefined
+
     const v2Session = await getOrCreateV2Session(
       spaceId,
       conversationId,
       sdkOptions,
-      undefined, // no sessionId for resumption
+      savedSessionId,
       { aiBrowserEnabled: usesAIBrowser },
       workDir
     )
@@ -302,8 +306,6 @@ export async function sendAppChatMessage(
     console.log(`[AppChat][${appId}] V2 session ready: ${Date.now() - t0}ms`)
 
     // ── 7. Open session writer for JSONL persistence ──
-    const spacePath = getSpace(spaceId)?.path ?? ''
-    const chatRunId = deriveRunId(conversationId, appId)
     const sessionWriter = spacePath
       ? openSessionWriter(spacePath, appId, chatRunId)
       : undefined
@@ -316,6 +318,15 @@ export async function sendAppChatMessage(
     // ── 8. Process stream ──────────────────────────────
     const messageContent = buildMessageContent(message, images)
 
+    // Track the last assistant message's text content from raw SDK messages.
+    // This is the authoritative source for IM replies — same principle as the JSONL
+    // path used by AppChatView (readSessionMessages → extractTextContent).
+    // Unlike processStream's internal lastTextContent which can be corrupted by
+    // dual-path (stream_event + SDK message) state interference, this reads directly
+    // from the SDK's output which is always correct.
+    // See: stream-processor.ts TODO about lastTextContent pollution.
+    let lastAssistantText = ''
+
     await processStream({
       v2Session,
       sessionState,
@@ -327,19 +338,28 @@ export async function sendAppChatMessage(
       t0,
       callbacks: {
         onComplete: (streamResult) => {
+          // Save session ID for future resumption (same pattern as send-message.ts).
+          // When V2 session is rebuilt after idle timeout or process crash,
+          // this allows the SDK to restore conversation history from disk.
+          if (streamResult.capturedSessionId && spacePath) {
+            saveChatSessionId(spacePath, appId, chatRunId, streamResult.capturedSessionId)
+          }
+
           // App chat doesn't use conversation.service for storage.
           // Messages are persisted to JSONL via onRawMessage for reload.
+          const replyContent = lastAssistantText || streamResult.finalContent
           console.log(
             `[AppChat][${appId}] Stream complete: ` +
-            `content=${streamResult.finalContent.length} chars, ` +
+            `content=${replyContent.length} chars` +
+            `${lastAssistantText ? ' (from SDK message)' : ' (from streamResult)'}, ` +
             `thoughts=${streamResult.thoughts.length}, ` +
             `tokens=${streamResult.tokenUsage ? 'yes' : 'no'}`
           )
 
           // Invoke onReply callback for external bridges (WeCom Bot auto-reply)
-          if (onReply && streamResult.finalContent) {
+          if (onReply && replyContent) {
             try {
-              onReply(streamResult.finalContent)
+              onReply(replyContent)
             } catch (replyErr) {
               console.error(`[AppChat][${appId}] onReply callback error:`, replyErr)
             }
@@ -350,6 +370,20 @@ export async function sendAppChatMessage(
           // stream_events are too granular for JSONL (hundreds per response)
           if (sessionWriter && sdkMessage.type !== 'stream_event') {
             sessionWriter.writeEvent(sdkMessage)
+          }
+
+          // Extract text from assistant messages for IM reply.
+          // SDK assistant messages contain the complete, correct text blocks
+          // (unlike processStream's stateful lastTextContent which can be corrupted).
+          if (sdkMessage.type === 'assistant') {
+            const content = sdkMessage.message?.content
+            if (Array.isArray(content)) {
+              const text = content
+                .filter((b: any) => b.type === 'text' && b.text)
+                .map((b: any) => b.text)
+                .join('')
+              if (text) lastAssistantText = text
+            }
           }
         }
       }
@@ -374,16 +408,36 @@ export async function sendAppChatMessage(
     // Close session on error to force fresh session next time
     closeV2Session(conversationId)
 
-    // Destroy scoped browser context on error (will be recreated on next message)
-    const ctx = scopedContexts.get(conversationId)
-    if (ctx) {
-      ctx.destroy()
-      scopedContexts.delete(conversationId)
-      console.log(`[AppChat][${appId}] Scoped browser context destroyed (error)`)
+    // Destroy scoped browser context on error for IM sessions only.
+    // The native app-chat context (defaultConvId) is reused across messages — preserve it
+    // so the next message can resume with the same browser state (cookies, session storage).
+    // IM session contexts are per-conversation and can be recreated cheaply.
+    const defaultConvId = getAppChatConversationId(appId)
+    if (conversationId !== defaultConvId) {
+      const ctx = scopedContexts.get(conversationId)
+      if (ctx) {
+        ctx.destroy()
+        scopedContexts.delete(conversationId)
+        console.log(`[AppChat][${appId}] IM scoped browser context destroyed (error)`)
+      }
     }
   } finally {
     // Clean up active session (but keep V2 session for reuse)
     unregisterActiveSession(conversationId)
+
+    // For IM sessions (not the native app-chat key), destroy scoped browser context
+    // on successful completion. The native app-chat key reuses its context across messages,
+    // but IM sessions can accumulate unboundedly — clean up to prevent memory leaks.
+    const defaultConvId = getAppChatConversationId(appId)
+    if (conversationId !== defaultConvId) {
+      const ctx = scopedContexts.get(conversationId)
+      if (ctx) {
+        ctx.destroy()
+        scopedContexts.delete(conversationId)
+        console.log(`[AppChat][${appId}] IM scoped browser context destroyed (completion)`)
+      }
+    }
+
     console.log(`[AppChat][${appId}] Active session cleaned up`)
   }
 }
@@ -391,24 +445,38 @@ export async function sendAppChatMessage(
 /**
  * Stop an active app chat generation.
  *
+ * Stops the native Halo chat session AND all IM channel sessions for this app.
  * Uses the same stop mechanism as the main agent (V2 session interrupt + drain).
  *
  * @param appId - App ID to stop chat for
  */
 export async function stopAppChat(appId: string): Promise<void> {
-  const conversationId = getAppChatConversationId(appId)
-  await stopGeneration(conversationId)
-  console.log(`[AppChat][${appId}] Generation stopped`)
+  const prefix = getAppChatConversationId(appId)
+  // Collect all conversation IDs belonging to this app:
+  // - "app-chat:{appId}" (native chat)
+  // - "app-chat:{appId}:{channel}:{chatType}:{chatId}" (IM sessions)
+  const toStop = Array.from(activeSessions.keys()).filter(
+    k => k === prefix || k.startsWith(prefix + ':')
+  )
+  for (const convId of toStop) {
+    await stopGeneration(convId)
+  }
+  console.log(`[AppChat][${appId}] Generation stopped (${toStop.length} session(s))`)
 }
 
 /**
  * Check if an app chat session is currently generating.
  *
+ * Returns true if the native chat OR any IM session for this app is active.
+ *
  * @param appId - App ID to check
  */
 export function isAppChatGenerating(appId: string): boolean {
-  const conversationId = getAppChatConversationId(appId)
-  return activeSessions.has(conversationId)
+  const prefix = getAppChatConversationId(appId)
+  for (const key of activeSessions.keys()) {
+    if (key === prefix || key.startsWith(prefix + ':')) return true
+  }
+  return false
 }
 
 /**
@@ -422,6 +490,30 @@ export function isAppChatGenerating(appId: string): boolean {
  */
 export function loadAppChatMessages(spacePath: string, appId: string): any[] {
   return readSessionMessages(spacePath, appId, CHAT_RUN_ID)
+}
+
+/**
+ * Load persisted chat messages for an IM session.
+ *
+ * Constructs the conversationId from IM session parameters, derives the
+ * corresponding JSONL runId, and reads the persisted messages.
+ *
+ * @param spacePath - Space directory path
+ * @param appId - App ID
+ * @param channel - IM channel identifier (e.g., 'wecom-bot')
+ * @param chatType - Conversation type ('direct' | 'group')
+ * @param chatId - Platform-side conversation ID
+ */
+export function loadImChatMessages(
+  spacePath: string,
+  appId: string,
+  channel: string,
+  chatType: 'direct' | 'group',
+  chatId: string
+): any[] {
+  const conversationId = buildImSessionKey(appId, channel, chatType, chatId)
+  const runId = deriveRunId(conversationId, appId)
+  return readSessionMessages(spacePath, appId, runId)
 }
 
 /**
@@ -462,31 +554,91 @@ export function cleanupAppChatBrowserContext(appId: string): void {
   }
 }
 
+// ============================================
+// Session Clear (shared logic)
+// ============================================
+
 /**
- * Clear all chat history for an app, resetting to a fresh session.
- * Closes the V2 session, cleans up browser context, and empties the JSONL file.
+ * Internal: clear a chat session by its conversationId.
+ *
+ * Shared by clearAppChat() and clearImSession(). Steps:
+ * 1. If the session is actively generating, abort it first
+ * 2. Close the V2 session (forces fresh session on next message)
+ * 3. Destroy scoped browser context (if any)
+ * 4. Empty the JSONL persistence file
+ *
+ * Idempotent: safe to call even if the session doesn't exist.
+ */
+async function clearSessionByConversationId(
+  conversationId: string,
+  appId: string,
+  spaceId: string
+): Promise<void> {
+  // 1. Abort active generation (if any) before closing
+  if (activeSessions.has(conversationId)) {
+    console.log(`[AppChat][${appId}] Session is generating, aborting first...`)
+    await stopGeneration(conversationId)
+  }
+
+  // 2. Close V2 session to force fresh session on next message
+  closeV2Session(conversationId)
+
+  // 3. Clean up scoped browser context
+  const ctx = scopedContexts.get(conversationId)
+  if (ctx) {
+    ctx.destroy()
+    scopedContexts.delete(conversationId)
+    console.log(`[AppChat][${appId}] Scoped browser context cleaned up`)
+  }
+
+  // 4. Clear the JSONL file and saved sessionId
+  const space = getSpace(spaceId)
+  if (space?.path) {
+    const runId = deriveRunId(conversationId, appId)
+    const filePath = join(space.path, '.halo', 'apps', appId, 'runs', `${runId}.jsonl`)
+    try {
+      await writeFile(filePath, '', 'utf8')
+    } catch {
+      // File may not exist yet, that's fine
+    }
+    // Remove saved sessionId so next session starts truly fresh
+    deleteChatSessionId(space.path, appId, runId)
+  }
+}
+
+/**
+ * Clear all chat history for an app's native Halo chat, resetting to a fresh session.
+ * Aborts active generation, closes the V2 session, cleans up browser context,
+ * and empties the JSONL file.
  *
  * @param appId - App ID
  * @param spaceId - Space ID (for resolving JSONL path)
  */
 export async function clearAppChat(appId: string, spaceId: string): Promise<void> {
   const conversationId = getAppChatConversationId(appId)
+  await clearSessionByConversationId(conversationId, appId, spaceId)
+  console.log(`[AppChat][${appId}] Chat history cleared`)
+}
 
-  // 1. Close V2 session to force fresh session on next message
-  closeV2Session(conversationId)
-
-  // 2. Clean up browser context
-  cleanupAppChatBrowserContext(appId)
-
-  // 3. Clear the JSONL file
-  const space = getSpace(spaceId)
-  if (space?.path) {
-    const filePath = join(space.path, '.halo', 'apps', appId, 'runs', `${CHAT_RUN_ID}.jsonl`)
-    try {
-      await writeFile(filePath, '', 'utf8')
-    } catch {
-      // File may not exist yet, that's fine
-    }
-    console.log(`[AppChat][${appId}] Chat history cleared`)
-  }
+/**
+ * Clear an IM session's chat history, resetting to a fresh session.
+ * Aborts active generation, closes the V2 session, cleans up browser context,
+ * and empties the JSONL file.
+ *
+ * @param appId - App ID
+ * @param spaceId - Space ID (for resolving JSONL path)
+ * @param channel - IM channel identifier (e.g., 'wecom-bot')
+ * @param chatType - Conversation type ('direct' | 'group')
+ * @param chatId - Platform-side conversation ID
+ */
+export async function clearImSession(
+  appId: string,
+  spaceId: string,
+  channel: string,
+  chatType: 'direct' | 'group',
+  chatId: string
+): Promise<void> {
+  const conversationId = buildImSessionKey(appId, channel, chatType, chatId)
+  await clearSessionByConversationId(conversationId, appId, spaceId)
+  console.log(`[AppChat][${appId}] IM session cleared: ${conversationId}`)
 }

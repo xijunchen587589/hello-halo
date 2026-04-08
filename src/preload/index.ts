@@ -138,6 +138,7 @@ export interface HaloAPI {
   ensureSessionWarm: (spaceId: string, conversationId: string) => Promise<IpcResponse>
   testMcpConnections: () => Promise<{ success: boolean; servers: unknown[]; error?: string }>
   answerQuestion: (data: { conversationId: string; id: string; answers: Record<string, string> }) => Promise<IpcResponse>
+  injectMessage: (data: { conversationId: string; message: string }) => Promise<IpcResponse>
 
   // Event listeners
   onAgentMessage: (callback: (data: unknown) => void) => () => void
@@ -152,6 +153,7 @@ export interface HaloAPI {
   onAgentCompact: (callback: (data: unknown) => void) => () => void
   onAgentAskQuestion: (callback: (data: unknown) => void) => () => void
   onAgentSessionInfo: (callback: (data: unknown) => void) => () => void
+  onAgentTurnStart: (callback: (data: unknown) => void) => () => void
 
   // Artifact
   listArtifacts: (spaceId: string, maxDepth?: number) => Promise<IpcResponse>
@@ -342,9 +344,16 @@ export interface HaloAPI {
   testNotificationChannel: (channelType: string) => Promise<IpcResponse>
   clearNotificationChannelCache: () => Promise<IpcResponse>
 
-  // WeCom Bot (企业微信智能机器人)
+  // WeCom Bot (企业微信智能机器人) — legacy compat
   getWecomBotStatus: () => Promise<IpcResponse>
   reconnectWecomBot: () => Promise<IpcResponse>
+
+  // IM Channels (multi-instance)
+  imChannelsStatus: () => Promise<IpcResponse>
+  imChannelsInstanceStatus: (instanceId: string) => Promise<IpcResponse>
+  imChannelsReconnect: (instanceId: string) => Promise<IpcResponse>
+  imChannelsReload: () => Promise<IpcResponse>
+  imChannelsProviders: () => Promise<IpcResponse>
 
   // IM Sessions (会话管理)
   imSessionsList: (appId?: string) => Promise<IpcResponse>
@@ -389,12 +398,15 @@ export interface HaloAPI {
   appChatMessages: (input: { appId: string; spaceId: string }) => Promise<IpcResponse>
   appChatSessionState: (appId: string) => Promise<IpcResponse>
   appChatClear: (input: { appId: string; spaceId: string }) => Promise<IpcResponse>
+  appImChatMessages: (input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => Promise<IpcResponse>
+  appImChatClear: (input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => Promise<IpcResponse>
 
   // App Event Listeners
   onAppStatusChanged: (callback: (data: unknown) => void) => () => void
   onAppActivityEntry: (callback: (data: unknown) => void) => () => void
   onAppEscalation: (callback: (data: unknown) => void) => () => void
   onAppNavigate: (callback: (data: unknown) => void) => () => void
+  onImSessionUpdated: (callback: (data: unknown) => void) => () => void
 
   // Notification (in-app toast)
   onNotificationToast: (callback: (data: unknown) => void) => () => void
@@ -522,6 +534,7 @@ const api: HaloAPI = {
   ensureSessionWarm: (spaceId, conversationId) => ipcRenderer.invoke('agent:ensure-session-warm', spaceId, conversationId),
   testMcpConnections: () => ipcRenderer.invoke('agent:test-mcp'),
   answerQuestion: (data) => ipcRenderer.invoke('agent:answer-question', data),
+  injectMessage: (data) => ipcRenderer.invoke('agent:inject-message', data),
 
   // Event listeners
   onAgentMessage: (callback) => createEventListener('agent:message', callback),
@@ -536,6 +549,7 @@ const api: HaloAPI = {
   onAgentCompact: (callback) => createEventListener('agent:compact', callback),
   onAgentAskQuestion: (callback) => createEventListener('agent:ask-question', callback),
   onAgentSessionInfo: (callback) => createEventListener('agent:session-info', callback),
+  onAgentTurnStart: (callback) => createEventListener('agent:turn-start', callback),
 
   // Artifact
   listArtifacts: (spaceId, maxDepth = 2) => ipcRenderer.invoke('artifact:list', spaceId, maxDepth),
@@ -685,9 +699,16 @@ const api: HaloAPI = {
   testNotificationChannel: (channelType: string) => ipcRenderer.invoke('notify-channels:test', channelType),
   clearNotificationChannelCache: () => ipcRenderer.invoke('notify-channels:clear-cache'),
 
-  // WeCom Bot (企业微信智能机器人)
+  // WeCom Bot (企业微信智能机器人) — legacy compat
   getWecomBotStatus: () => ipcRenderer.invoke('wecom-bot:status'),
   reconnectWecomBot: () => ipcRenderer.invoke('wecom-bot:reconnect'),
+
+  // IM Channels (multi-instance)
+  imChannelsStatus: () => ipcRenderer.invoke('im-channels:status'),
+  imChannelsInstanceStatus: (instanceId: string) => ipcRenderer.invoke('im-channels:instance-status', instanceId),
+  imChannelsReconnect: (instanceId: string) => ipcRenderer.invoke('im-channels:reconnect', instanceId),
+  imChannelsReload: () => ipcRenderer.invoke('im-channels:reload'),
+  imChannelsProviders: () => ipcRenderer.invoke('im-channels:providers'),
 
   // IM Sessions (会话管理)
   imSessionsList: (appId) => ipcRenderer.invoke('im-sessions:list', appId),
@@ -732,12 +753,15 @@ const api: HaloAPI = {
   appChatMessages: (input) => ipcRenderer.invoke('app:chat-messages', input),
   appChatSessionState: (appId) => ipcRenderer.invoke('app:chat-session-state', appId),
   appChatClear: (input) => ipcRenderer.invoke('app:chat-clear', input),
+  appImChatMessages: (input) => ipcRenderer.invoke('app:im-chat-messages', input),
+  appImChatClear: (input) => ipcRenderer.invoke('app:im-chat-clear', input),
 
   // App Event Listeners
   onAppStatusChanged: (callback) => createEventListener('app:status_changed', callback),
   onAppActivityEntry: (callback) => createEventListener('app:activity_entry:new', callback),
   onAppEscalation: (callback) => createEventListener('app:escalation:new', callback),
   onAppNavigate: (callback) => createEventListener('app:navigate', callback),
+  onImSessionUpdated: (callback) => createEventListener('app:im-session-updated', callback),
 
   // Store (App Registry)
   storeQuery: (params) => ipcRenderer.invoke('store:query', params),

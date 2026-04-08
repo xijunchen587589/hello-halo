@@ -1,28 +1,154 @@
 /**
- * IM Channel Adapter — Channel-agnostic push interface
+ * IM Channel — Multi-instance channel architecture
  *
- * Defines the contract that all IM channel adapters (WeCom Bot, Feishu Bot,
- * DingTalk Bot, etc.) must implement to support proactive message pushing.
+ * Defines the contracts for the IM channel system:
  *
- * The runtime uses this interface to push messages without knowing which
- * IM platform is behind it. Each adapter handles protocol-specific details
- * (e.g., aibot_send_msg for WeCom) internally.
+ *   ImChannelProvider  — Channel type definition ("driver")
+ *   ImChannelInstance   — A running connection instance
+ *   ImChannelAdapter    — Channel-agnostic push interface (subset of Instance)
+ *   ImChannelInstanceConfig — Persisted configuration for one instance
+ *   ImSessionRecord     — Known IM session with instanceId binding
+ *
+ * Architecture:
+ *   Provider (type definition) → creates N Instances (running connections)
+ *   Each Instance binds to exactly one digital human (appId)
+ *   Multiple Instances can bind to the same appId (N:1 supported)
+ *   ImChannelManager manages all instances' lifecycle
  *
  * Design principles:
- * - No protocol details — only text + target identifiers
+ * - Platform-agnostic — WeCom/Feishu/DingTalk use the same model
+ * - No protocol details in shared types — only text + target identifiers
  * - Markdown as the universal message format (adapters convert internally)
  * - Synchronous success/failure return (no retry logic — caller decides)
+ * - Plugin-ready — providers can be registered dynamically
  */
 
+import type { InboundMessage, ReplyHandle } from './inbound-message'
+
 // ============================================
-// ImChannelAdapter
+// ImChannelInstanceConfig (Persisted)
+// ============================================
+
+/** Supported IM channel provider types */
+export type ImChannelType = 'wecom-bot' | 'feishu-bot' | 'dingtalk-bot'
+
+/**
+ * Persisted configuration for a single IM channel instance.
+ * Stored in config.json under imChannels.instances[].
+ */
+export interface ImChannelInstanceConfig {
+  /** Auto-generated UUID for this instance */
+  id: string
+  /** Provider type: 'wecom-bot' | 'feishu-bot' | 'dingtalk-bot' */
+  type: ImChannelType
+  /** Whether this instance is enabled */
+  enabled: boolean
+  /** Bound digital human (App) ID — required for routing */
+  appId: string
+  /** Provider-specific configuration (e.g., botId, secret, wsUrl for WeCom) */
+  config: Record<string, unknown>
+}
+
+// ============================================
+// ImChannelProvider (Plugin interface)
+// ============================================
+
+/**
+ * Field definition for data-driven config form rendering.
+ * Used by the settings UI to dynamically build the instance form.
+ */
+export interface ImChannelConfigFieldDef {
+  key: string
+  label: string
+  type: 'text' | 'password' | 'number'
+  placeholder?: string
+  required?: boolean
+}
+
+/**
+ * Channel type provider — defines what an IM channel IS.
+ *
+ * Each provider (WeCom Bot, Feishu Bot, etc.) registers a provider
+ * instance with the ImChannelManager. The provider knows how to
+ * create connection instances and what config fields it needs.
+ *
+ * Future: providers can be loaded from plugins.
+ */
+export interface ImChannelProvider {
+  /** Unique type identifier: 'wecom-bot' */
+  readonly type: ImChannelType
+  /** Human-readable display name: 'WeCom Intelligent Bot' */
+  readonly displayName: string
+  /** Short description of the channel */
+  readonly description: string
+  /** Communication direction */
+  readonly direction: 'bidirectional' | 'inbound-only'
+  /** Config field definitions for the settings UI */
+  readonly configFields: ImChannelConfigFieldDef[]
+  /** Default config values for new instances */
+  readonly defaultConfig: Record<string, unknown>
+
+  /**
+   * Create a running instance from persisted config.
+   * The instance is NOT started automatically — call start() separately.
+   */
+  createInstance(instanceId: string, config: Record<string, unknown>): ImChannelInstance
+
+  /**
+   * Validate a config object. Returns null if valid, or an error message.
+   */
+  validateConfig(config: Record<string, unknown>): string | null
+}
+
+// ============================================
+// ImChannelInstance (Running connection)
+// ============================================
+
+/**
+ * A running IM channel connection instance.
+ *
+ * Each instance owns exactly one connection (e.g., one WebSocket to WeCom).
+ * The Manager creates instances from ImChannelInstanceConfig and manages
+ * their lifecycle (start/stop/reconnect).
+ */
+export interface ImChannelInstance {
+  /** Unique instance ID (matches ImChannelInstanceConfig.id) */
+  readonly instanceId: string
+  /** Provider type (e.g., 'wecom-bot') */
+  readonly providerType: ImChannelType
+
+  /** Start the connection. */
+  start(): void
+  /** Stop the connection and clean up resources. Safe to call multiple times. */
+  stop(): void
+  /** Reconnect with potentially updated config. */
+  reconnect(): void
+  /** Check if the connection is active and ready. */
+  isConnected(): boolean
+
+  /**
+   * Push a message proactively to a specific chat.
+   * @returns true if sent successfully, false otherwise
+   */
+  pushToChat(chatId: string, text: string, chatType: 'direct' | 'group'): boolean
+
+  /**
+   * Register a handler for inbound messages.
+   * The Manager calls this once after creating the instance.
+   */
+  onInbound(handler: (msg: InboundMessage, reply: ReplyHandle) => void): void
+}
+
+// ============================================
+// ImChannelAdapter (Legacy compat + push interface)
 // ============================================
 
 /**
  * Channel adapter interface for proactive message pushing.
  *
- * Implemented by each IM source adapter (WecomBotSource, FeishuBotSource, etc.)
- * alongside their existing EventSourceAdapter implementation.
+ * This is the minimal interface used by the runtime service
+ * (forwardResultToIm) to push messages to IM channels.
+ * ImChannelInstance extends this interface.
  */
 export interface ImChannelAdapter {
   /** Channel identifier matching InboundMessage.channel (e.g., 'wecom-bot') */
@@ -49,6 +175,29 @@ export interface ImChannelAdapter {
 }
 
 // ============================================
+// ImChannelStatus (Runtime status)
+// ============================================
+
+/**
+ * Runtime status of a single IM channel instance.
+ * Returned by IPC/HTTP status APIs.
+ */
+export interface ImChannelInstanceStatus {
+  /** Instance ID */
+  id: string
+  /** Provider type */
+  type: ImChannelType
+  /** Whether enabled in config */
+  enabled: boolean
+  /** Whether the connection is currently active */
+  connected: boolean
+  /** Bound digital human App ID */
+  appId: string
+  /** Bound digital human App name (resolved at query time) */
+  appName?: string
+}
+
+// ============================================
 // ImSessionRecord
 // ============================================
 
@@ -61,8 +210,10 @@ export interface ImChannelAdapter {
 export interface ImSessionRecord {
   /** Associated digital human (App) ID */
   appId: string
-  /** Channel identifier: 'wecom-bot' | 'feishu-bot' | 'dingtalk-bot' | ... */
+  /** Channel type identifier: 'wecom-bot' | 'feishu-bot' | 'dingtalk-bot' | ... */
   channel: string
+  /** IM channel instance ID that owns this session (for adapter lookup on push) */
+  instanceId: string
   /** Platform-side conversation ID */
   chatId: string
   /** Conversation type */

@@ -67,6 +67,9 @@ export {
   type BuiltinProvider
 } from '../../shared/constants/providers';
 
+// Re-export model capabilities
+export { supportsVision } from '../../shared/constants/model-capabilities';
+
 // Permission Level
 export type PermissionLevel = 'allow' | 'ask' | 'deny';
 
@@ -122,6 +125,7 @@ export interface AgentConfig {
   promptProfile?: 'official' | 'halo';  // System prompt profile
   configDirMode?: 'halo' | 'cc' | 'custom';  // Claude CLI config directory mode
   customConfigDir?: string;  // Custom config dir path (when configDirMode === 'custom')
+  enableTeams?: boolean;    // Enable Agent Teams (multi-agent collaboration)
 }
 
 // CLI config types (used by CLIConfigSection)
@@ -246,8 +250,9 @@ export interface HaloConfig {
   mcpServers: McpServersConfig;  // MCP servers configuration
   notifications?: NotificationConfig;  // Notification preferences
   notificationChannels?: NotificationChannelsConfig;  // External notification channels
-  wecomBot?: import('../../../shared/types/notification-channels').WecomBotConfig;  // WeCom Intelligent Bot
-  imChannels?: import('../../../shared/types/notification-channels').ImChannelsConfig;  // Global IM channel config
+  /** @deprecated Migrated to imChannels.instances[] */
+  wecomBot?: import('../../../shared/types/notification-channels').WecomBotConfig;
+  imChannels?: import('../../../shared/types/notification-channels').ImChannelsConfig;  // IM channels (multi-instance)
   agent?: AgentConfig;  // Agent behavior settings
   layout?: LayoutConfig;  // Global layout preferences (panel sizes and visibility)
   chat?: ChatConfig;  // Chat behavior preferences
@@ -413,6 +418,7 @@ export interface Message {
     fileChanges?: FileChangesSummary;  // Lightweight file changes for immediate display
   };
   error?: string;  // Error message when assistant response failed (e.g., 429 rate limit)
+  source?: 'injection';  // How the message entered the conversation (SDK-agnostic)
 }
 
 // ============================================
@@ -498,6 +504,21 @@ export interface Thought {
     isError: boolean;
     timestamp: string;
   };
+  // Sub-agent support: links this thought to a parent Task tool_use
+  parentToolUseId?: string;
+  // Task/Agent tool progress (updated via task lifecycle events)
+  taskProgress?: TaskProgress;
+}
+
+/** Progress tracking for a Task/Agent tool_use thought */
+export interface TaskProgress {
+  taskId: string;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  lastToolName?: string;
+  toolCount: number;
+  durationMs: number;
+  summary?: string;
+  totalTokens?: number;
 }
 
 // Legacy alias for backwards compatibility
@@ -643,6 +664,7 @@ export type AgentEvent =
   | AgentCompleteEvent
   | AgentCompactEvent;
 
+// ============================================
 // ============================================
 // App State Types
 // ============================================

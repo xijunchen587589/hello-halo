@@ -116,15 +116,23 @@ export interface WecomBotConfig {
 }
 
 // ============================================
-// IM Channels Config (Global)
+// IM Channels Config (Multi-instance)
 // ============================================
 
 /**
- * Global IM channel configuration.
- * Shared across all IM adapters (WeCom Bot, Feishu Bot, DingTalk Bot, etc.).
+ * IM channel configuration — supports multiple instances per channel type.
+ *
+ * Each instance is a separate connection (e.g., a separate WeCom bot)
+ * bound to a specific digital human (App). Multiple instances can bind
+ * to the same App (N:1 supported).
  */
 export interface ImChannelsConfig {
-  /** Default digital human (App) ID for routing inbound IM messages */
+  /** All configured IM channel instances */
+  instances?: import('./im-channel').ImChannelInstanceConfig[]
+  /**
+   * @deprecated Legacy field — migrated to instances[].appId on load.
+   * Kept for backward compatibility during migration.
+   */
   defaultAppId?: string
 }
 

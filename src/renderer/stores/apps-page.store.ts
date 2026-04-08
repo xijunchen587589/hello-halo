@@ -16,6 +16,7 @@ import { api } from '../api'
 import { getCurrentLanguage } from '../i18n'
 import type { RegistryEntry, StoreAppDetail, UpdateInfo, StoreQuery, StoreQueryResponse, StoreInstallProgress } from '../../shared/store/store-types'
 import type { AppType } from '../../shared/apps/spec-types'
+import type { ImSessionRecord } from '../../shared/types/im-channel'
 
 let storeListRequestSeq = 0
 let storeDetailRequestSeq = 0
@@ -69,6 +70,12 @@ interface AppsPageState {
   // ── Update Info ────────────────────────────
   availableUpdates: UpdateInfo[]
 
+  // ── IM Session Panel ────────────────────────
+  imPanelOpen: boolean
+  selectedImSession: ImSessionRecord | null
+  imSessions: ImSessionRecord[]
+  imSessionsAppId: string | null
+
   // Actions
   selectApp: (appId: string, appType?: string) => void
   clearSelection: () => void
@@ -78,6 +85,9 @@ interface AppsPageState {
   openAppConfig: (appId: string) => void
   setInitialAppId: (appId: string | null) => void
   setShowInstallDialog: (show: boolean) => void
+  toggleImPanel: () => void
+  selectImSession: (session: ImSessionRecord | null) => void
+  fetchImSessions: (appId: string) => Promise<void>
   reset: () => void
 
   // ── Store Actions ──────────────────────────
@@ -124,6 +134,12 @@ export const useAppsPageStore = create<AppsPageState>((set, get) => ({
   // ── Update Info ────────────────────────────
   availableUpdates: [],
 
+  // ── IM Session Panel ────────────────────────
+  imPanelOpen: false,
+  selectedImSession: null,
+  imSessions: [],
+  imSessionsAppId: null,
+
   selectApp: (appId, appType) => {
     let detailView: AppsDetailView = { type: 'activity-thread', appId }
     if (appType === 'mcp') detailView = { type: 'mcp-status', appId }
@@ -150,12 +166,34 @@ export const useAppsPageStore = create<AppsPageState>((set, get) => ({
 
   setShowInstallDialog: (show) => set({ showInstallDialog: show }),
 
+  toggleImPanel: () => set(s => ({ imPanelOpen: !s.imPanelOpen })),
+
+  selectImSession: (session) => set({ selectedImSession: session }),
+
+  fetchImSessions: async (appId) => {
+    try {
+      const res = await api.imSessionsList(appId)
+      if (res.success && Array.isArray(res.data)) {
+        const sorted = (res.data as ImSessionRecord[]).sort(
+          (a, b) => b.lastActiveAt - a.lastActiveAt
+        )
+        set({ imSessions: sorted, imSessionsAppId: appId })
+      }
+    } catch (err) {
+      console.error('[AppsPageStore] fetchImSessions error:', err)
+    }
+  },
+
   reset: () => set({
     selectedAppId: null,
     detailView: null,
     initialAppId: null,
     showInstallDialog: false,
     currentTab: 'my-digital-humans',
+    imPanelOpen: false,
+    selectedImSession: null,
+    imSessions: [],
+    imSessionsAppId: null,
     storeApps: [],
     storeLoading: false,
     storeError: null,

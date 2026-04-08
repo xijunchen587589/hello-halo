@@ -1,46 +1,53 @@
 /**
- * WeCom Bot IPC Handlers
+ * WeCom Bot IPC Handlers (DEPRECATED)
  *
- * Provides status check and reconnect functionality for the Settings UI.
- * Config CRUD is handled by the generic config IPC (config.ts saves wecomBot field).
+ * Replaced by im-channels.ts for multi-instance IM channel management.
+ * This file is kept for backward compatibility — it delegates to the
+ * ImChannelManager under the hood.
+ *
+ * New clients should use 'im-channels:*' IPC channels instead.
  */
 
 import { ipcMain } from 'electron'
-import { getConfig } from '../services/config.service'
-import { getWecomBotSource } from '../apps/runtime'
+import { getImChannelManager } from '../apps/runtime'
 
 export function registerWecomBotHandlers(): void {
-  // Get WecomBot connection status
+  // GET status — returns aggregate status of all wecom-bot instances
   ipcMain.handle('wecom-bot:status', async () => {
     try {
-      const source = getWecomBotSource()
-      const config = getConfig().wecomBot
+      const manager = getImChannelManager()
+      if (!manager) {
+        return { success: true, data: { configured: false, enabled: false, connected: false } }
+      }
+      const statuses = manager.getAllStatuses().filter(s => s.type === 'wecom-bot')
+      const anyConnected = statuses.some(s => s.connected)
+      const anyEnabled = statuses.some(s => s.enabled)
+      const anyConfigured = statuses.length > 0
       return {
         success: true,
-        data: {
-          configured: !!(config?.botId && config?.secret),
-          enabled: config?.enabled ?? false,
-          connected: source?.isConnected() ?? false,
-        }
+        data: { configured: anyConfigured, enabled: anyEnabled, connected: anyConnected },
       }
     } catch (error: unknown) {
       return { success: false, error: (error as Error).message }
     }
   })
 
-  // Reconnect WebSocket with current config (called after saving settings)
+  // Reconnect — reconnects all wecom-bot instances
   ipcMain.handle('wecom-bot:reconnect', async () => {
     try {
-      const source = getWecomBotSource()
-      if (!source) {
-        return { success: false, error: 'WecomBotSource not initialized' }
+      const manager = getImChannelManager()
+      if (!manager) {
+        return { success: false, error: 'ImChannelManager not initialized' }
       }
-      source.reconnectWithConfig()
+      const statuses = manager.getAllStatuses().filter(s => s.type === 'wecom-bot')
+      for (const s of statuses) {
+        manager.reconnectInstance(s.id)
+      }
       return { success: true }
     } catch (error: unknown) {
       return { success: false, error: (error as Error).message }
     }
   })
 
-  console.log('[WecomBot] IPC handlers registered')
+  console.log('[WecomBot] IPC handlers registered (legacy compat)')
 }

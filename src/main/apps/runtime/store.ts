@@ -117,6 +117,8 @@ export class ActivityStore {
   private readonly stmtGetLatestRunForApp: Database.Statement
   private readonly stmtGetEntriesForRun: Database.Statement
   private readonly stmtUpdateRunSessionId: Database.Statement
+  private readonly stmtCloseOrphanEscalations: Database.Statement
+  private readonly stmtCloseOrphanEscalationsAll: Database.Statement
 
   constructor(db: Database.Database) {
     this.db = db
@@ -192,6 +194,23 @@ export class ActivityStore {
       SELECT * FROM activity_entries
       WHERE type = 'escalation' AND user_response_json IS NULL
       ORDER BY ts ASC
+    `)
+
+    // Close orphan escalation entries for an app, excluding a specific active entry.
+    // Orphans are pending escalations that no longer correspond to the app's
+    // current pendingEscalationId (e.g. created before a pause/resume cycle).
+    this.stmtCloseOrphanEscalations = db.prepare(`
+      UPDATE activity_entries
+      SET user_response_json = ?
+      WHERE app_id = ? AND type = 'escalation' AND user_response_json IS NULL AND id != ?
+    `)
+
+    // Close ALL pending escalation entries for an app (used when leaving waiting_user
+    // state without resolving — e.g. pause, manual trigger from error).
+    this.stmtCloseOrphanEscalationsAll = db.prepare(`
+      UPDATE activity_entries
+      SET user_response_json = ?
+      WHERE app_id = ? AND type = 'escalation' AND user_response_json IS NULL
     `)
 
     this.stmtGetEntriesForRun = db.prepare(`
@@ -339,6 +358,34 @@ export class ActivityStore {
   getAllPendingEscalations(): ActivityEntry[] {
     const rows = this.stmtGetAllPendingEscalations.all() as EntryRow[]
     return rows.map(rowToEntry)
+  }
+
+  /**
+   * Close orphan escalation entries for an app.
+   *
+   * An "orphan" is a pending escalation entry (user_response_json IS NULL) that
+   * does not match the app's current active escalation. Orphans are produced when
+   * the app leaves `waiting_user` state without the escalation being resolved
+   * (e.g. user pauses then resumes the app).
+   *
+   * @param appId - The app ID to clean up.
+   * @param activeEntryId - The currently active escalation entry ID to keep open.
+   *                        If omitted, ALL pending escalation entries for this app are closed.
+   * @returns Number of entries closed.
+   */
+  closeOrphanEscalations(appId: string, activeEntryId?: string): number {
+    const responseJson = JSON.stringify({
+      ts: Date.now(),
+      text: '[Auto-closed] Escalation orphaned by app state change.',
+    })
+
+    if (activeEntryId) {
+      const result = this.stmtCloseOrphanEscalations.run(responseJson, appId, activeEntryId)
+      return result.changes
+    } else {
+      const result = this.stmtCloseOrphanEscalationsAll.run(responseJson, appId)
+      return result.changes
+    }
   }
 
   // ── Data Lifecycle ──────────────────────────

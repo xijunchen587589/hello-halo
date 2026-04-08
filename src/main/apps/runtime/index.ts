@@ -36,7 +36,6 @@ import type { AppManagerService } from '../manager'
 import type { SchedulerService } from '../../platform/scheduler'
 import type { MemoryService } from '../../platform/memory'
 import type { BackgroundService } from '../../platform/background'
-import type { ImChannelAdapter } from '../../../shared/types/im-channel'
 import { join } from 'path'
 import { homedir } from 'os'
 import { getSpace } from '../../services/space.service'
@@ -48,8 +47,9 @@ import { MIGRATION_NAMESPACE, migrations } from './migrations'
 import { createEventRouter, type EventRouter } from './event-router'
 import { FileWatcherSource } from './sources/file-watcher.source'
 import { WebhookSource, type WebhookSecretResolver } from './sources/webhook.source'
-import { WecomBotSource } from './sources/wecom-bot.source'
+import { ImChannelManager, WecomBotProvider } from './im-channels'
 import { ImSessionRegistry, setImSessionRegistry } from './im-session-registry'
+import { dispatchInboundMessage } from './dispatch-inbound'
 import { getConfig } from '../../services/config.service'
 import { getDataFolderName } from '../../services/ai-sources/auth-loader'
 import type { AppRuntimeService } from './types'
@@ -90,11 +90,13 @@ export {
   stopAppChat,
   isAppChatGenerating,
   loadAppChatMessages,
+  loadImChatMessages,
   getAppChatSessionState,
   getAppChatConversationId,
   buildImSessionKey,
   cleanupAppChatBrowserContext,
   clearAppChat,
+  clearImSession,
 } from './app-chat'
 export type { AppChatRequest } from './app-chat'
 
@@ -105,6 +107,9 @@ export { dispatchInboundMessage } from './dispatch-inbound'
 export { getImSessionRegistry } from './im-session-registry'
 export { ImSessionRegistry } from './im-session-registry'
 
+// Re-export ImChannelManager for IPC/HTTP access
+export { ImChannelManager } from './im-channels'
+
 // ============================================
 // Module State
 // ============================================
@@ -113,11 +118,8 @@ let runtimeService: AppRuntimeService | null = null
 let memoryServiceRef: MemoryService | null = null
 let activityStoreRef: ActivityStore | null = null
 let eventRouterInstance: EventRouter | null = null
-let wecomBotSourceInstance: WecomBotSource | null = null
+let imChannelManagerInstance: ImChannelManager | null = null
 let imSessionRegistryInstance: ImSessionRegistry | null = null
-
-/** Channel adapter registry: channel identifier → adapter instance */
-const channelAdapters = new Map<string, ImChannelAdapter>()
 
 // ============================================
 // Initialization
@@ -151,10 +153,11 @@ function normalizeWebhookPath(path: string): string {
  * 1. Gets the app-level database from DatabaseManager
  * 2. Runs schema migrations (automation_runs + activity_entries)
  * 3. Creates the EventRouter with source adapters
- * 4. Creates the ActivityStore and AppRuntimeService
- * 5. Starts the EventRouter (after all subscriptions are wired)
- * 6. Activates all Apps with status='active'
- * 7. Returns the AppRuntimeService interface
+ * 4. Creates ImChannelManager and applies IM channel instance configs
+ * 5. Creates the ActivityStore and AppRuntimeService
+ * 6. Starts the EventRouter (after all subscriptions are wired)
+ * 7. Activates all Apps with status='active'
+ * 8. Returns the AppRuntimeService interface
  *
  * Must be called after all Phase 1 + Phase 2 modules are initialized:
  * - platform/store (Phase 0)
@@ -213,22 +216,32 @@ export async function initAppRuntime(
   const webhookSource = new WebhookSource(getExpressApp(), webhookSecretResolver)
   eventRouter.registerSource(webhookSource)
 
-  // WecomBotSource: bridges WeCom intelligent bot WebSocket messages into the event router.
-  // Config is resolved at runtime (lazy) so the source adapts to settings changes.
-  const wecomBotSource = new WecomBotSource(() => getConfig().wecomBot ?? null)
-  eventRouter.registerSource(wecomBotSource)
-  wecomBotSourceInstance = wecomBotSource
-
-  // ── IM Session Registry + Channel Adapters ─────────────────────────────
+  // ── IM Session Registry ─────────────────────────────────────────────
   // The registry tracks all known IM sessions across digital humans.
-  // Channel adapters provide the pushToChat() capability for proactive messaging.
   const registryPath = join(homedir(), `.${getDataFolderName()}`, 'im-sessions.json')
   const registry = new ImSessionRegistry(registryPath)
   setImSessionRegistry(registry)
   imSessionRegistryInstance = registry
 
-  // Register WecomBotSource as a channel adapter (implements ImChannelAdapter)
-  channelAdapters.set(wecomBotSource.channel, wecomBotSource)
+  // ── IM Channel Manager (multi-instance) ─────────────────────────────
+  // Manages all IM channel instances (WeCom Bot, Feishu Bot, DingTalk Bot, etc.)
+  // Each instance is a separate connection bound to a specific digital human.
+  const imChannelManager = new ImChannelManager()
+  imChannelManagerInstance = imChannelManager
+
+  // Register built-in providers
+  imChannelManager.registerProvider(new WecomBotProvider())
+  // Future: imChannelManager.registerProvider(new FeishuBotProvider())
+  // Future: imChannelManager.registerProvider(new DingTalkBotProvider())
+
+  // Apply IM channel instance configs from config.json
+  const config = getConfig()
+  const instances = config.imChannels?.instances ?? []
+  imChannelManager.applyConfig(instances, (instanceId, appId, msg, reply) => {
+    // This callback is invoked by each instance when it receives an inbound message.
+    // The instanceId and appId are pre-resolved from the instance's config binding.
+    dispatchInboundMessage(msg, reply, appId, instanceId)
+  })
 
   // ── Create the runtime service ─────────────────────────────────────────
   const service = createAppRuntimeService({
@@ -243,7 +256,20 @@ export async function initAppRuntime(
       return space?.path ?? null
     },
     imSessionRegistry: registry,
-    getChannelAdapter: (channel: string) => channelAdapters.get(channel) ?? null,
+    getChannelAdapter: (channel: string) => {
+      // For backward compatibility, look up by instance ID first (new path)
+      // then fall back to channel type scan (for legacy sessions without instanceId)
+      const instance = imChannelManager.getInstance(channel)
+      if (instance) return { channel: instance.providerType, pushToChat: instance.pushToChat.bind(instance), isConnected: instance.isConnected.bind(instance) }
+      // Fallback: find any connected instance of the given channel type
+      for (const status of imChannelManager.getAllStatuses()) {
+        if (status.type === channel && status.connected) {
+          const inst = imChannelManager.getInstance(status.id)
+          if (inst) return { channel: inst.providerType, pushToChat: inst.pushToChat.bind(inst), isConnected: inst.isConnected.bind(inst) }
+        }
+      }
+      return null
+    },
   })
 
   // Activate all active automation Apps (registers event subscriptions)
@@ -288,10 +314,11 @@ export function getActivityStore(): ActivityStore | null {
 }
 
 /**
- * Get the WecomBotSource instance for external use (e.g., reconnect on config change).
+ * Get the ImChannelManager instance for external use
+ * (e.g., status queries, reconnect, config reload from IPC/HTTP).
  */
-export function getWecomBotSource(): WecomBotSource | null {
-  return wecomBotSourceInstance
+export function getImChannelManager(): ImChannelManager | null {
+  return imChannelManagerInstance
 }
 
 /**
@@ -299,7 +326,7 @@ export function getWecomBotSource(): WecomBotSource | null {
  *
  * 1. Deactivates all Apps (removes scheduler jobs + event subscriptions)
  * 2. Stops the event router and all source adapters
- * 3. Cancels all running executions
+ * 3. Stops all IM channel instances
  * 4. Clears the module state
  */
 export async function shutdownAppRuntime(): Promise<void> {
@@ -317,9 +344,12 @@ export async function shutdownAppRuntime(): Promise<void> {
     eventRouterInstance = null
   }
 
-  wecomBotSourceInstance = null
+  if (imChannelManagerInstance) {
+    imChannelManagerInstance.stopAll()
+    imChannelManagerInstance = null
+  }
+
   imSessionRegistryInstance = null
-  channelAdapters.clear()
   setImSessionRegistry(null as any)
 
   console.log('[Runtime] App Runtime shutdown complete')

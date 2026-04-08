@@ -24,10 +24,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertCircle } from 'lucide-react'
 import { api } from '../../api'
 import { useAppsStore } from '../../stores/apps.store'
-import { MessageItem } from '../chat/MessageItem'
-import { CollapsedThoughtProcess } from '../chat/CollapsedThoughtProcess'
+import { MessageRow } from '../chat/MessageRow'
 import { useTranslation } from '../../i18n'
-import type { Message, Thought } from '../../types'
+import type { Message } from '../../types'
 
 interface SessionDetailViewProps {
   /** App ID that owns this run */
@@ -160,42 +159,15 @@ export function SessionDetailView({ appId, runId }: SessionDetailViewProps) {
           </div>
         )}
 
-        {messages.map((message) => {
-          const hasInlineThoughts = Array.isArray(message.thoughts) && message.thoughts.length > 0
-
-          // Assistant messages with thoughts: CollapsedThoughtProcess above + MessageItem
-          // Mirrors MessageList.tsx itemContent rendering exactly
-          if (message.role === 'assistant' && hasInlineThoughts) {
-            return (
-              <div key={message.id} className="flex justify-start pb-4">
-                <div className="w-[85%]">
-                  <CollapsedThoughtProcess
-                    thoughts={message.thoughts as Thought[]}
-                    defaultExpanded={false}
-                  />
-                  {/* Only render the message bubble if there is text content.
-                      Assistant events with only tool_use/thinking blocks have empty content —
-                      rendering MessageItem for those would produce empty visible bubbles. */}
-                  {message.content && (
-                    <MessageItem
-                      message={message}
-                      hideThoughts
-                      isInContainer
-                      hideBrowserViewButton
-                    />
-                  )}
-                </div>
-              </div>
-            )
-          }
-
-          // Regular messages (user or assistant without thoughts)
-          return (
-            <div key={message.id} className="pb-4">
-              <MessageItem message={message} hideBrowserViewButton />
-            </div>
-          )
-        })}
+        {messages.map((message) => (
+          <MessageRow
+            key={message.id}
+            message={message}
+            hideBrowserViewButton
+            defaultThoughtsExpanded
+            defaultThoughtsMaximized
+          />
+        ))}
 
         {/* Live trailing indicator — show when running and there are already messages */}
         {isLive && messages.length > 0 && (

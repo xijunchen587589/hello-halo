@@ -5,3 +5,4 @@
  */
 
 export * from './providers'
+export { supportsVision } from './model-capabilities'

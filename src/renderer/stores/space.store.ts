@@ -4,6 +4,7 @@
 
 import { create } from 'zustand'
 import { api } from '../api'
+import { useChatStore } from './chat.store'
 import type { Space, CreateSpaceInput, SpacePreferences } from '../types'
 
 interface SpaceState {
@@ -156,6 +157,10 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
         if (currentSpace?.id === spaceId) {
           set({ currentSpace: null })
         }
+
+        // Clean up chat store state for the deleted space
+        // (removes orphan pinned conversations, cached metadata, etc.)
+        useChatStore.getState().resetSpace(spaceId)
 
         return true
       }

@@ -130,6 +130,25 @@ export interface Thought {
     isError: boolean
     timestamp: string
   }
+  // Sub-agent support: links this thought to a parent Task tool_use
+  // Matches SDK's parent_tool_use_id — null/undefined for main agent thoughts
+  parentToolUseId?: string
+  // Task/Agent tool progress (updated via task_started/task_progress/task_notification)
+  taskProgress?: TaskProgress
+}
+
+/**
+ * Progress tracking for a Task/Agent tool_use thought.
+ * Updated in real-time via SDK task lifecycle events.
+ */
+export interface TaskProgress {
+  taskId: string
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  lastToolName?: string
+  toolCount: number
+  durationMs: number
+  summary?: string
+  totalTokens?: number
 }
 
 // ============================================
@@ -141,6 +160,8 @@ export interface Thought {
  * Used to track in-flight requests and accumulated thoughts
  */
 export interface SessionState {
+  /** Halo-internal signal to break stream-processor's consumption loop.
+   *  Does NOT propagate to the CC subprocess — use session.interrupt() for that. */
   abortController: AbortController
   spaceId: string
   conversationId: string

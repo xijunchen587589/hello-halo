@@ -9,6 +9,7 @@
 import { ipcMain } from 'electron'
 import {
   sendMessage,
+  injectMessage,
   stopGeneration,
   getSessionState,
   ensureSessionWarm,
@@ -159,6 +160,25 @@ export function registerAgentHandlers(): void {
         return { success: true }
       } catch (error: unknown) {
         const err = error as Error
+        return { success: false, error: err.message }
+      }
+    }
+  )
+
+  // Inject a mid-turn message into an active session.
+  // Called when user sends a message while generation is in progress (Agent Team mode).
+  ipcMain.handle(
+    'agent:inject-message',
+    async (
+      _event,
+      data: { conversationId: string; message: string }
+    ) => {
+      try {
+        injectMessage(data.conversationId, data.message)
+        return { success: true }
+      } catch (error: unknown) {
+        const err = error as Error
+        console.error(`[IPC] agent:inject-message error:`, err)
         return { success: false, error: err.message }
       }
     }

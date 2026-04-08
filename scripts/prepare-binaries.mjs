@@ -351,6 +351,10 @@ function preparePlatform(platform) {
   } else {
     log.success(`better-sqlite3 prebuild already exists for ${platform}`)
   }
+
+  // node-pty: mac/win prebuilds ship with the npm package automatically.
+  // Linux terminal is not yet supported (no public prebuilds available);
+  // the terminal panel feature is disabled on Linux at runtime.
 }
 
 /**

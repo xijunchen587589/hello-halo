@@ -66,6 +66,7 @@ vi.mock('../../../../src/main/services/agent/sdk-config', () => ({
 vi.mock('../../../../src/main/services/config.service', () => ({
   getConfig: vi.fn().mockReturnValue({}),
   getTempSpacePath: vi.fn().mockReturnValue('/tmp/halo-test/temp'),
+  onNetworkConfigChange: vi.fn(),
 }))
 
 // Mock space service (used by index.ts)
@@ -823,6 +824,164 @@ describe('ActivityStore', () => {
     it('should return 0 when nothing to prune', () => {
       const pruned = store.pruneOldData()
       expect(pruned).toBe(0)
+    })
+  })
+
+  // ── Orphan Escalation Cleanup ──────────────────
+
+  describe('closeOrphanEscalations', () => {
+    it('should close orphan entries while keeping the active entry open', () => {
+      const activeEntryId = randomUUID()
+      const orphanEntryId = randomUUID()
+      const runId1 = createTestRunId()
+      const runId2 = createTestRunId()
+
+      // Insert a run for each entry
+      store.insertRun({
+        runId: runId1,
+        appId: testAppId,
+        sessionKey: 'sess-1',
+        status: 'running',
+        triggerType: 'schedule',
+        startedAt: 1000,
+      })
+      store.insertRun({
+        runId: runId2,
+        appId: testAppId,
+        sessionKey: 'sess-2',
+        status: 'running',
+        triggerType: 'schedule',
+        startedAt: 2000,
+      })
+
+      // Orphan: old pending escalation from a previous run
+      store.insertEntry({
+        id: orphanEntryId,
+        appId: testAppId,
+        runId: runId1,
+        type: 'escalation',
+        ts: 1000,
+        content: { summary: 'Old question', question: 'Old?' },
+      })
+
+      // Active: current pending escalation
+      store.insertEntry({
+        id: activeEntryId,
+        appId: testAppId,
+        runId: runId2,
+        type: 'escalation',
+        ts: 2000,
+        content: { summary: 'Current question', question: 'Current?' },
+      })
+
+      const closed = store.closeOrphanEscalations(testAppId, activeEntryId)
+
+      expect(closed).toBe(1)
+      // Orphan should be closed (has user_response_json)
+      const orphan = store.getEntry(orphanEntryId)
+      expect(orphan!.userResponse).toBeDefined()
+      expect(orphan!.userResponse!.text).toContain('Auto-closed')
+      // Active should remain open
+      const active = store.getEntry(activeEntryId)
+      expect(active!.userResponse).toBeUndefined()
+    })
+
+    it('should close all pending entries when no activeEntryId is given', () => {
+      const entry1 = randomUUID()
+      const entry2 = randomUUID()
+
+      store.insertEntry({
+        id: entry1,
+        appId: testAppId,
+        runId,
+        type: 'escalation',
+        ts: 1000,
+        content: { summary: 'Q1', question: 'Q1?' },
+      })
+      store.insertEntry({
+        id: entry2,
+        appId: testAppId,
+        runId,
+        type: 'escalation',
+        ts: 2000,
+        content: { summary: 'Q2', question: 'Q2?' },
+      })
+
+      const closed = store.closeOrphanEscalations(testAppId)
+
+      expect(closed).toBe(2)
+      expect(store.getEntry(entry1)!.userResponse).toBeDefined()
+      expect(store.getEntry(entry2)!.userResponse).toBeDefined()
+    })
+
+    it('should not affect entries from other apps', () => {
+      const otherAppId = randomUUID()
+      const otherRunId = createTestRunId()
+
+      // Insert run for other app
+      // (Use raw db to insert a minimal installed_apps row for FK)
+      store['db'].exec(`INSERT INTO installed_apps (id, space_id, spec_json, status, created_at) VALUES ('${otherAppId}', 'test-space', '{}', 'active', ${Date.now()})`)
+      store.insertRun({
+        runId: otherRunId,
+        appId: otherAppId,
+        sessionKey: 'sess-other',
+        status: 'running',
+        triggerType: 'schedule',
+        startedAt: 1000,
+      })
+
+      const ourEntry = randomUUID()
+      const otherEntry = randomUUID()
+
+      store.insertEntry({
+        id: ourEntry,
+        appId: testAppId,
+        runId,
+        type: 'escalation',
+        ts: 1000,
+        content: { summary: 'Ours', question: 'Ours?' },
+      })
+      store.insertEntry({
+        id: otherEntry,
+        appId: otherAppId,
+        runId: otherRunId,
+        type: 'escalation',
+        ts: 1000,
+        content: { summary: 'Theirs', question: 'Theirs?' },
+      })
+
+      const closed = store.closeOrphanEscalations(testAppId)
+
+      expect(closed).toBe(1)
+      // Our entry is closed
+      expect(store.getEntry(ourEntry)!.userResponse).toBeDefined()
+      // Other app's entry is untouched
+      expect(store.getEntry(otherEntry)!.userResponse).toBeUndefined()
+    })
+
+    it('should return 0 when there are no orphans', () => {
+      const closed = store.closeOrphanEscalations(testAppId)
+      expect(closed).toBe(0)
+    })
+
+    it('should not close already-responded entries', () => {
+      const respondedEntry = randomUUID()
+
+      store.insertEntry({
+        id: respondedEntry,
+        appId: testAppId,
+        runId,
+        type: 'escalation',
+        ts: 1000,
+        content: { summary: 'Answered', question: 'Answered?' },
+      })
+      store.updateEntryResponse(respondedEntry, { ts: Date.now(), text: 'User reply' })
+
+      const closed = store.closeOrphanEscalations(testAppId)
+
+      expect(closed).toBe(0)
+      // Response should still be the user's, not the auto-close marker
+      expect(store.getEntry(respondedEntry)!.userResponse!.text).toBe('User reply')
     })
   })
 })

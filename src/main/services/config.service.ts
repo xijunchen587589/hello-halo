@@ -255,6 +255,79 @@ function migrateAiSourcesToV2OnDisk(): void {
 }
 
 // ============================================================================
+// WECOM BOT → IM CHANNEL INSTANCES MIGRATION
+// ============================================================================
+// Old format: config.wecomBot (single) + config.imChannels.defaultAppId
+// New format: config.imChannels.instances[] (multi-instance, each binds an appId)
+//
+// Migration runs once at startup. The old `wecomBot` key is removed after migration.
+// ============================================================================
+
+/**
+ * Migrate legacy single wecomBot config to multi-instance imChannels.instances[].
+ * Safe to call multiple times — skips if already migrated.
+ */
+function migrateWecomBotToImChannelInstances(): void {
+  const configPath = getConfigPath()
+  if (!existsSync(configPath)) return
+
+  let parsed: Record<string, any>
+  try {
+    const content = readFileSync(configPath, 'utf-8')
+    parsed = JSON.parse(content)
+  } catch {
+    return
+  }
+
+  // Already has instances — nothing to do
+  if (Array.isArray(parsed.imChannels?.instances) && parsed.imChannels.instances.length > 0) {
+    return
+  }
+
+  const wecomBot = parsed.wecomBot
+  if (!wecomBot || (!wecomBot.botId && !wecomBot.secret)) {
+    return // No legacy config to migrate
+  }
+
+  const defaultAppId =
+    parsed.imChannels?.defaultAppId ??
+    (wecomBot as any)?.defaultAppId // backward compat
+
+  const instance = {
+    id: uuidv4(),
+    type: 'wecom-bot',
+    enabled: wecomBot.enabled ?? false,
+    appId: defaultAppId ?? '',
+    config: {
+      botId: wecomBot.botId ?? '',
+      secret: wecomBot.secret ?? '',
+      wsUrl: wecomBot.wsUrl ?? '',
+    },
+  }
+
+  // Write migrated config
+  if (!parsed.imChannels || typeof parsed.imChannels !== 'object') {
+    parsed.imChannels = {}
+  }
+  parsed.imChannels.instances = [instance]
+
+  // Remove legacy keys
+  delete parsed.wecomBot
+  delete parsed.imChannels.defaultAppId
+
+  try {
+    writeFileSync(configPath, JSON.stringify(parsed, null, 2))
+    console.log('[Config Migration] Migrated wecomBot → imChannels.instances:', {
+      instanceId: instance.id,
+      appId: instance.appId || '(none)',
+      enabled: instance.enabled,
+    })
+  } catch (error) {
+    console.error('[Config Migration] Failed to persist wecomBot migration:', error)
+  }
+}
+
+// ============================================================================
 // API Config Change Notification (Callback Pattern)
 // ============================================================================
 // When API config changes (provider/apiKey/apiUrl), subscribers are notified.
@@ -352,6 +425,8 @@ interface HaloConfig {
     promptProfile?: 'official' | 'halo'
     configDirMode?: 'halo' | 'cc' | 'custom'
     customConfigDir?: string
+    /** Experimental: switch agent engine. 'cc' = Claude Code SDK (default), 'halo' = Halo SDK. */
+    sdkEngine?: 'cc' | 'halo'
   }
   remoteAccess: {
     enabled: boolean
@@ -365,10 +440,12 @@ interface HaloConfig {
   isFirstLaunch: boolean
   // External notification channels (email, WeCom, DingTalk, Feishu, webhook)
   notificationChannels?: import('../../shared/types/notification-channels').NotificationChannelsConfig
-  // WeCom Intelligent Bot (企业微信智能机器人) — bidirectional WebSocket chat
-  // Independent from notificationChannels.wecom (self-built app for push only)
+  /**
+   * @deprecated Migrated to imChannels.instances[] on startup.
+   * Kept only for backward-compatible migration detection.
+   */
   wecomBot?: import('../../shared/types/notification-channels').WecomBotConfig
-  // Global IM channel configuration (default digital human routing, etc.)
+  // IM channel configuration (multi-instance: WeCom Bot, Feishu Bot, DingTalk Bot, etc.)
   imChannels?: import('../../shared/types/notification-channels').ImChannelsConfig
   // Analytics configuration (auto-generated on first launch)
   analytics?: AnalyticsConfig
@@ -848,6 +925,9 @@ export async function initializeApp(): Promise<void> {
   // Previously, migration ran inside every getConfig() call without persisting,
   // generating new UUIDs each time and causing inconsistent currentIds.
   migrateAiSourcesToV2OnDisk()
+
+  // Migrate single wecomBot config to multi-instance imChannels.instances[]
+  migrateWecomBotToImChannelInstances()
 }
 
 // Get configuration

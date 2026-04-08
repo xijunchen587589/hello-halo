@@ -107,6 +107,8 @@ export interface ModelOption {
   id: string
   name: string
   description?: string
+  /** Whether this model supports vision (image) input. undefined = infer from model ID */
+  supportsVision?: boolean
 }
 
 /**

@@ -550,6 +550,14 @@ export const api = {
     return httpRequest('POST', '/api/agent/answer-question', data)
   },
 
+  // Inject a mid-turn message into an active session (Agent Team mode)
+  injectMessage: async (data: { conversationId: string; message: string }): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.injectMessage(data)
+    }
+    return httpRequest('POST', '/api/agent/inject-message', data)
+  },
+
   // Test MCP server connections
   testMcpConnections: async (): Promise<{ success: boolean; servers: unknown[]; error?: string }> => {
     if (isElectron()) {
@@ -905,7 +913,7 @@ export const api = {
     return httpRequest('POST', '/api/notify-channels/clear-cache')
   },
 
-  // ===== WeCom Bot (企业微信智能机器人) =====
+  // ===== WeCom Bot (legacy compat) =====
   getWecomBotStatus: async (): Promise<ApiResponse> => {
     if (isElectron()) {
       return window.halo.getWecomBotStatus()
@@ -920,12 +928,48 @@ export const api = {
     return httpRequest('POST', '/api/wecom-bot/reconnect')
   },
 
+  // ===== IM Channels (multi-instance) =====
+  imChannelsStatus: async (): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.imChannelsStatus()
+    }
+    return httpRequest('GET', '/api/im-channels/status')
+  },
+
+  imChannelsInstanceStatus: async (instanceId: string): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.imChannelsInstanceStatus(instanceId)
+    }
+    return httpRequest('GET', `/api/im-channels/status?instanceId=${encodeURIComponent(instanceId)}`)
+  },
+
+  imChannelsReconnect: async (instanceId: string): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.imChannelsReconnect(instanceId)
+    }
+    return httpRequest('POST', '/api/im-channels/reconnect', { instanceId })
+  },
+
+  imChannelsReload: async (): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.imChannelsReload()
+    }
+    return httpRequest('POST', '/api/im-channels/reload')
+  },
+
+  imChannelsProviders: async (): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.imChannelsProviders()
+    }
+    return httpRequest('GET', '/api/im-channels/providers')
+  },
+
   // ===== IM Sessions (会话管理) =====
   imSessionsList: async (appId?: string): Promise<ApiResponse> => {
     if (isElectron()) {
       return window.halo.imSessionsList(appId)
     }
-    const path = appId ? `/api/im-sessions/${appId}` : '/api/im-sessions'
+    const path = appId ? `/api/im-sessions?appId=${encodeURIComponent(appId)}` : '/api/im-sessions'
     return httpRequest('GET', path)
   },
 
@@ -973,6 +1017,8 @@ export const api = {
     onEvent('agent:ask-question', callback),
   onAgentSessionInfo: (callback: (data: unknown) => void) =>
     onEvent('agent:session-info', callback),
+  onAgentTurnStart: (callback: (data: unknown) => void) =>
+    onEvent('agent:turn-start', callback),
   onRemoteStatusChange: (callback: (data: unknown) => void) =>
     onEvent('remote:status-change', callback),
 
@@ -1711,6 +1757,20 @@ export const api = {
     return httpRequest('POST', `/api/apps/${appId}/chat/clear`, { spaceId })
   },
 
+  appImChatMessages: async (appId: string, spaceId: string, channel: string, chatType: 'direct' | 'group', chatId: string): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.appImChatMessages({ appId, spaceId, channel, chatType, chatId })
+    }
+    return httpRequest('GET', `/api/apps/${appId}/im-chat/messages?spaceId=${spaceId}&channel=${encodeURIComponent(channel)}&chatType=${chatType}&chatId=${encodeURIComponent(chatId)}`)
+  },
+
+  appImChatClear: async (appId: string, spaceId: string, channel: string, chatType: 'direct' | 'group', chatId: string): Promise<ApiResponse> => {
+    if (isElectron()) {
+      return window.halo.appImChatClear({ appId, spaceId, channel, chatType, chatId })
+    }
+    return httpRequest('POST', `/api/apps/${appId}/im-chat/clear`, { spaceId, channel, chatType, chatId })
+  },
+
   // App Event Listeners
   onAppStatusChanged: (callback: (data: unknown) => void) =>
     onEvent('app:status_changed', callback),
@@ -1723,6 +1783,9 @@ export const api = {
 
   onAppNavigate: (callback: (data: unknown) => void) =>
     onEvent('app:navigate', callback),
+
+  onImSessionUpdated: (callback: (data: unknown) => void) =>
+    onEvent('app:im-session-updated', callback),
 
   // ===== Store (App Registry) =====
   storeQuery: async (params: { search?: string; type?: string; category?: string; page?: number; pageSize?: number; locale?: string }): Promise<ApiResponse> => {

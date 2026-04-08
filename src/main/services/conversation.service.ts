@@ -86,6 +86,7 @@ interface Message {
     fileChanges?: FileChangesSummary
   }
   error?: string  // Error message when assistant response failed (e.g., 429 rate limit)
+  source?: string  // How the message entered the conversation (e.g., 'injection')
 }
 
 interface ToolCall {
@@ -760,11 +761,18 @@ export function updateLastMessage(
     return null
   }
 
-  const lastMessage = conversation.messages[conversation.messages.length - 1]
+  // Find the last assistant message (may not be the absolute last message
+  // when mid-turn injection added a user message after it)
+  let lastMessage: Message | null = null
+  for (let i = conversation.messages.length - 1; i >= 0; i--) {
+    if (conversation.messages[i].role === 'assistant') {
+      lastMessage = conversation.messages[i]
+      break
+    }
+  }
 
-  // Only update assistant messages
-  if (lastMessage.role !== 'assistant') {
-    return lastMessage
+  if (!lastMessage) {
+    return null
   }
 
   // Extract thoughts from updates for separate storage

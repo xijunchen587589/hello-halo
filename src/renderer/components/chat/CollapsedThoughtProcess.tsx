@@ -17,6 +17,8 @@ import {
 } from 'lucide-react'
 import { TodoCard, parseTodoInput } from '../tool/TodoCard'
 import { ToolResultViewer } from './tool-result'
+import { SubAgentTimeline } from './SubAgentTimeline'
+import { TeamSnapshotPanel } from './TeamPanel'
 import {
   getThoughtIcon,
   getThoughtColor,
@@ -30,11 +32,13 @@ import { getCurrentLanguage, useTranslation } from '../../i18n'
 interface CollapsedThoughtProcessProps {
   thoughts: Thought[]
   defaultExpanded?: boolean
+  /** Start in full-height mode (max-h-[80vh] instead of 300px). Useful for debugging views. */
+  defaultMaximized?: boolean
 }
 
 
 // Single thought item in expanded view
-function ThoughtItem({ thought }: { thought: Thought }) {
+function ThoughtItem({ thought, allThoughts }: { thought: Thought; allThoughts?: Thought[] }) {
   const { t } = useTranslation()
   const [showRawJson, setShowRawJson] = useState(false)
   const [showResult, setShowResult] = useState(true)  // Default show result
@@ -150,6 +154,18 @@ function ThoughtItem({ thought }: { thought: Thought }) {
           />
         </div>
       )}
+
+      {/* Sub-agent nested timeline for Task/Agent tool calls (history view) */}
+      {thought.type === 'tool_use' && (thought.toolName === 'Task' || thought.toolName === 'Agent') && allThoughts && (
+        <div className="ml-[22px]">
+          <SubAgentTimeline
+            thoughts={allThoughts}
+            parentToolUseId={thought.id}
+            taskProgress={thought.taskProgress}
+            isThinking={false}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -160,14 +176,16 @@ const COLLAPSED_THOUGHT_ESTIMATED_HEIGHT = 36
 function LazyCollapsedThoughtItem({
   thought,
   scrollContainerRef,
+  allThoughts,
 }: {
   thought: Thought
   scrollContainerRef: RefObject<HTMLDivElement | null>
+  allThoughts?: Thought[]
 }) {
   const [ref, isVisible] = useLazyVisible('150px', scrollContainerRef)
 
   if (isVisible) {
-    return <ThoughtItem thought={thought} />
+    return <ThoughtItem thought={thought} allThoughts={allThoughts} />
   }
 
   return (
@@ -175,10 +193,10 @@ function LazyCollapsedThoughtItem({
   )
 }
 
-export function CollapsedThoughtProcess({ thoughts, defaultExpanded = false }: CollapsedThoughtProcessProps) {
+export function CollapsedThoughtProcess({ thoughts, defaultExpanded = false, defaultMaximized = false }: CollapsedThoughtProcessProps) {
   const { t } = useTranslation()
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
-  const [isMaximized, setIsMaximized] = useState(false)
+  const [isMaximized, setIsMaximized] = useState(defaultMaximized)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // Get latest todo data (only render one TodoCard at bottom)
@@ -192,10 +210,12 @@ export function CollapsedThoughtProcess({ thoughts, defaultExpanded = false }: C
     return parseTodoInput(latest.toolInput!)
   }, [thoughts])
 
-  // Filter thoughts for display (exclude TodoWrite and its results)
+  // Filter thoughts for display (exclude TodoWrite, results, and sub-agent thoughts)
+  // Sub-agent thoughts are rendered nested inside their parent Task thought via SubAgentTimeline
   const displayThoughts = useMemo(() => {
     return thoughts.filter(t => {
       if (t.type === 'result') return false
+      if (t.parentToolUseId) return false  // Sub-agent thoughts rendered via SubAgentTimeline
       if (t.toolName === 'TodoWrite') return false
       return true
     })
@@ -257,15 +277,24 @@ export function CollapsedThoughtProcess({ thoughts, defaultExpanded = false }: C
           {/* Thought items — lazy-loaded: only items near the scroll viewport are rendered */}
           {displayThoughts.length > 0 && (
             <div ref={scrollContainerRef} className={`${isMaximized ? 'max-h-[80vh]' : 'max-h-[300px]'} scrollbar-overlay px-3 transition-all duration-200`}>
-              {displayThoughts.map((thought, index) => (
-                <LazyCollapsedThoughtItem
-                  key={`${thought.id}-${index}`}
-                  thought={thought}
-                  scrollContainerRef={scrollContainerRef}
-                />
-              ))}
+              {displayThoughts.map((thought, index) => {
+                const isTaskThought = thought.type === 'tool_use' && (thought.toolName === 'Task' || thought.toolName === 'Agent')
+                return (
+                  <LazyCollapsedThoughtItem
+                    key={`${thought.id}-${index}`}
+                    thought={thought}
+                    scrollContainerRef={scrollContainerRef}
+                    allThoughts={isTaskThought ? thoughts : undefined}
+                  />
+                )
+              })}
             </div>
           )}
+
+          {/* Team snapshot — shown when agent team collaboration is detected in thoughts */}
+          <div className="px-3 mt-2">
+            <TeamSnapshotPanel thoughts={thoughts} />
+          </div>
 
           {/* TodoCard at bottom - only one instance */}
           {latestTodos && latestTodos.length > 0 && (

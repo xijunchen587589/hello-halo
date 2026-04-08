@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { TodoCard, parseTodoInput } from '../tool/TodoCard'
 import { ToolResultViewer } from './tool-result'
+import { SubAgentTimeline } from './SubAgentTimeline'
 import {
   truncateText,
   getThoughtIcon,
@@ -47,9 +48,10 @@ void function _i18nActionKeys(t: (k: string) => string) {
 // Get human-friendly action summary for collapsed header (isThinking=true only)
 // Shows what the agent is currently doing with key details (filename, command, etc.)
 function getActionSummaryData(thoughts: Thought[]): { key: string; params?: Record<string, string> } {
-  // Search from end to find the most recent action
+  // Search from end to find the most recent main-agent action (skip sub-agent thoughts)
   for (let i = thoughts.length - 1; i >= 0; i--) {
     const th = thoughts[i]
+    if (th.parentToolUseId) continue  // Skip sub-agent thoughts
     if (th.type === 'tool_use' && th.toolName) {
       // If tool is still streaming (not ready), show generating
       if (th.isStreaming || !th.isReady) {
@@ -124,7 +126,7 @@ function TimerDisplay({ startTime }: { startTime: number | null }) {
 }
 
 // Individual thought item (for non-special tools)
-const ThoughtItem = memo(function ThoughtItem({ thought, isLast }: { thought: Thought; isLast: boolean }) {
+const ThoughtItem = memo(function ThoughtItem({ thought, isLast, allThoughts, isThinking }: { thought: Thought; isLast: boolean; allThoughts?: Thought[]; isThinking?: boolean }) {
   const [showRawJson, setShowRawJson] = useState(false)
   const [showResult, setShowResult] = useState(true)  // Tool result collapsed by default shows summary
   const [isContentExpanded, setIsContentExpanded] = useState(false)  // For thinking content expand
@@ -308,6 +310,16 @@ const ThoughtItem = memo(function ThoughtItem({ thought, isLast }: { thought: Th
             isError={thought.toolResult!.isError}
           />
         )}
+
+        {/* Sub-agent nested timeline for Task/Agent tool calls */}
+        {thought.type === 'tool_use' && (thought.toolName === 'Task' || thought.toolName === 'Agent') && allThoughts && (
+          <SubAgentTimeline
+            thoughts={allThoughts}
+            parentToolUseId={thought.id}
+            taskProgress={thought.taskProgress}
+            isThinking={isThinking ?? false}
+          />
+        )}
       </div>
     </div>
   )
@@ -323,16 +335,20 @@ function LazyThoughtItem({
   isLast,
   scrollContainerRef,
   eager = false,
+  allThoughts,
+  isThinking,
 }: {
   thought: Thought
   isLast: boolean
   scrollContainerRef: RefObject<HTMLDivElement | null>
   eager?: boolean
+  allThoughts?: Thought[]
+  isThinking?: boolean
 }) {
   const [ref, isVisible] = useLazyVisible('200px', scrollContainerRef, eager)
 
   if (isVisible) {
-    return <ThoughtItem thought={thought} isLast={isLast} />
+    return <ThoughtItem thought={thought} isLast={isLast} allThoughts={allThoughts} isThinking={isThinking} />
   }
 
   return (
@@ -385,12 +401,14 @@ export function ThoughtProcess({ thoughts, isThinking }: ThoughtProcessProps) {
     return parseTodoInput(latest.toolInput!)
   }, [thoughts])
 
-  // Filter thoughts for display (exclude TodoWrite, tool_result, and result)
+  // Filter thoughts for display (exclude TodoWrite, tool_result, result, and sub-agent thoughts)
   // tool_result is now merged into tool_use, no need to show separately
+  // Sub-agent thoughts (parentToolUseId set) are rendered nested inside their parent Task thought
   const displayThoughts = useMemo(() => {
     return thoughts.filter(t => {
       if (t.type === 'result') return false
       if (t.type === 'tool_result') return false  // Merged into tool_use
+      if (t.parentToolUseId) return false  // Sub-agent thoughts rendered via SubAgentTimeline
       // Exclude TodoWrite tool_use (shown separately at bottom)
       if (t.toolName === 'TodoWrite') return false
       return true
@@ -488,6 +506,8 @@ export function ThoughtProcess({ thoughts, isThinking }: ThoughtProcessProps) {
                   // unmount/remount when an item shifts from "recent" to "old"
                   // as new thoughts arrive — which previously caused 1-2 frame flicker.
                   const isRecentItem = index >= displayThoughts.length - 3
+                  // Task/Agent thoughts need the full thoughts array for SubAgentTimeline
+                  const isTaskThought = thought.type === 'tool_use' && (thought.toolName === 'Task' || thought.toolName === 'Agent')
                   return (
                     <LazyThoughtItem
                       key={thought.id}
@@ -495,6 +515,8 @@ export function ThoughtProcess({ thoughts, isThinking }: ThoughtProcessProps) {
                       isLast={isLast}
                       scrollContainerRef={contentRef}
                       eager={isRecentItem}
+                      allThoughts={isTaskThought ? thoughts : undefined}
+                      isThinking={isTaskThought ? isThinking : undefined}
                     />
                   )
                 })}

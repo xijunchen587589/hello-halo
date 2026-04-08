@@ -22,6 +22,7 @@ import { LoginNoticeBar } from '../components/apps/LoginNoticeBar'
 import { ActivityThread } from '../components/apps/ActivityThread'
 import { SessionDetailView } from '../components/apps/SessionDetailView'
 import { AppChatView } from '../components/apps/AppChatView'
+import { AppChatContainer } from '../components/apps/AppChatContainer'
 import { AppConfigPanel } from '../components/apps/AppConfigPanel'
 import { McpStatusCard } from '../components/apps/McpStatusCard'
 import { SkillInfoCard } from '../components/apps/SkillInfoCard'
@@ -184,7 +185,7 @@ export function AppsPage() {
         )
       case 'app-chat':
         return (
-          <AppChatView
+          <AppChatContainer
             appId={detailView.appId}
             spaceId={detailView.spaceId}
           />

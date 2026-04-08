@@ -21,13 +21,11 @@ import type {
   V2SessionInfo,
   SessionConfig,
   SessionState,
-  Thought
 } from './types'
 import {
   getHeadlessElectronPath,
   getWorkingDir,
   getApiCredentials,
-  getEnabledMcpServers,
   getDbMcpServers
 } from './helpers'
 import { emitAgentEvent } from './events'
@@ -35,6 +33,7 @@ import { registerProcess, unregisterProcess, getCurrentInstanceId } from '../hea
 import { resolveCredentialsForSdk, buildBaseSdkOptions } from './sdk-config'
 import { createHaloAppsMcpServer } from '../../apps/conversation-mcp'
 import { createWebSearchMcpServer } from '../web-search'
+import { startConsumer, type ConsumerHandle } from './session-consumer'
 
 // ============================================
 // Session Maps
@@ -42,7 +41,9 @@ import { createWebSearchMcpServer } from '../web-search'
 
 /**
  * Active sessions map: conversationId -> SessionState
- * Tracks in-flight requests with abort controllers and accumulated thoughts
+ * Tracks in-flight requests with abort controllers and accumulated thoughts.
+ * Used by legacy callers (app-chat.ts, execute.ts). Consumer-based chat
+ * conversations use the `consumers` map instead.
  */
 export const activeSessions = new Map<string, SessionState>()
 
@@ -53,10 +54,39 @@ export const activeSessions = new Map<string, SessionState>()
 export const v2Sessions = new Map<string, V2SessionInfo>()
 
 /**
+ * Consumer handles map: conversationId -> ConsumerHandle
+ * Persistent REPL consumers that run for the lifetime of a V2 session.
+ * Created alongside V2 sessions (for chat conversations only, not automation apps).
+ */
+const consumers = new Map<string, ConsumerHandle>()
+
+/**
  * Sessions that should be invalidated after current in-flight request finishes
- * (e.g., model switch during streaming).
+ * (e.g., model switch during streaming). For legacy callers (app-chat/execute).
  */
 const pendingInvalidations = new Set<string>()
+
+/**
+ * Consumer sessions that should be rebuilt after current turn completes.
+ * When API config changes during an active consumer turn, we mark it here
+ * instead of killing the session mid-turn. The consumer checks this flag
+ * after each turn and breaks its loop, triggering rebuild on next sendMessage.
+ */
+const pendingConsumerRebuilds = new Set<string>()
+
+/**
+ * Check if a session is busy (has an in-flight request).
+ * Covers both legacy activeSessions (app-chat/execute) and
+ * consumer-based chat conversations.
+ */
+function isSessionBusy(conversationId: string): boolean {
+  if (activeSessions.has(conversationId)) return true
+  const consumer = consumers.get(conversationId)
+  // A running consumer is only "busy" when actively processing a turn
+  // (getActiveSessionState() != null). Between turns it waits in stream() —
+  // that is idle and should be eligible for the 30-min timeout cleanup.
+  return !!(consumer && consumer.getActiveSessionState())
+}
 
 // ============================================
 // Session Cleanup Helper
@@ -76,7 +106,16 @@ function cleanupSession(conversationId: string, reason: string, skipMapCheck = f
   const info = v2Sessions.get(conversationId)
   if (!info && !skipMapCheck) return
 
-  console.log(`[Agent][${conversationId}] Cleaning up session: ${reason}`)
+  console.log(`[Agent][${conversationId}] Cleaning up session: ${reason}`, new Error('cleanupSession caller trace').stack)
+
+  // Stop the persistent consumer first (if any)
+  const consumer = consumers.get(conversationId)
+  if (consumer) {
+    consumer.stop()
+    consumers.delete(conversationId)
+    console.log(`[Agent][${conversationId}] Consumer stopped during cleanup`)
+  }
+  pendingConsumerRebuilds.delete(conversationId)
 
   if (info) {
     try {
@@ -227,9 +266,8 @@ function startSessionCleanup(): void {
 
       // Check 2: Clean up idle sessions (not used for 30 minutes)
       // Skip sessions with an in-flight request — they are not idle.
-      // activeSessions is the authoritative source for this, consistent with
-      // how invalidateAllSessions() and getOrCreateV2Session() defer cleanup.
-      if (activeSessions.has(convId)) {
+      // Covers both legacy activeSessions and consumer-based conversations.
+      if (isSessionBusy(convId)) {
         info.lastUsedAt = now // keep the clock fresh so timeout resets after task ends
         continue
       }
@@ -342,8 +380,36 @@ export function needsSessionRebuild(existing: V2SessionInfo, newConfig: SessionC
 
 /**
  * Close and remove an existing V2 session (internal helper for rebuild)
+ *
+ * IMPORTANT: Pre-aborts the old session's AbortController before cleanup.
+ *
+ * In SDK ≥2.1, streamInput() waits for waitForFirstResult() before calling
+ * transport.endInput() when hasBidirectionalNeeds() is true (canUseTool or
+ * SDK MCP servers present). Without aborting, the old process's stdin stays
+ * open for up to 5 seconds (the fz.close() abort timer), keeping the old
+ * CLI process alive. If a new session is spawned in this window, both
+ * processes compete for shared resources (config dir, version locks, etc.),
+ * causing the new process to exit immediately (code 0) — an intermittent
+ * race condition.
+ *
+ * By aborting the old AbortController first:
+ * 1. waitForFirstResult() resolves immediately (abort signal listener fires)
+ * 2. streamInput() calls transport.endInput() — old process gets stdin EOF
+ * 3. The abort signal also fires SIGTERM via the spawn signal option
+ * Both ensure the old process exits promptly before the new one starts.
  */
 function closeV2SessionForRebuild(conversationId: string): void {
+  const info = v2Sessions.get(conversationId)
+  if (info) {
+    try {
+      const ac = (info.session as any).abortController
+      if (ac && !ac.signal.aborted) {
+        ac.abort()
+      }
+    } catch (e) {
+      // AbortController may not be accessible — proceed with cleanup
+    }
+  }
   cleanupSession(conversationId, 'rebuild required')
 }
 
@@ -366,6 +432,7 @@ function closeV2SessionForRebuild(conversationId: string): void {
  * @param sessionId - Optional session ID for resumption
  * @param config - Session configuration for rebuild detection
  * @param workDir - Working directory (required for session migration when sessionId is provided)
+ * @param displayModel - Display model name for thought parsing (when provided, starts persistent consumer)
  */
 export async function getOrCreateV2Session(
   spaceId: string,
@@ -373,7 +440,8 @@ export async function getOrCreateV2Session(
   sdkOptions: Record<string, any>,
   sessionId?: string,
   config?: SessionConfig,
-  workDir?: string
+  workDir?: string,
+  displayModel?: string
 ): Promise<V2SessionInfo['session']> {
   // Check if we have an existing session for this conversation
   const existing = v2Sessions.get(conversationId)
@@ -395,18 +463,10 @@ export async function getOrCreateV2Session(
       const needsConfigRebuild = config && needsSessionRebuild(existing, config)
 
       if (needsCredentialRebuild || needsConfigRebuild) {
-        // If a request is in flight for this conversation, defer rebuild to avoid
-        // killing the active session (same strategy as invalidateAllSessions)
-        if (activeSessions.has(conversationId)) {
-          const reason = needsCredentialRebuild
-            ? `credentials (gen ${existing.credentialsGeneration} → ${currentGen})`
-            : `config (aiBrowser: ${existing.config.aiBrowserEnabled} → ${config!.aiBrowserEnabled})`
-          console.log(`[Agent][${conversationId}] ${reason} changed but request in flight, deferring rebuild`)
-          pendingInvalidations.add(conversationId)
-          existing.lastUsedAt = Date.now()
-          return existing.session
-        }
-
+        // Force rebuild: stop consumer (if any), close old session, create new.
+        // This is safe because getOrCreateV2Session is called from sendMessage
+        // before the new turn starts — the consumer is idle (waiting in stream()),
+        // not actively processing a turn.
         if (needsCredentialRebuild) {
           console.log(`[Agent][${conversationId}] Credentials changed (gen ${existing.credentialsGeneration} → ${currentGen}), recreating session`)
         } else {
@@ -452,7 +512,17 @@ export async function getOrCreateV2Session(
   }
   // Requires SDK patch: native SDK ignores most sdkOptions parameters
   // Use 'as any' to bypass type check, actual params handled by patched SDK
-  const session = (await unstable_v2_createSession(sdkOptions as any)) as unknown as V2SDKSession
+  const useHaloSdk = getConfig().agent?.sdkEngine === 'halo'
+  let session: V2SDKSession
+  if (useHaloSdk) {
+    // Dynamic import — SDK is only loaded when the user explicitly enables it.
+    // Keeps it out of the main process startup bundle entirely.
+    const { createSession: haloCreateSession } = await import('@hello-halo/agent-sdk')
+    session = (await haloCreateSession(sdkOptions as any)) as unknown as V2SDKSession
+    console.log(`[Agent][${conversationId}] Using Halo SDK (experimental)`)
+  } else {
+    session = (await unstable_v2_createSession(sdkOptions as any)) as unknown as V2SDKSession
+  }
 
   // Log PID for health system verification (via SDK patch)
   const pid = (session as any).pid
@@ -489,6 +559,15 @@ export async function getOrCreateV2Session(
   // Start cleanup if not already running
   startSessionCleanup()
 
+  // Start persistent consumer for chat conversations (when displayModel is provided).
+  // Automation apps (app-chat.ts, execute.ts) don't pass displayModel and handle
+  // their own processStream() calls, so they don't get a consumer.
+  if (displayModel) {
+    const consumer = startConsumer(session, spaceId, conversationId, displayModel)
+    consumers.set(conversationId, consumer)
+    console.log(`[Agent][${conversationId}] Persistent consumer started`)
+  }
+
   return session
 }
 
@@ -520,9 +599,6 @@ export async function ensureSessionWarm(
   const sessionId = conversation?.sessionId
   const electronPath = getHeadlessElectronPath()
 
-  // Create abortController - consistent with sendMessage
-  const abortController = new AbortController()
-
   // Get API credentials and resolve for SDK use
   const credentials = await getApiCredentials(config)
   console.log(`[Agent] Session warm using: ${credentials.provider}, model: ${credentials.model}`)
@@ -545,7 +621,6 @@ export async function ensureSessionWarm(
     electronPath,
     spaceId,
     conversationId,
-    abortController,
     stderrHandler: (data: string) => {
       console.error(`[Agent][${conversationId}] CLI stderr (warm):`, data)
     },
@@ -554,10 +629,11 @@ export async function ensureSessionWarm(
     promptProfile: config.agent?.promptProfile,
     configDirMode: config.agent?.configDirMode,
     customConfigDir: config.agent?.customConfigDir,
+    enableTeams: config.agent?.enableTeams,
   })
 
   try {
-    const session = await getOrCreateV2Session(spaceId, conversationId, sdkOptions, sessionId, undefined, workDir)
+    const session = await getOrCreateV2Session(spaceId, conversationId, sdkOptions, sessionId, undefined, workDir, resolvedCredentials.displayModel)
 
     // Fetch supported commands from SDK and send to renderer
     // This provides slash commands immediately without needing to send a message
@@ -609,6 +685,49 @@ export function closeAllV2Sessions(): void {
 }
 
 /**
+ * Get the consumer handle for a conversation (if one exists).
+ * Used by send-message.ts to notify the consumer of user-initiated turns.
+ */
+export function getConsumerHandle(conversationId: string): ConsumerHandle | null {
+  return consumers.get(conversationId) || null
+}
+
+/**
+ * Check and consume a pending rebuild flag for a consumer session.
+ * Called by session-consumer after each turn to determine if it should
+ * break its loop (triggering session rebuild on next sendMessage).
+ *
+ * @returns true if the session had a pending rebuild (flag is consumed)
+ */
+export function consumePendingRebuild(conversationId: string): boolean {
+  if (pendingConsumerRebuilds.has(conversationId)) {
+    pendingConsumerRebuilds.delete(conversationId)
+    return true
+  }
+  return false
+}
+
+/**
+ * Get all conversation IDs that have a running consumer.
+ * Used by control.ts to enumerate all active sessions (including consumer-based).
+ */
+export function getRunningConsumerIds(): string[] {
+  const ids: string[] = []
+  for (const [convId, consumer] of consumers.entries()) {
+    if (consumer.isRunning) {
+      ids.push(convId)
+    }
+  }
+  return ids
+}
+
+// Note: checkPendingInvalidation was removed. Consumer-based sessions no longer
+// use pendingInvalidations — they are skipped during invalidateAllSessions (like
+// the old architecture) and force-rebuilt on the next sendMessage when
+// getOrCreateV2Session detects stale credentials. pendingInvalidations is now
+// only used for legacy callers (app-chat/execute) via unregisterActiveSession.
+
+/**
  * Invalidate all V2 sessions due to API config change.
  * Called by config.service via callback when API config changes.
  *
@@ -625,10 +744,20 @@ export function invalidateAllSessions(): void {
   console.log(`[Agent] Invalidating ${count} sessions due to API config change`)
 
   for (const convId of Array.from(v2Sessions.keys())) {
-    // If a request is in flight, defer closing until it finishes
+    // Legacy path (app-chat/execute): defer closing until unregisterActiveSession
     if (activeSessions.has(convId)) {
       pendingInvalidations.add(convId)
-      console.log(`[Agent] Deferring session close until idle: ${convId}`)
+      console.log(`[Agent] Deferring session close until legacy turn idle: ${convId}`)
+      continue
+    }
+
+    // Consumer path (chat conversations): mark for deferred rebuild.
+    // The consumer will break its loop after the current turn completes,
+    // and the next sendMessage will create a fresh session with new credentials.
+    const consumer = consumers.get(convId)
+    if (consumer && consumer.isRunning) {
+      pendingConsumerRebuilds.add(convId)
+      console.log(`[Agent] Marking consumer session for rebuild after current turn: ${convId}`)
       continue
     }
 
@@ -653,12 +782,24 @@ export function invalidateSessionsForSpace(spaceId: string): void {
   for (const [convId, info] of Array.from(v2Sessions.entries())) {
     if (info.spaceId !== spaceId) continue
 
+    // Legacy path (app-chat/execute): defer closing until unregisterActiveSession
     if (activeSessions.has(convId)) {
       pendingInvalidations.add(convId)
-      console.log(`[Agent][${convId}] MCP changed, deferring session close until idle`)
-    } else {
-      cleanupSession(convId, 'MCP config change')
+      console.log(`[Agent][${convId}] MCP changed, deferring session close until legacy turn idle`)
+      count++
+      continue
     }
+
+    // Consumer path: mark for deferred rebuild after current turn completes
+    const consumer = consumers.get(convId)
+    if (consumer && consumer.isRunning) {
+      pendingConsumerRebuilds.add(convId)
+      console.log(`[Agent][${convId}] MCP changed, marking consumer session for rebuild`)
+      count++
+      continue
+    }
+
+    cleanupSession(convId, 'MCP config change')
     count++
   }
 

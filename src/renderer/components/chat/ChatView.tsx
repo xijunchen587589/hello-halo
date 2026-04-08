@@ -44,6 +44,7 @@ export function ChatView({ isCompact = false }: ChatViewProps) {
     sessionInitInfo,
     sendMessage,
     stopGeneration,
+    injectMessage,
     continueAfterInterrupt,
     answerQuestion
   } = useChatStore()
@@ -398,6 +399,10 @@ export function ChatView({ isCompact = false }: ChatViewProps) {
       {/* Input area */}
       <InputArea
         onSend={handleSend}
+        onInject={(content) => {
+          const conversationId = getCurrentConversationId()
+          if (conversationId) injectMessage(conversationId, content)
+        }}
         onStop={handleStop}
         isGenerating={isGenerating}
         placeholder={isCompact ? t('Continue conversation...') : (currentSpace?.isTemp ? t('Say something to Halo...') : t('Continue conversation...'))}
