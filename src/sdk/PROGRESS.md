@@ -15,7 +15,6 @@ tsc --noEmit passes. Core architecture (types, LLM providers, tools, query loop,
 ### What's Missing / Stub
 - **WebSearchTool** — stub, returns placeholder message.
 - **TeamCreateTool** — stub when no agent runner registered.
-- **Effort level** — accepted in config but not mapped to provider request.
 
 ### Known Issues (not yet fixed)
 - Anthropic listModels() is hardcoded (3 models, no API call)
@@ -63,9 +62,29 @@ tsc --noEmit passes. Core architecture (types, LLM providers, tools, query loop,
 - **Consistent session_id** — All message types (`assistant`, `user`, `stream_event`, `result`, `system`) now carry `session_id`. V2 sessions pass their sessionId to queryLoop for consistency.
 - **Tool progress format** — `tool_progress` messages use snake_case fields and include `elapsed_time_seconds` timing.
 
+### What Works (added Run 7)
+- **Effort level → provider request mapping** — `config.effort` is now resolved to concrete provider parameters. For Anthropic: Low=disabled/temp0, Medium=5k budget, High=10k budget, Max=20k budget (matches CC Rust `crates/core/src/effort.rs`). For OpenAI-compat: mapped to `reasoning_effort` field ("low"/"medium"/"high") via `providerOptions`. Explicit `thinking` config takes precedence over effort level.
+- **Init message MCP server statuses** — The `system` init message now includes `mcp_servers` with per-server connection status (`connected`/`failed`). SDK (in-process) servers are marked as connected; external servers get their actual connection status. Consumer reads these via `msg.mcp_servers` to populate the MCP status UI.
+- **Init message `slash_commands` + `skills` fields** — `QueryLoopOptions` now accepts `slashCommands` and `skills` arrays, which are passed through to the init message. Consumer reads `msg.slash_commands` and `msg.skills` from init for the slash command menu UI.
+- **ExternalMcpConnection.serverStatuses** — The MCP bridge now tracks per-server connection status (`McpServerConnectionStatus`) during connection, including error messages for failed servers.
+- **QueryLoopOptions interface** — New exported interface for the query loop options parameter, replacing the inline anonymous type. Includes `mcpServerStatuses`, `slashCommands`, `skills` in addition to existing `onProgress` and `sessionId`.
+
 ---
 
 ## Changelog
+
+### 2026-04-08 — Run 7: Effort level mapping + init message enrichment
+
+**Implemented effort level → provider request parameters and enriched init messages with MCP server statuses**
+
+Two improvements that close P2 gaps: (1) `config.effort` was accepted but ignored — now it resolves to actual thinking budget / temperature / reasoning_effort parameters passed to the LLM, (2) the init message was missing `mcp_servers`, `slash_commands`, and `skills` — consumer reads these for UI.
+
+**Changes:**
+- `core/query-loop.ts` — Added effort level resolution infrastructure: `EFFORT_THINKING_BUDGET`, `EFFORT_TEMPERATURE`, `EFFORT_TO_OPENAI_REASONING` lookup tables, `resolveEffort()` function that combines explicit `thinking` config with effort level. Provider request now passes resolved thinking/temperature/providerOptions. New exported `QueryLoopOptions` interface with `mcpServerStatuses`, `slashCommands`, `skills`. Init message now populates all three fields from options.
+- `llm/openai-compat.ts` — `buildRequestBody()` now reads `reasoning_effort` from `providerOptions` and injects it into the request body for OpenAI o-series / OpenRouter models.
+- `tools/mcp/bridge.ts` — Added `McpServerConnectionStatus` interface. `ExternalMcpConnection` now includes `serverStatuses` array. `connectExternalMcpServers()` collects per-server status during connection attempts.
+- `core/session.ts` — `createSession()` collects MCP server statuses (SDK + external) and passes them to queryLoop via `QueryLoopOptions`. Added `mcpServerStatuses` to `SessionState`.
+- `index.ts` — `query()` function now collects and passes MCP server statuses. Exports `QueryLoopOptions` and `McpServerConnectionStatus` types.
 
 ### 2026-04-08 — Run 6: SDKMessage CC-compatible format + V2 session control methods
 

@@ -36,6 +36,82 @@ import {
   MAX_TOKENS_RECOVERY_MSG,
   contextWindowForModel,
 } from '../prompt/constants.js';
+import type { EffortLevel, ThinkingConfig as CfgThinkingConfig } from '../types/config.js';
+import type { ThinkingConfig } from '../types/provider.js';
+
+// ---------------------------------------------------------------------------
+// Effort level → provider parameters resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Effort-level thinking budget mapping (matches CC Rust: crates/core/src/effort.rs).
+ *
+ *   Low    → thinking disabled, temperature 0.0
+ *   Medium → budget 5 000 tokens
+ *   High   → budget 10 000 tokens  (default)
+ *   Max    → budget 20 000 tokens
+ */
+const EFFORT_THINKING_BUDGET: Record<EffortLevel, number | null> = {
+  low: null,       // disabled
+  medium: 5_000,
+  high: 10_000,
+  max: 20_000,
+};
+
+const EFFORT_TEMPERATURE: Record<EffortLevel, number | undefined> = {
+  low: 0,
+  medium: undefined,
+  high: undefined,
+  max: undefined,
+};
+
+/**
+ * Map effort level to OpenAI-compatible reasoning_effort string
+ * (CC Rust: crates/query/src/lib.rs build_provider_options).
+ */
+const EFFORT_TO_OPENAI_REASONING: Record<EffortLevel, 'low' | 'medium' | 'high'> = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  max: 'high',
+};
+
+interface ResolvedEffort {
+  thinking: ThinkingConfig;
+  temperature: number | undefined;
+  /** OpenAI-compat reasoning_effort field (only set when provider is OpenAI-compat). */
+  reasoningEffort?: 'low' | 'medium' | 'high';
+}
+
+/**
+ * Resolve the final thinking configuration from explicit `thinking` config and
+ * `effort` level. Explicit thinking config takes precedence; effort level is
+ * used as a fallback when thinking is disabled/absent.
+ */
+function resolveEffort(
+  thinking: CfgThinkingConfig,
+  effort: EffortLevel,
+): ResolvedEffort {
+  // If thinking is already explicitly configured (enabled/adaptive), honour it
+  if (thinking.type === 'enabled' || thinking.type === 'adaptive') {
+    return { thinking, temperature: undefined };
+  }
+
+  // Derive from effort level
+  const budget = EFFORT_THINKING_BUDGET[effort];
+  const temperature = EFFORT_TEMPERATURE[effort];
+  const reasoningEffort = EFFORT_TO_OPENAI_REASONING[effort];
+
+  if (budget === null) {
+    return { thinking: { type: 'disabled' }, temperature, reasoningEffort };
+  }
+
+  return {
+    thinking: { type: 'enabled', budgetTokens: budget },
+    temperature,
+    reasoningEffort,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // SDKMessage — events yielded by the query loop
@@ -379,12 +455,23 @@ async function accumulateStream(
  *
  * Yields SDKMessage events for each step.
  */
+export interface QueryLoopOptions {
+  onProgress?: (msg: SDKMessage) => void;
+  sessionId?: string;
+  /** MCP server connection statuses (for init message). */
+  mcpServerStatuses?: Array<{ name: string; status: string; error?: string }>;
+  /** Slash commands available in this session (for init message). */
+  slashCommands?: Array<{ name: string; description: string }>;
+  /** Skill names available in this session (for init message). */
+  skills?: string[];
+}
+
 export async function* queryLoop(
   config: QueryConfig,
   provider: LlmProvider,
   tools: Tool[],
   initialPrompt: string | Message[],
-  options?: { onProgress?: (msg: SDKMessage) => void; sessionId?: string },
+  options?: QueryLoopOptions,
 ): AsyncGenerator<SDKMessage, void, undefined> {
   const sessionId = options?.sessionId ?? randomUUID();
   const costTracker = new CostTracker(config.model);
@@ -424,6 +511,9 @@ export async function* queryLoop(
     model: config.model,
     cwd: config.cwd,
     agents: agentInfos,
+    mcp_servers: options?.mcpServerStatuses,
+    slash_commands: options?.slashCommands,
+    skills: options?.skills,
   };
   yield initMsg;
   options?.onProgress?.(initMsg);
@@ -530,14 +620,22 @@ export async function* queryLoop(
           }
         : undefined;
 
+      // Resolve effort level to thinking/temperature/reasoningEffort
+      const resolved = resolveEffort(config.thinking, config.effort);
+
       const stream = provider.createMessageStream({
         model: effectiveModel,
         messages: [...messages],
         systemPrompt: fullSystemPrompt,
         tools: toolDefs,
         maxTokens: config.maxTokens,
-        thinking: config.thinking,
+        thinking: resolved.thinking,
+        temperature: resolved.temperature,
         stream: true,
+        // Pass reasoning_effort for OpenAI-compat providers via providerOptions
+        ...(resolved.reasoningEffort
+          ? { providerOptions: { reasoning_effort: resolved.reasoningEffort } }
+          : {}),
       });
 
       accumulated = await accumulateStream(stream, config.abortSignal, streamEventEmitter);

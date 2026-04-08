@@ -11,7 +11,8 @@ import type { Tool } from '../types/tool.js';
 import type { Options, QueryConfig, PermissionMode } from '../types/config.js';
 import { resolveQueryConfig } from './context.js';
 import { queryLoop } from './query-loop.js';
-import type { SDKMessage } from './query-loop.js';
+import type { SDKMessage, QueryLoopOptions } from './query-loop.js';
+import type { McpServerConnectionStatus } from '../tools/mcp/bridge.js';
 import { getAllTools, filterTools } from '../tools/registry.js';
 import { extractSdkMcpTools, connectExternalMcpServers } from '../tools/mcp/bridge.js';
 import type { ExternalMcpConnection } from '../tools/mcp/bridge.js';
@@ -79,6 +80,8 @@ interface SessionState {
   activeStream: AsyncGenerator<SDKMessage, void, undefined> | null;
   /** External MCP connection (for cleanup on close). */
   externalMcp: ExternalMcpConnection | null;
+  /** All MCP server connection statuses (SDK + external). */
+  mcpServerStatuses: McpServerConnectionStatus[];
   /** Orchestrator handle (for sub-agent lifecycle). */
   orchestrator: OrchestratorHandle | null;
 }
@@ -133,6 +136,17 @@ export async function createSession(options: Options): Promise<SDKSession> {
     tools.push(...mcpTools);
   }
 
+  // Collect MCP server statuses for the init message.
+  // SDK (in-process) servers are always "connected".
+  const mcpServerStatuses: McpServerConnectionStatus[] = [];
+  if (options.mcpServers) {
+    for (const [name, cfg] of Object.entries(options.mcpServers)) {
+      if (cfg && typeof cfg === 'object' && (cfg as Record<string, unknown>).type === 'sdk') {
+        mcpServerStatuses.push({ name, status: 'connected' });
+      }
+    }
+  }
+
   // Connect external MCP servers (async — stdio/sse/http)
   let externalMcp: ExternalMcpConnection | null = null;
   try {
@@ -144,6 +158,8 @@ export async function createSession(options: Options): Promise<SDKSession> {
       tools = tools.filter((t) => !extToolNames.has(t.name));
       tools.push(...externalMcp.tools);
     }
+    // Merge external server statuses
+    mcpServerStatuses.push(...externalMcp.serverStatuses);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[SDK] External MCP connection error: ${msg}`);
@@ -173,6 +189,7 @@ export async function createSession(options: Options): Promise<SDKSession> {
     pendingMessages: [],
     activeStream: null,
     externalMcp,
+    mcpServerStatuses,
     orchestrator,
   };
 
@@ -240,12 +257,18 @@ function createSessionProxy(state: SessionState): SDKSession {
       const isFirstTurn = state.messages.length === 1;
 
       // Run the query loop, passing the session ID for consistent message session_id fields
+      const queryOpts: QueryLoopOptions = {
+        sessionId: state.sessionId,
+        mcpServerStatuses: state.mcpServerStatuses.length > 0
+          ? state.mcpServerStatuses
+          : undefined,
+      };
       const gen = queryLoop(
         state.config,
         state.provider,
         state.tools,
         initialMessages,
-        { sessionId: state.sessionId },
+        queryOpts,
       );
 
       for await (const msg of gen) {

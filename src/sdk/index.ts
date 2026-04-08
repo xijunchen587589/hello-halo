@@ -16,7 +16,7 @@
 export { createSession } from './core/session.js';
 export type { SDKSession } from './core/session.js';
 export { queryLoop } from './core/query-loop.js';
-export type { SDKMessage } from './core/query-loop.js';
+export type { SDKMessage, QueryLoopOptions } from './core/query-loop.js';
 export { CostTracker } from './core/cost.js';
 export type { ModelUsageEntry } from './core/cost.js';
 export { TokenBudget } from './core/token-budget.js';
@@ -50,10 +50,11 @@ import type { Options } from './types/config.js';
 import type { Tool } from './types/tool.js';
 import { createSession } from './core/session.js';
 import { queryLoop } from './core/query-loop.js';
-import type { SDKMessage } from './core/query-loop.js';
+import type { SDKMessage, QueryLoopOptions } from './core/query-loop.js';
 import { resolveQueryConfig } from './core/context.js';
 import { getAllTools, filterTools } from './tools/registry.js';
 import { extractSdkMcpTools, connectExternalMcpServers } from './tools/mcp/bridge.js';
+import type { McpServerConnectionStatus } from './tools/mcp/bridge.js';
 import { initOrchestrator } from './orchestrator/init.js';
 
 /**
@@ -144,6 +145,16 @@ export function query(params: {
   // then runs the query loop, and disconnects on cleanup.
   const mcpServersConfig = options.mcpServers as Record<string, unknown> | undefined;
 
+  // Collect SDK MCP server statuses (in-process — always connected)
+  const mcpStatuses: McpServerConnectionStatus[] = [];
+  if (mcpServersConfig) {
+    for (const [name, cfg] of Object.entries(mcpServersConfig)) {
+      if (cfg && typeof cfg === 'object' && (cfg as Record<string, unknown>).type === 'sdk') {
+        mcpStatuses.push({ name, status: 'connected' });
+      }
+    }
+  }
+
   const gen = (async function* (): AsyncGenerator<SDKMessage, void, undefined> {
     // Connect external MCP servers (stdio/sse/http) asynchronously
     let disconnectMcp: (() => void) | null = null;
@@ -155,6 +166,8 @@ export function query(params: {
         tools = tools.filter((t) => !extToolNames.has(t.name));
         tools.push(...externalMcp.tools);
       }
+      // Merge external server statuses
+      mcpStatuses.push(...externalMcp.serverStatuses);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[SDK] External MCP connection error: ${msg}`);
@@ -167,9 +180,13 @@ export function query(params: {
       tools,
     });
 
+    const queryOpts: QueryLoopOptions = {
+      mcpServerStatuses: mcpStatuses.length > 0 ? mcpStatuses : undefined,
+    };
+
     try {
       if (typeof prompt === 'string') {
-        yield* queryLoop(configWithSignal, provider, tools, prompt);
+        yield* queryLoop(configWithSignal, provider, tools, prompt, queryOpts);
       } else {
         // AsyncIterable prompt — drain the first message to start the loop
         let firstPrompt = '';
@@ -178,7 +195,7 @@ export function query(params: {
           break;
         }
         if (!firstPrompt) return;
-        yield* queryLoop(configWithSignal, provider, tools, firstPrompt);
+        yield* queryLoop(configWithSignal, provider, tools, firstPrompt, queryOpts);
       }
     } finally {
       // Dispose orchestrator (abort sub-agents, reset stubs)
@@ -351,7 +368,7 @@ export {
   isSdkMcpServerConfig,
   connectExternalMcpServers,
 } from './tools/mcp/bridge.js';
-export type { ExternalMcpConnection } from './tools/mcp/bridge.js';
+export type { ExternalMcpConnection, McpServerConnectionStatus } from './tools/mcp/bridge.js';
 
 // MCP external transport — client, transports, JSON-RPC
 export { McpClient } from './tools/mcp/client.js';

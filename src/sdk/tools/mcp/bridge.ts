@@ -119,6 +119,13 @@ interface ConnectedExternalServer {
   tools: Tool[];
 }
 
+/** Per-server connection status (matches CC SDK's SDKSystemMessage.mcp_servers). */
+export interface McpServerConnectionStatus {
+  name: string;
+  status: 'connected' | 'failed';
+  error?: string;
+}
+
 /**
  * Result of connecting external MCP servers.
  * Holds the bridged tools and a disconnect function for cleanup.
@@ -126,6 +133,8 @@ interface ConnectedExternalServer {
 export interface ExternalMcpConnection {
   /** All bridged tools from connected external MCP servers. */
   tools: Tool[];
+  /** Per-server connection statuses. */
+  serverStatuses: McpServerConnectionStatus[];
   /** Disconnect all external MCP servers. Must be called during cleanup. */
   disconnect: () => void;
 }
@@ -143,9 +152,10 @@ export interface ExternalMcpConnection {
 export async function connectExternalMcpServers(
   mcpServers: Record<string, unknown> | undefined,
 ): Promise<ExternalMcpConnection> {
-  if (!mcpServers) return { tools: [], disconnect: () => {} };
+  if (!mcpServers) return { tools: [], serverStatuses: [], disconnect: () => {} };
 
   const connected: ConnectedExternalServer[] = [];
+  const serverStatuses: McpServerConnectionStatus[] = [];
 
   for (const [name, config] of Object.entries(mcpServers)) {
     if (!config || typeof config !== 'object') continue;
@@ -158,10 +168,12 @@ export async function connectExternalMcpServers(
       const server = await connectSingleExternalServer(name, cfg);
       if (server) {
         connected.push(server);
+        serverStatuses.push({ name, status: 'connected' });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[MCP] Failed to connect server "${name}": ${msg}`);
+      serverStatuses.push({ name, status: 'failed', error: msg });
     }
   }
 
@@ -178,7 +190,7 @@ export async function connectExternalMcpServers(
     connected.length = 0;
   };
 
-  return { tools: allTools, disconnect };
+  return { tools: allTools, serverStatuses, disconnect };
 }
 
 /**
