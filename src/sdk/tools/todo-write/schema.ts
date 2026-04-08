@@ -1,6 +1,6 @@
 /**
  * @module tools/todo-write/schema
- * TodoWrite tool schema — extracted from CC Rust source: crates/tools/src/todo_write.rs
+ * TodoWrite tool schema and configuration.
  * @license MIT
  */
 

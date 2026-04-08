@@ -17,9 +17,8 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Minimal CallToolResult — matches the MCP SDK's CallToolResult shape.
- * Consumers already import this from @modelcontextprotocol/sdk/types.js,
- * but we define it here to avoid adding that dependency to the SDK.
+ * Minimal CallToolResult — describes the content and error state of a tool invocation.
+ * Defined locally to keep this package free of extra dependencies.
  */
 export interface CallToolResult {
   content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string } | { type: string; [key: string]: unknown }>;
@@ -28,7 +27,7 @@ export interface CallToolResult {
 }
 
 /**
- * Tool annotations for MCP tools (matches MCP SDK ToolAnnotations).
+ * Tool annotations for MCP tools.
  */
 export interface ToolAnnotations {
   /** Human-readable title for the tool */
@@ -94,8 +93,7 @@ export interface McpSdkServerConfig {
  */
 export interface McpSdkServerConfigWithInstance extends McpSdkServerConfig {
   /**
-   * The server instance. In the CC SDK this is an actual McpServer,
-   * but in our in-process SDK it's a lightweight wrapper that holds
+   * The server instance. A lightweight wrapper that holds
    * the tool definitions and routes calls.
    */
   instance: SdkMcpServerInstance;
@@ -341,7 +339,7 @@ export function createSdkMcpServer(options: CreateSdkMcpServerOptions): McpSdkSe
       // Execute the handler with the provided args
       // The handler expects InferShape<Schema>, but at runtime we pass the
       // raw JSON-parsed args from the LLM. Zod runtime validation is NOT
-      // enforced here (matching CC SDK behavior).
+      // enforced here.
       return def.handler(args as any, {});
     },
 

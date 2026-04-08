@@ -5,7 +5,7 @@
  * PreCompact, PostCompact, SessionStart, SessionEnd, etc.) with tool-name
  * matching and optional timeout enforcement.
  *
- * Mirrors CC's hook system: settings-based hooks are translated into
+ * Settings-based hooks are translated into
  * HookCallbackMatcher[] by the consumer and passed via Options.hooks.
  * @license MIT
  */

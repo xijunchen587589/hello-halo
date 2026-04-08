@@ -3,9 +3,7 @@
  * MCP Connection Manager — manages lifecycle (connect / disconnect / reconnect)
  * for a set of external MCP servers.
  *
- * Mirrors the CC Rust `McpConnectionManager` from
- * `crates/mcp/src/connection_manager.rs`:
- *
+ * Features:
  *   - Per-server status tracking (Connected, Connecting, Disconnected, Failed)
  *   - Exponential-backoff reconnection loops (1s → 2s → 4s → … capped at 60s)
  *   - Connect / disconnect / restart control plane
@@ -218,7 +216,7 @@ export class McpConnectionManager {
   }
 
   /**
-   * Get CC SDK compatible connection statuses for the init message.
+   * Get connection statuses for the init message.
    */
   getStatuses(): McpServerConnectionStatus[] {
     const result: McpServerConnectionStatus[] = [];

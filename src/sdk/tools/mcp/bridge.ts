@@ -12,8 +12,7 @@
  *    Each server is connected, initialized (MCP handshake), and its tools
  *    are discovered and bridged into `Tool` instances.
  *
- * Tool names follow the MCP convention: `mcp__{serverName}__{toolName}`
- * (matching CC SDK behavior for MCP tool naming).
+ * Tool names follow the MCP convention: `mcp__{serverName}__{toolName}`.
  *
  * @license MIT
  */
@@ -33,7 +32,7 @@ import type { McpTransport } from './jsonrpc.js';
  * Convention: `mcp__{server-name}__{tool-name}`
  *
  * Server names may contain hyphens (e.g. "halo-report"), which are
- * preserved as-is to match CC SDK behavior.
+ * preserved as-is in the tool name.
  */
 function mcpToolName(serverName: string, toolName: string): string {
   return `mcp__${serverName}__${toolName}`;
@@ -119,7 +118,7 @@ interface ConnectedExternalServer {
   tools: Tool[];
 }
 
-/** Per-server connection status (matches CC SDK's SDKSystemMessage.mcp_servers). */
+/** Per-server connection status included in the init system message. */
 export interface McpServerConnectionStatus {
   name: string;
   status: 'connected' | 'failed';
@@ -304,8 +303,7 @@ function createExternalBridgedTool(
 // =========================================================================
 
 /**
- * Convert MCP CallToolResult content blocks to a flat text string.
- * CC SDK always serializes MCP tool results to a single text string
+ * Convert MCP CallToolResult content blocks to a flat text string
  * for the LLM's tool_result content block.
  */
 function formatCallToolResult(

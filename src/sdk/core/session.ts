@@ -1,7 +1,6 @@
 /**
  * @module core/session
  * V2Session — stateful send/stream/close interface for the Agent-Core SDK.
- * Mirrors CC SDK's `createSession()` / `SDKSession`.
  * @license MIT
  */
 
@@ -10,6 +9,7 @@ import type { Message, LlmProvider } from '../types/provider.js';
 import type { Tool } from '../types/tool.js';
 import type { Options, QueryConfig, PermissionMode, SlashCommand } from '../types/config.js';
 import { resolveQueryConfig } from './context.js';
+import { AnthropicProvider } from '../llm/anthropic.js';
 import { queryLoop } from './query-loop.js';
 import type { SDKMessage, QueryLoopOptions } from './query-loop.js';
 import type { McpServerConnectionStatus } from '../tools/mcp/bridge.js';
@@ -28,7 +28,6 @@ import type { OrchestratorHandle } from '../orchestrator/init.js';
 
 /**
  * A stateful session that holds conversation state across multiple sends.
- * Mirrors CC SDK's SDKSession interface for drop-in compatibility.
  */
 export interface SDKSession {
   /** Unique identifier for this session. */
@@ -79,6 +78,8 @@ interface SessionState {
   closed: boolean;
   /** Queue of pending user messages. */
   pendingMessages: Array<string | Message>;
+  /** Resolve function to wake up stream() when a message arrives via send(). */
+  pendingWakeUp: (() => void) | null;
   /** Active stream generator (only one at a time). */
   activeStream: AsyncGenerator<SDKMessage, void, undefined> | null;
   /** MCP connection manager (for reconnection + cleanup). */
@@ -107,12 +108,14 @@ interface SessionState {
  * @returns A new SDKSession instance
  */
 export async function createSession(options: Options): Promise<SDKSession> {
-  const provider = options.provider;
-  if (!provider) {
-    throw new Error(
-      'SDKSession requires a provider. Pass options.provider or use createProvider() to create one.',
-    );
-  }
+  const env = options.env as Record<string, string | undefined> | undefined;
+  const apiKey = env?.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY;
+  const baseUrl = env?.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_BASE_URL;
+  const provider = options.provider ?? (
+    apiKey
+      ? new AnthropicProvider({ apiKey, baseUrl })
+      : (() => { throw new Error('createSession() requires options.provider or ANTHROPIC_API_KEY in options.env / process.env.'); })()
+  );
 
   const config = resolveQueryConfig(options);
   const sessionId = options.sessionId ?? randomUUID();
@@ -208,6 +211,7 @@ export async function createSession(options: Options): Promise<SDKSession> {
     abortController,
     closed: false,
     pendingMessages: [],
+    pendingWakeUp: null,
     activeStream: null,
     mcpManager,
     mcpServerStatuses,
@@ -226,8 +230,7 @@ export async function createSession(options: Options): Promise<SDKSession> {
 /**
  * Create an in-process transport shim.
  *
- * The CC SDK's process-based transport exposes `isReady()`, `.ready`,
- * and `onExit()`. For the in-process SDK these are trivial stubs because
+ * Exposes `isReady()`, `.ready`, and `onExit()` as trivial stubs because
  * there is no subprocess to monitor. The consumer (hello-halo) accesses
  * these via `(session as any).query.transport`.
  */
@@ -255,7 +258,7 @@ function createTransportShim(state: SessionState) {
 }
 
 /**
- * Create a query proxy that mirrors the CC SDK's internal Query object.
+ * Create a query proxy exposing transport and supportedCommands.
  *
  * The consumer accesses `(session as any).query.transport` and
  * `(session as any).query.supportedCommands()`.
@@ -315,6 +318,9 @@ function createSessionProxy(state: SessionState): SDKSession {
 
     const text = typeof message === 'string' ? message : message.content;
     state.pendingMessages.push(text);
+    // Wake up stream() if it is waiting for a message.
+    state.pendingWakeUp?.();
+    state.pendingWakeUp = null;
   };
 
   session.stream = async function* stream(): AsyncGenerator<SDKMessage, void, undefined> {
@@ -322,17 +328,10 @@ function createSessionProxy(state: SessionState): SDKSession {
         throw new Error('Session is closed');
       }
 
-      // If there are no pending messages, wait for one using an event-driven approach
+      // If there are no pending messages, wait until send() wakes us up.
       if (state.pendingMessages.length === 0 && !state.closed) {
         await new Promise<void>((resolve) => {
-          const check = () => {
-            if (state.pendingMessages.length > 0 || state.closed) {
-              resolve();
-            } else {
-              setTimeout(check, 50);
-            }
-          };
-          check();
+          state.pendingWakeUp = resolve;
         });
       }
 
@@ -401,6 +400,9 @@ function createSessionProxy(state: SessionState): SDKSession {
     if (!state.closed) {
       state.closed = true;
       state.abortController.abort();
+      // Wake up stream() if it is waiting — it will see closed=true and return.
+      state.pendingWakeUp?.();
+      state.pendingWakeUp = null;
 
       // Notify exit listeners (transport shim)
       for (const listener of state.exitListeners) {

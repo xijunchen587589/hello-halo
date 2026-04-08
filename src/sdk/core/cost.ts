@@ -1,7 +1,6 @@
 /**
  * @module core/cost
  * CostTracker and ModelPricing for budget tracking and enforcement.
- * Translated from CC Rust crate: crates/core/src/lib.rs (cost module).
  * @license MIT
  */
 
@@ -244,7 +243,7 @@ export class CostTracker {
     this._cacheReadTokens = 0;
   }
 
-  /** Get cumulative usage as a flat object (CC SDK compatible). */
+  /** Get cumulative usage as a flat object. */
   getUsage(): {
     input_tokens: number;
     output_tokens: number;
@@ -259,7 +258,7 @@ export class CostTracker {
     };
   }
 
-  /** Get per-model usage as a plain record (CC SDK compatible). */
+  /** Get per-model usage as a plain record. */
   getModelUsage(): Record<string, ModelUsageEntry> {
     const result: Record<string, ModelUsageEntry> = {};
     for (const [key, entry] of this._modelUsage) {

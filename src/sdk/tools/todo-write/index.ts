@@ -1,7 +1,6 @@
 /**
  * @module tools/todo-write
  * TodoWriteTool — write and manage a todo/task list.
- * Schema matches the Anthropic system prompt: {content, status, activeForm}.
  * @license MIT
  */
 

@@ -6,8 +6,6 @@
  * a spawn request and delegates to the registered spawner.
  * Call `setSpawner()` to register the real spawn implementation
  * (done automatically by `initOrchestrator()`).
- *
- * Extracted from CC Rust source: crates/query/src/agent_tool.rs
  * @license MIT
  */
 

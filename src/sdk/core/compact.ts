@@ -1,7 +1,6 @@
 /**
  * @module core/compact
  * Three-tier context compaction: micro, api, and full.
- * Mirrors CC Rust: crates/query/src/compact.rs
  * @license MIT
  */
 
@@ -117,7 +116,6 @@ function toolResultContentSize(content: ToolResultBlock['content']): number {
  * characters, walk from oldest to newest and replace individual
  * tool_result content with a placeholder until under budget.
  *
- * Mirrors CC `apply_tool_result_budget` from query/src/lib.rs.
  * Handles both string and array-typed tool_result content.
  */
 export function microCompact(
@@ -318,7 +316,7 @@ export function getCompactPrompt(customInstructions?: string): string {
 
 /**
  * Format the raw compact summary by stripping <analysis> and cleaning up
- * <summary> XML tags. Mirrors `formatCompactSummary` from CC compact.rs.
+ * <summary> XML tags.
  */
 export function formatCompactSummary(raw: string): string {
   // Strip <analysis>...</analysis> block

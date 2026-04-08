@@ -3,7 +3,6 @@
  * OpenAI Chat Completions compatible provider implementation.
  * Supports any provider exposing an OpenAI-compatible API (OpenAI, DeepSeek,
  * Groq, Ollama, Qwen/DashScope, OpenRouter, etc.).
- * Translated from CC Rust crate: crates/api/src/providers/openai_compat.rs
  * @license MIT
  */
 

@@ -1,7 +1,6 @@
 /**
  * @module types/config
  * Options, QueryConfig, AgentContext — the configuration surface area of the SDK.
- * Derived from CC SDK's Options type and the architecture document.
  * @license MIT
  */
 
@@ -216,7 +215,6 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 /**
  * Options for the query function.
- * 100% compatible with CC SDK's Options type.
  */
 export interface Options {
   /** Controller for cancelling the query */
@@ -304,13 +302,13 @@ export interface Options {
   slashCommands?: Array<string | SlashCommand>;
   /** Skill names available in this session. */
   skills?: string[];
-  /** Path to Claude Code executable (CC SDK compat — ignored in-process). */
+  /** Path to Claude Code executable (ignored in-process). */
   pathToClaudeCodeExecutable?: string;
-  /** JavaScript runtime (CC SDK compat — ignored in-process). */
+  /** JavaScript runtime (ignored in-process). */
   executable?: string;
-  /** Additional runtime arguments (CC SDK compat — ignored in-process). */
+  /** Additional runtime arguments (ignored in-process). */
   executableArgs?: string[];
-  /** Additional CLI arguments (CC SDK compat — ignored in-process). */
+  /** Additional CLI arguments (ignored in-process). */
   extraArgs?: Record<string, string | null>;
 }
 

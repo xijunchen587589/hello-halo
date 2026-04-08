@@ -1,0 +1,106 @@
+/**
+ * @module utils/tokens
+ * Token estimation utilities using a character-ratio heuristic.
+ * Uses the widely-accepted approximation of 1 token ~ 4/3 characters.
+ * @license MIT
+ */
+
+import type { Message, ContentBlock } from '../types/provider.js';
+
+// ---------------------------------------------------------------------------
+// Core estimation
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimate the number of tokens in a text string.
+ * Uses the 4/3 character ratio: 1 token ≈ 1.33 characters.
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  // 1 token ≈ 4/3 chars → tokens ≈ chars * 3/4
+  return Math.ceil(text.length * 0.75);
+}
+
+// ---------------------------------------------------------------------------
+// Content block estimation
+// ---------------------------------------------------------------------------
+
+/** Estimate tokens for a single content block. */
+function estimateContentBlockTokens(block: ContentBlock): number {
+  switch (block.type) {
+    case 'text':
+      return estimateTokens(block.text);
+    case 'thinking':
+      return estimateTokens(block.thinking);
+    case 'tool_use':
+      // Tool name + JSON-serialized input
+      return (
+        estimateTokens(block.name) +
+        estimateTokens(JSON.stringify(block.input))
+      );
+    case 'tool_result': {
+      if (typeof block.content === 'string') {
+        return estimateTokens(block.content);
+      }
+      // Array of content blocks
+      let total = 0;
+      for (const sub of block.content) {
+        total += estimateContentBlockTokens(sub);
+      }
+      return total;
+    }
+    case 'image':
+      // Images are typically counted as a fixed token amount by the API;
+      // use a rough estimate based on base64 size
+      return Math.ceil(block.source.data.length * 0.75 * 0.01);
+    case 'document':
+      return Math.ceil(block.source.data.length * 0.75 * 0.01);
+    case 'signature':
+      return estimateTokens(block.signature);
+    default:
+      return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Message-level estimation
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimate the number of tokens in a single message.
+ * Accounts for both string content and structured content blocks.
+ */
+export function estimateMessageTokens(messages: Message[]): number {
+  let total = 0;
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      total += estimateTokens(msg.content);
+    } else {
+      for (const block of msg.content) {
+        total += estimateContentBlockTokens(block);
+      }
+    }
+    // Add a small overhead per message for role/structure tokens
+    total += 4;
+  }
+  return total;
+}
+
+// ---------------------------------------------------------------------------
+// Budget check
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a token count is within a budget.
+ * @param tokenCount - Current token count
+ * @param maxTokens - Maximum allowed tokens
+ * @param threshold - Fraction of maxTokens considered "within budget" (default 0.9)
+ * @returns true if tokenCount <= maxTokens * threshold
+ */
+export function isWithinBudget(
+  tokenCount: number,
+  maxTokens: number,
+  threshold = 0.9,
+): boolean {
+  return tokenCount <= maxTokens * threshold;
+}

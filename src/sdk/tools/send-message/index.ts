@@ -1,7 +1,6 @@
 /**
  * @module tools/send-message
  * SendMessageTool — send a message to another agent or broadcast.
- * Extracted from CC Rust source: crates/tools/src/send_message.rs
  *
  * This is a stub — actual message routing is done by the orchestrator.
  * Includes `setMessageRouter()` for the orchestrator to register the real handler.

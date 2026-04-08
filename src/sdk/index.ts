@@ -59,12 +59,27 @@ import {
   createMcpConnectionManager,
 } from './tools/mcp/connection-manager.js';
 import { initOrchestrator } from './orchestrator/init.js';
+import { AnthropicProvider } from './llm/anthropic.js';
+
+/** Auto-create a provider from options.env or process.env when options.provider is omitted. */
+function resolveProvider(options: Options) {
+  if (options.provider) return options.provider;
+  const env = options.env as Record<string, string | undefined> | undefined;
+  const apiKey = env?.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY;
+  const baseUrl = env?.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_BASE_URL;
+  if (!apiKey) {
+    throw new Error(
+      'query() requires options.provider or ANTHROPIC_API_KEY in options.env / process.env.',
+    );
+  }
+  return new AnthropicProvider({ apiKey, baseUrl });
+}
 
 /**
  * The Query object — an AsyncGenerator<SDKMessage> with additional
  * control methods for mid-stream interaction.
  *
- * Mirrors the CC SDK Query interface from sdk-types.ts.
+ * The Query object returned by the `query()` function.
  */
 export interface Query extends AsyncGenerator<SDKMessage, void, undefined> {
   /** Interrupt the current query. */
@@ -84,7 +99,7 @@ export interface Query extends AsyncGenerator<SDKMessage, void, undefined> {
  * Returns a Query object (AsyncGenerator<SDKMessage>) that yields events
  * as they are produced.
  *
- * Compatible with CC SDK's `query()` signature.
+ * Returns a Query object (AsyncGenerator<SDKMessage>) compatible with the standard query signature.
  *
  * @example
  * ```ts
@@ -106,13 +121,8 @@ export function query(params: {
 }): Query {
   const { prompt, options = {} } = params;
 
-  // Resolve provider
-  const provider = options.provider;
-  if (!provider) {
-    throw new Error(
-      'query() requires options.provider. Use createProvider() to create an LlmProvider instance.',
-    );
-  }
+  // Resolve provider — explicit or auto-created from env
+  const provider = resolveProvider(options);
 
   // Resolve config
   const config = resolveQueryConfig(options);
@@ -242,16 +252,13 @@ function wrapGeneratorAsQuery(
 }
 
 // ---------------------------------------------------------------------------
-// unstable_v2_createSession — CC SDK compatibility alias
+// unstable_v2_createSession — compatibility alias
 // ---------------------------------------------------------------------------
 
 /**
- * Alias for createSession() — mirrors the CC SDK's
- * `unstable_v2_createSession()` function name.
- *
- * The Agent-Core SDK uses the stable `createSession()` name internally,
- * but exports this alias for zero-change compatibility with code that
- * was written against the CC SDK.
+ * Alias for createSession() — exported under the legacy function name
+ * `unstable_v2_createSession()` for zero-change compatibility with
+ * existing consumer code.
  */
 export const unstable_v2_createSession = createSession;
 

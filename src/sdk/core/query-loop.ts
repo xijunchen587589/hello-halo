@@ -1,7 +1,6 @@
 /**
  * @module core/query-loop
  * The ReAct query loop — the heart of the Agent-Core SDK.
- * Mirrors CC Rust: crates/query/src/lib.rs run_query_loop()
  * @license MIT
  */
 
@@ -44,7 +43,7 @@ import type { ThinkingConfig } from '../types/provider.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Effort-level thinking budget mapping (matches CC Rust: crates/core/src/effort.rs).
+ * Effort-level thinking budget mapping.
  *
  *   Low    → thinking disabled, temperature 0.0
  *   Medium → budget 5 000 tokens
@@ -66,8 +65,7 @@ const EFFORT_TEMPERATURE: Record<EffortLevel, number | undefined> = {
 };
 
 /**
- * Map effort level to OpenAI-compatible reasoning_effort string
- * (CC Rust: crates/query/src/lib.rs build_provider_options).
+ * Map effort level to OpenAI-compatible reasoning_effort string.
  */
 const EFFORT_TO_OPENAI_REASONING: Record<EffortLevel, 'low' | 'medium' | 'high'> = {
   low: 'low',
@@ -120,7 +118,7 @@ function resolveEffort(
 /**
  * SDKMessage — events yielded by the query loop.
  *
- * Field naming follows CC SDK's snake_case convention for wire-level
+ * Field naming uses snake_case convention for wire-level
  * compatibility with consumer code (hello-halo, agent-workspace-backend, etc.).
  */
 export type SDKMessage =
