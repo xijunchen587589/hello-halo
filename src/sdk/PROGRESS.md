@@ -678,6 +678,40 @@ Branch: `feature/sdk`
 
 ---
 
+### Run 31 — Query-Loop + Spawner Unit Tests + Token Tracking Fix
+
+**Bug fix: `total_tokens: 0` in spawner task lifecycle events**
+- `task_progress` and `task_notification` hard-coded `total_tokens: 0`
+- Now accumulates `input_tokens + output_tokens` from each assistant
+  message's `usage` field in real-time
+- `task_notification` additionally reconciles against the result message's
+  authoritative cumulative usage (takes precedence over running sum)
+- Consumer `handleTaskProgress` now shows real token counts in the sub-agent
+  timeline instead of always displaying 0
+
+**New: `core/query-loop.test.ts` — 20 unit tests**
+- Uses an in-process mock provider (zero network I/O, runs in <1s)
+- Covers: system:init shape, assistant/result message structure, uuid
+  consistency, session_id propagation, max_turns stopping, error_max_turns
+  subtype, tool execution, tool error wrapping, abort handling, permission
+  bypass vs. default modes, cost field presence, streaming event gating
+  (`includePartialMessages`), string and Message[] initial prompt forms
+
+**New: `orchestrator/spawner.test.ts` — 12 unit tests**
+- Foreground: success output, registry completion, error handling
+- Background: returns immediately with agent_id/running status, agent
+  eventually completes in registry via `entry.done` promise
+- Task lifecycle: task_started has tool_use_id/description, task_notification
+  has status/summary, abort yields stopped/completed
+- Token accumulation: task_notification total_tokens > 0 from mock usage,
+  task_progress total_tokens > 0 after tool use turn
+- Parent config getter: model changes propagate to sub-agent at spawn time
+- Agent tool exclusion: sub-agents never call the Agent tool (recursion guard)
+
+**Total: 182 unit tests + 14 e2e + 18 e2e-adjacent = 214 tests, all passing. tsc --noEmit passes.**
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)
@@ -687,5 +721,6 @@ Branch: `feature/sdk`
 ### P2 (Important)
 - [x] ~~WebSearchTool real implementation~~ (Run 20)
 - [x] ~~Dynamic MCP server management~~ (Run 30)
+- [x] ~~Query-loop + spawner unit tests~~ (Run 31)
 - [ ] Worker Thread isolation for background agents (deferred)
 - [ ] Agent progress summaries (agentProgressSummaries fork+summarize every 30s)
