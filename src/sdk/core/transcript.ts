@@ -250,3 +250,160 @@ export function transcriptExists(sessionId: string, cwd: string): boolean {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Sub-agent transcript support
+// ---------------------------------------------------------------------------
+//
+// Sub-agent transcripts follow the same JSONL format as parent transcripts
+// but are stored under a subdirectory named after the parent session:
+//
+//   <configDir>/projects/<projectDir>/<parentSessionId>/subagents/agent-<agentId>.jsonl
+//
+// This mirrors the CC SDK layout and enables listSubagents / getSubagentMessages.
+
+/**
+ * Get the directory that holds sub-agent transcripts for a parent session.
+ */
+export function getSubagentDir(parentSessionId: string, cwd: string): string {
+  const configDir = getClaudeConfigDir();
+  const projectDir = getProjectDir(cwd);
+  return path.join(configDir, 'projects', projectDir, parentSessionId, 'subagents');
+}
+
+/**
+ * Get the path for a specific sub-agent's transcript file.
+ */
+export function getSubagentTranscriptPath(
+  parentSessionId: string,
+  agentId: string,
+  cwd: string,
+): string {
+  return path.join(getSubagentDir(parentSessionId, cwd), `agent-${agentId}.jsonl`);
+}
+
+/**
+ * Write collected messages from a completed sub-agent run to its transcript file.
+ *
+ * Only `assistant` and `user` messages are persisted — system/result messages
+ * are not part of the conversation chain.
+ *
+ * @param parentSessionId - ID of the parent session that spawned the sub-agent
+ * @param agentId - ID assigned to the sub-agent (task_id)
+ * @param cwd - Working directory of the parent session
+ * @param messages - Raw SDKMessage objects collected from the sub-agent run
+ */
+export async function writeSubagentTranscript(
+  parentSessionId: string,
+  agentId: string,
+  cwd: string,
+  messages: ReadonlyArray<Record<string, unknown>>,
+): Promise<void> {
+  if (messages.length === 0 || !cwd) return;
+
+  const transcriptPath = getSubagentTranscriptPath(parentSessionId, agentId, cwd);
+
+  try {
+    const dir = path.dirname(transcriptPath);
+    await fs.promises.mkdir(dir, { recursive: true });
+  } catch {
+    return;
+  }
+
+  let lastUuid: string | null = null;
+  for (const msg of messages) {
+    const type = msg.type as string;
+    if (type !== 'assistant' && type !== 'user') continue;
+
+    const message = msg.message as Record<string, unknown> | undefined;
+    if (!message || typeof message !== 'object') continue;
+
+    const uuid = randomUUID();
+    const entry: TranscriptEntry = {
+      type: type as 'assistant' | 'user',
+      message: message as unknown as Message,
+      uuid,
+      parentUuid: lastUuid,
+      sessionId: agentId,
+      timestamp: new Date().toISOString(),
+      isSidechain: true,
+    };
+
+    const line = JSON.stringify(entry) + '\n';
+    try {
+      await fs.promises.appendFile(transcriptPath, line, 'utf8');
+      lastUuid = uuid;
+    } catch {
+      // Write failure is advisory
+    }
+  }
+}
+
+/**
+ * List all sub-agent IDs that ran under a given parent session.
+ * Returns IDs extracted from `agent-<id>.jsonl` filenames in the subagents directory.
+ */
+export async function listSubagentIds(
+  parentSessionId: string,
+  cwd: string,
+): Promise<string[]> {
+  const dir = getSubagentDir(parentSessionId, cwd);
+  try {
+    const files = await fs.promises.readdir(dir);
+    const ids: string[] = [];
+    for (const file of files) {
+      if (file.startsWith('agent-') && file.endsWith('.jsonl')) {
+        ids.push(file.slice('agent-'.length, -'.jsonl'.length));
+      }
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read messages from a sub-agent transcript, returned as SessionMessage objects.
+ *
+ * @param parentSessionId - Parent session ID
+ * @param agentId - Sub-agent ID
+ * @param cwd - Working directory of the parent session
+ * @param options - Optional limit and offset for pagination
+ */
+export async function readSubagentMessages(
+  parentSessionId: string,
+  agentId: string,
+  cwd: string,
+  options?: { limit?: number; offset?: number },
+): Promise<Array<{ type: string; uuid: string; session_id: string; message: unknown; parent_tool_use_id: string | null }>> {
+  const transcriptPath = getSubagentTranscriptPath(parentSessionId, agentId, cwd);
+
+  let content: string;
+  try {
+    content = await fs.promises.readFile(transcriptPath, 'utf8');
+  } catch {
+    return [];
+  }
+
+  const results: Array<{ type: string; uuid: string; session_id: string; message: unknown; parent_tool_use_id: string | null }> = [];
+  const lines = content.trim().split('\n').filter(Boolean);
+
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      const type = entry.type as string;
+      if (type !== 'user' && type !== 'assistant') continue;
+      results.push({
+        type,
+        uuid: (entry.uuid as string) ?? '',
+        session_id: agentId,
+        message: entry.message ?? null,
+        parent_tool_use_id: (entry.parent_tool_use_id as string | null) ?? null,
+      });
+    } catch { /* skip malformed lines */ }
+  }
+
+  const offset = options?.offset ?? 0;
+  const limit = options?.limit ?? results.length;
+  return results.slice(offset, offset + limit);
+}

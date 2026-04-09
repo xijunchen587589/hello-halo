@@ -13,6 +13,11 @@ import {
   readTranscriptMessages,
   transcriptExists,
   TranscriptWriter,
+  getSubagentDir,
+  getSubagentTranscriptPath,
+  writeSubagentTranscript,
+  listSubagentIds,
+  readSubagentMessages,
 } from './transcript.js';
 import type { Message } from '../types/provider.js';
 
@@ -191,5 +196,133 @@ describe('TranscriptWriter', () => {
     await writer.writeUserMessage({ role: 'user', content: 'test' });
     // No file should be created since enabled=false for empty cwd
     expect(transcriptExists(sessionId, '')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sub-agent transcript functions
+// ---------------------------------------------------------------------------
+
+describe('sub-agent transcript paths', () => {
+  it('getSubagentDir nests under <parentSessionId>/subagents/', () => {
+    const parentId = randomUUID();
+    const d = getSubagentDir(parentId, TEST_CWD);
+    expect(d).toContain(parentId);
+    expect(d).toContain('subagents');
+    expect(d).toContain('-test-project-dir');
+  });
+
+  it('getSubagentTranscriptPath uses agent- prefix and .jsonl suffix', () => {
+    const parentId = randomUUID();
+    const agentId = `agent-${Date.now()}-abc123`;
+    const p = getSubagentTranscriptPath(parentId, agentId, TEST_CWD);
+    expect(p).toContain(parentId);
+    expect(p).toContain(`agent-${agentId}.jsonl`);
+  });
+});
+
+describe('writeSubagentTranscript / listSubagentIds / readSubagentMessages', () => {
+  it('round-trips sub-agent messages', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const parentId = randomUUID();
+    const agentId = `agent-${Date.now()}-xyz`;
+
+    const messages: Record<string, unknown>[] = [
+      { type: 'assistant', message: { role: 'assistant', content: 'I will help.' }, uuid: randomUUID() },
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] }, uuid: randomUUID() },
+    ];
+
+    await writeSubagentTranscript(parentId, agentId, TEST_CWD, messages);
+
+    const ids = await listSubagentIds(parentId, TEST_CWD);
+    expect(ids).toContain(agentId);
+
+    const read = await readSubagentMessages(parentId, agentId, TEST_CWD);
+    expect(read).toHaveLength(2);
+    expect(read[0].type).toBe('assistant');
+    expect(read[0].session_id).toBe(agentId);
+    expect(read[1].type).toBe('user');
+  });
+
+  it('listSubagentIds returns empty array when no sub-agents exist', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const ids = await listSubagentIds(randomUUID(), TEST_CWD);
+    expect(ids).toEqual([]);
+  });
+
+  it('readSubagentMessages returns empty array when transcript missing', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const result = await readSubagentMessages(randomUUID(), 'no-such-agent', TEST_CWD);
+    expect(result).toEqual([]);
+  });
+
+  it('skips non-message entries (result, system) when reading', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const parentId = randomUUID();
+    const agentId = `agent-${Date.now()}-skip`;
+
+    const messages: Record<string, unknown>[] = [
+      { type: 'assistant', message: { role: 'assistant', content: 'hello' }, uuid: randomUUID() },
+      { type: 'result', message: null, uuid: randomUUID() },    // should be skipped
+      { type: 'system', message: null, uuid: randomUUID() },    // should be skipped
+    ];
+
+    await writeSubagentTranscript(parentId, agentId, TEST_CWD, messages);
+
+    const read = await readSubagentMessages(parentId, agentId, TEST_CWD);
+    expect(read).toHaveLength(1);
+    expect(read[0].type).toBe('assistant');
+  });
+
+  it('pagination with limit and offset works', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const parentId = randomUUID();
+    const agentId = `agent-${Date.now()}-page`;
+
+    const messages: Record<string, unknown>[] = [
+      { type: 'assistant', message: { role: 'assistant', content: 'msg1' }, uuid: randomUUID() },
+      { type: 'user', message: { role: 'user', content: 'msg2' }, uuid: randomUUID() },
+      { type: 'assistant', message: { role: 'assistant', content: 'msg3' }, uuid: randomUUID() },
+    ];
+    await writeSubagentTranscript(parentId, agentId, TEST_CWD, messages);
+
+    const page = await readSubagentMessages(parentId, agentId, TEST_CWD, { limit: 2, offset: 1 });
+    expect(page).toHaveLength(2);
+    expect((page[0].message as Record<string, unknown>).content).toBe('msg2');
+    expect((page[1].message as Record<string, unknown>).content).toBe('msg3');
+  });
+
+  it('writeSubagentTranscript is no-op for empty message list', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const parentId = randomUUID();
+    const agentId = `agent-noop`;
+    await writeSubagentTranscript(parentId, agentId, TEST_CWD, []);
+    const ids = await listSubagentIds(parentId, TEST_CWD);
+    expect(ids).not.toContain(agentId);
+  });
+
+  it('multiple sub-agents under same parent are all listed', async () => {
+    const dir = withTempDir();
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const parentId = randomUUID();
+    const agentA = `agent-${Date.now()}-a`;
+    const agentB = `agent-${Date.now()}-b`;
+
+    const msg: Record<string, unknown>[] = [
+      { type: 'assistant', message: { role: 'assistant', content: 'hi' }, uuid: randomUUID() },
+    ];
+    await writeSubagentTranscript(parentId, agentA, TEST_CWD, msg);
+    await writeSubagentTranscript(parentId, agentB, TEST_CWD, msg);
+
+    const ids = await listSubagentIds(parentId, TEST_CWD);
+    expect(ids).toContain(agentA);
+    expect(ids).toContain(agentB);
+    expect(ids).toHaveLength(2);
   });
 });

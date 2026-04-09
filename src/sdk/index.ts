@@ -784,6 +784,8 @@ import { randomUUID } from 'node:crypto';
 import {
   transcriptExists,
   getTranscriptPath,
+  listSubagentIds,
+  readSubagentMessages as readSubagentTranscriptMessages,
 } from './core/transcript.js';
 import { readdir, readFile, writeFile, stat, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -856,11 +858,17 @@ export interface GetSubagentMessagesOptions {
   cwd?: string;
   /** CC SDK contract field — alias for `cwd`. */
   dir?: string;
+  /** Maximum number of messages to return. */
+  limit?: number;
+  /** Number of messages to skip from the start. */
+  offset?: number;
 }
 
 /** Options for listing sub-agents. */
 export interface ListSubagentsOptions {
   cwd?: string;
+  /** CC SDK contract field — alias for `cwd`. */
+  dir?: string;
 }
 
 /** Options for forking a session. */
@@ -1049,25 +1057,34 @@ export async function getSessionMessages(
 
 /**
  * Get messages from a sub-agent within a session.
+ *
+ * Sub-agent transcripts are stored at:
+ *   <configDir>/projects/<projectDir>/<sessionId>/subagents/agent-<agentId>.jsonl
  */
 export async function getSubagentMessages(
-  _sessionId: string,
-  _agentId: string,
-  _options?: GetSubagentMessagesOptions,
+  sessionId: string,
+  agentId: string,
+  options?: GetSubagentMessagesOptions,
 ): Promise<SessionMessage[]> {
-  // Sub-agent messages are interleaved in the main transcript.
-  // Filtering by agentId requires isSidechain metadata — not yet tracked.
-  return [];
+  const cwd = options?.dir ?? options?.cwd ?? process.cwd();
+  return readSubagentTranscriptMessages(sessionId, agentId, cwd, {
+    limit: options?.limit,
+    offset: options?.offset,
+  }) as Promise<SessionMessage[]>;
 }
 
 /**
  * List sub-agents that participated in a session.
+ *
+ * Scans <configDir>/projects/<projectDir>/<sessionId>/subagents/ for
+ * `agent-<id>.jsonl` files and returns the extracted agent IDs.
  */
 export async function listSubagents(
-  _sessionId: string,
-  _options?: ListSubagentsOptions,
+  sessionId: string,
+  options?: ListSubagentsOptions,
 ): Promise<string[]> {
-  return [];
+  const cwd = options?.dir ?? options?.cwd ?? process.cwd();
+  return listSubagentIds(sessionId, cwd);
 }
 
 /**

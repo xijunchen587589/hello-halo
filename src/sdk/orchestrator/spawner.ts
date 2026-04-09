@@ -25,6 +25,7 @@ import type { SDKMessage } from '../core/query-loop.js';
 import { filterTools } from '../tools/registry.js';
 import type { AgentSpawnRequest } from '../tools/agent/index.js';
 import { AgentRegistry } from './registry.js';
+import { writeSubagentTranscript } from '../core/transcript.js';
 
 // ---------------------------------------------------------------------------
 // Model alias resolution
@@ -341,6 +342,17 @@ async function runSubAgent(
     await removeWorktree(gitRoot, worktreeDir).catch(() => {
       console.warn(`[SDK] Failed to remove worktree ${worktreeDir}`);
     });
+  }
+
+  // Persist sub-agent transcript so listSubagents / getSubagentMessages work.
+  // Fire-and-forget — transcript writes are advisory and must not block the result.
+  if (parentSessionId && parentConfig.cwd) {
+    writeSubagentTranscript(
+      parentSessionId,
+      agentId,
+      parentConfig.cwd,
+      collected as unknown as ReadonlyArray<Record<string, unknown>>,
+    ).catch(() => { /* advisory */ });
   }
 
   const text = extractFinalText(collected);
