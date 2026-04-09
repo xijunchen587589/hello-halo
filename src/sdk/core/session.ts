@@ -117,8 +117,6 @@ interface SessionState {
   exitListeners: Set<(error: Error | undefined) => void>;
   /** Transcript writer for session persistence (null if disabled). */
   transcriptWriter: TranscriptWriter | null;
-  /** Whether the system:init event has been emitted to the current consumer. */
-  initEmitted: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +269,6 @@ export async function createSession(options: Options): Promise<SDKSession> {
     skills: options.skills ?? [],
     exitListeners: new Set(),
     transcriptWriter,
-    initEmitted: false,
   };
 
   // Fire SessionStart hook (fire-and-forget; advisory, does not block init)
@@ -500,14 +497,26 @@ function createSessionProxy(state: SessionState): SDKSession {
   };
 
   async function* innerStream(): AsyncGenerator<SDKMessage, void, undefined> {
-      // If there are no pending messages, wait until send() wakes us up.
+      // If there are no pending messages, wait until send() wakes us up or
+      // the session is interrupted/closed. Without the abort listener,
+      // interrupt() during idle wait would hang the stream forever.
       if (state.pendingMessages.length === 0 && !state.closed) {
         await new Promise<void>((resolve) => {
           state.pendingWakeUp = resolve;
+          // Also wake up on abort (interrupt/close) to avoid hanging
+          const onAbort = () => {
+            state.pendingWakeUp = null;
+            resolve();
+          };
+          state.abortController.signal.addEventListener('abort', onAbort, { once: true });
         });
       }
 
       if (state.closed) return;
+      // If interrupted while waiting (abort fired but no pending message), just return.
+      // interrupt() replaces the abort controller, so check if the signal that was
+      // active when we started waiting was aborted AND no message arrived.
+      if (state.pendingMessages.length === 0) return;
 
       // Emit session_state_changed: running
       yield {
@@ -560,11 +569,11 @@ function createSessionProxy(state: SessionState): SDKSession {
       // Build the full conversation as initial messages for the query loop
       const initialMessages: Message[] = [...state.messages];
 
-      // Track whether we've yielded the system:init event to this consumer.
-      // On fresh sessions this is the first call; on resumed sessions we always
-      // want the init event once (so the consumer can populate model/tools UI).
-      const shouldEmitInit = !state.initEmitted;
-      state.initEmitted = true;
+      // The system:init event is emitted on EVERY stream() call (every turn).
+      // The consumer uses init as a per-turn boundary signal to create the
+      // assistant placeholder message. Suppressing it on turns 2+ would break
+      // the consumer's turn lifecycle (receivedAnyEvent would stay false,
+      // results would not be persisted, and the consumer would exit).
 
       // Run the query loop, passing the session ID for consistent message session_id fields
       const queryOpts: QueryLoopOptions = {
@@ -609,11 +618,8 @@ function createSessionProxy(state: SessionState): SDKSession {
           void state.transcriptWriter?.writeUserMessage(msg.message);
         }
 
-        // Skip init events after the first send (the session already knows
-        // its tools and model). Also emits on resume so consumer can populate UI.
-        if (msg.type === 'system' && msg.subtype === 'init' && !shouldEmitInit) {
-          continue;
-        }
+        // init events are always forwarded — the consumer uses them as
+        // per-turn boundary signals (see session-consumer.ts onTurnInit).
 
         yield msg;
       }

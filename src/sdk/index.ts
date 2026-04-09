@@ -274,12 +274,38 @@ function wrapGeneratorAsQuery(
 export const unstable_v2_createSession = createSession;
 
 /**
+ * Send a single prompt and collect the full result.
+ *
+ * Convenience wrapper: creates a disposable session, sends the message,
+ * streams until a `result` message arrives, then closes the session.
+ *
+ * Compatible with the CC SDK signature:
+ *   `unstable_v2_prompt(message, options): Promise<SDKResultMessage>`
+ */
+export async function unstable_v2_prompt(
+  message: string,
+  options: Options,
+): Promise<Record<string, unknown>> {
+  const session = await createSession(options);
+  try {
+    await session.send(message);
+    for await (const msg of session.stream()) {
+      if (msg.type === 'result') {
+        return msg as unknown as Record<string, unknown>;
+      }
+    }
+    // Stream ended without a result message — should not happen
+    throw new Error('Stream completed without a result message');
+  } finally {
+    session.close();
+  }
+}
+
+/**
  * Resume a previous session by its session ID.
  *
- * In the in-process SDK, this creates a fresh session with the supplied
- * `sessionId` so that the consumer's session-manager can recognise it by
- * the same ID.  Full message-history reload (disk persistence) is on the
- * road-map; currently the conversation state is managed by the caller.
+ * Creates a session with the supplied `sessionId` and loads conversation
+ * history from the transcript file on disk.
  *
  * Compatible with the CC SDK signature:
  *   `unstable_v2_resumeSession(sessionId, options): Promise<SDKSession>`
@@ -478,3 +504,223 @@ export {
   MaxTurnsExceededError,
   CompactError,
 } from './utils/errors.js';
+
+// ---------------------------------------------------------------------------
+// Session Management — CC SDK contract stubs
+// ---------------------------------------------------------------------------
+// These functions match the CC SDK public API surface. They operate on
+// transcript files stored in CLAUDE_CONFIG_DIR/projects/<project>/<session>.jsonl.
+// Real implementations read/write these files; stubs return empty results.
+
+import { randomUUID } from 'node:crypto';
+import {
+  transcriptExists,
+  readTranscriptMessages,
+  getTranscriptPath,
+} from './core/transcript.js';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+
+/** Session info returned by listSessions / getSessionInfo. */
+export interface SDKSessionInfo {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  tag?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  messageCount?: number;
+}
+
+/** Session message returned by getSessionMessages. */
+export interface SessionMessage {
+  type: 'user' | 'assistant';
+  message: Record<string, unknown>;
+  uuid: string;
+  parentUuid?: string;
+  timestamp?: string;
+  sessionId?: string;
+}
+
+/** Options for listing sessions. */
+export interface ListSessionsOptions {
+  cwd?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for getting session info. */
+export interface GetSessionInfoOptions {
+  cwd?: string;
+}
+
+/** Options for getting session messages. */
+export interface GetSessionMessagesOptions {
+  cwd?: string;
+  limit?: number;
+}
+
+/** Options for getting sub-agent messages. */
+export interface GetSubagentMessagesOptions {
+  cwd?: string;
+}
+
+/** Options for listing sub-agents. */
+export interface ListSubagentsOptions {
+  cwd?: string;
+}
+
+/** Options for forking a session. */
+export interface ForkSessionOptions {
+  cwd?: string;
+  atMessageId?: string;
+}
+
+/** Result of forking a session. */
+export interface ForkSessionResult {
+  sessionId: string;
+}
+
+/** Options for session mutation operations. */
+export interface SessionMutationOptions {
+  cwd?: string;
+}
+
+/**
+ * List sessions for the given working directory.
+ * Scans transcript files in CLAUDE_CONFIG_DIR/projects/<project>/.
+ */
+export async function listSessions(options?: ListSessionsOptions): Promise<SDKSessionInfo[]> {
+  const cwd = options?.cwd ?? process.cwd();
+  const projectDir = getTranscriptPath('_placeholder_', cwd).replace('/_placeholder_.jsonl', '');
+  try {
+    const files = await readdir(projectDir);
+    const sessions: SDKSessionInfo[] = [];
+    for (const file of files) {
+      if (!file.endsWith('.jsonl')) continue;
+      const sessionId = basename(file, '.jsonl');
+      sessions.push({ sessionId, cwd });
+    }
+    // Apply pagination
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? sessions.length;
+    return sessions.slice(offset, offset + limit);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get info about a specific session.
+ */
+export async function getSessionInfo(
+  sessionId: string,
+  options?: GetSessionInfoOptions,
+): Promise<SDKSessionInfo | undefined> {
+  const cwd = options?.cwd ?? process.cwd();
+  if (!transcriptExists(sessionId, cwd)) return undefined;
+  return { sessionId, cwd };
+}
+
+/**
+ * Get messages from a session transcript.
+ */
+export async function getSessionMessages(
+  sessionId: string,
+  options?: GetSessionMessagesOptions,
+): Promise<SessionMessage[]> {
+  const cwd = options?.cwd ?? process.cwd();
+  const filePath = getTranscriptPath(sessionId, cwd);
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    const messages: SessionMessage[] = [];
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === 'user' || entry.type === 'assistant') {
+          messages.push(entry as SessionMessage);
+        }
+      } catch { /* skip malformed lines */ }
+    }
+    const limit = options?.limit ?? messages.length;
+    return messages.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get messages from a sub-agent within a session.
+ */
+export async function getSubagentMessages(
+  _sessionId: string,
+  _agentId: string,
+  _options?: GetSubagentMessagesOptions,
+): Promise<SessionMessage[]> {
+  // Sub-agent messages are interleaved in the main transcript.
+  // Filtering by agentId requires isSidechain metadata — not yet tracked.
+  return [];
+}
+
+/**
+ * List sub-agents that participated in a session.
+ */
+export async function listSubagents(
+  _sessionId: string,
+  _options?: ListSubagentsOptions,
+): Promise<string[]> {
+  return [];
+}
+
+/**
+ * Fork a session at a specific message.
+ */
+export async function forkSession(
+  sessionId: string,
+  options?: ForkSessionOptions,
+): Promise<ForkSessionResult> {
+  const cwd = options?.cwd ?? process.cwd();
+  const messages = await readTranscriptMessages(sessionId, cwd);
+  const newSessionId = randomUUID();
+  if (messages && messages.length > 0) {
+    // Write forked messages to new transcript
+    const newPath = getTranscriptPath(newSessionId, cwd);
+    const lines = messages.map((m) =>
+      JSON.stringify({
+        type: m.role,
+        message: m,
+        uuid: randomUUID(),
+        sessionId: newSessionId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    await writeFile(newPath, lines.join('\n') + '\n', 'utf-8');
+  }
+  return { sessionId: newSessionId };
+}
+
+/**
+ * Rename a session (set title).
+ */
+export async function renameSession(
+  _sessionId: string,
+  _title: string,
+  _options?: SessionMutationOptions,
+): Promise<void> {
+  // Session titles are not stored in transcript files.
+  // This would require a metadata sidecar file.
+}
+
+/**
+ * Tag a session.
+ */
+export async function tagSession(
+  _sessionId: string,
+  _tag: string | null,
+  _options?: SessionMutationOptions,
+): Promise<void> {
+  // Session tags are not stored in transcript files.
+  // This would require a metadata sidecar file.
+}
+

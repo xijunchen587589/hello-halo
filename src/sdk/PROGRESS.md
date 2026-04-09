@@ -541,6 +541,47 @@ Branch: `feature/sdk`
 
 ---
 
+### Run 27 — Critical Multi-Turn Fix + Stream Abort Safety + API Surface Completion
+
+**Bug fix: `system:init` suppressed after first `stream()` call — broke multi-turn sessions (CRITICAL)**
+- Consumer (session-consumer.ts) uses `system:init` as a per-turn boundary signal. The
+  `onTurnInit` callback creates the assistant placeholder message and sets `receivedAnyEvent = true`.
+- SDK's `innerStream()` had an `initEmitted` flag that suppressed init after the first `stream()` call.
+  On turns 2+: no init → `receivedAnyEvent` stays false → turn results not persisted →
+  `consecutiveEmptyIterations` increments → consumer eventually exits after 5 empty turns.
+- **Fix**: removed `initEmitted` flag entirely. Init is now emitted on EVERY `stream()` call,
+  matching the CC subprocess behavior where each turn produces a fresh init.
+- Removed `initEmitted` from `SessionState` interface (dead field cleanup).
+
+**Bug fix: `interrupt()` during idle `stream()` wait hangs forever**
+- `innerStream()` waited for `pendingWakeUp` promise (fired by `send()`). But `interrupt()`
+  only aborted the controller without waking up the stream — the promise never resolved.
+- **Fix**: added `AbortSignal` listener on `state.abortController.signal` during the wait.
+  When abort fires, the listener resolves the promise. After wake-up, checks if a message
+  actually arrived; if not (abort-only wake), returns cleanly without running a query loop.
+
+**Feature: `unstable_v2_prompt()` convenience function**
+- Creates a disposable session, sends the message, streams until `result`, then closes.
+- Matches CC SDK contract: `unstable_v2_prompt(message, options): Promise<SDKResultMessage>`
+
+**Feature: Session management API surface**
+- Added all CC SDK session management functions:
+  - `listSessions(options?)` — scans transcript directory for session files
+  - `getSessionInfo(sessionId, options?)` — checks transcript file existence
+  - `getSessionMessages(sessionId, options?)` — reads JSONL transcript into SessionMessage[]
+  - `getSubagentMessages(sessionId, agentId, options?)` — stub (needs sidechain tracking)
+  - `listSubagents(sessionId, options?)` — stub
+  - `forkSession(sessionId, options?)` — copies transcript to new session ID
+  - `renameSession(sessionId, title, options?)` — stub (needs metadata sidecar)
+  - `tagSession(sessionId, tag, options?)` — stub (needs metadata sidecar)
+- Exported types: `SDKSessionInfo`, `SessionMessage`, `ListSessionsOptions`,
+  `GetSessionInfoOptions`, `GetSessionMessagesOptions`, `ForkSessionOptions`,
+  `ForkSessionResult`, `SessionMutationOptions`
+
+- tsc --noEmit passes
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)
