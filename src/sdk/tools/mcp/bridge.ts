@@ -46,24 +46,45 @@ function mcpToolName(serverName: string, toolName: string): string {
  * Extract all tools from an SDK MCP server and wrap them as SDK `Tool`
  * objects that can be added to the query loop.
  *
+ * Supports two instance formats:
+ * - Halo SDK instances (created by our `createSdkMcpServer`): have `listTools()`
+ * - CC SDK instances (created by `@anthropic-ai/claude-agent-sdk`): store tools
+ *   in `_registeredTools` without a `listTools()` method
+ *
  * @param serverConfig - The SDK server config with live instance
  * @returns Array of Tool objects
  */
 export function bridgeSdkMcpTools(serverConfig: McpSdkServerConfigWithInstance): Tool[] {
   const { name: serverName, instance } = serverConfig;
-  const mcpTools = instance.listTools();
-  return mcpTools.map((mcpTool) =>
-    createSdkBridgedTool(
-      serverName,
-      mcpTool as {
-        name: string;
-        description: string;
-        inputSchema: Record<string, unknown>;
-        annotations?: Record<string, unknown>;
-      },
-      instance,
-    ),
-  );
+
+  // Halo SDK instance: has listTools()
+  if (typeof (instance as unknown as Record<string, unknown>).listTools === 'function') {
+    const mcpTools = instance.listTools();
+    return mcpTools.map((mcpTool) =>
+      createSdkBridgedTool(
+        serverName,
+        mcpTool as {
+          name: string;
+          description: string;
+          inputSchema: Record<string, unknown>;
+          annotations?: Record<string, unknown>;
+        },
+        instance,
+      ),
+    );
+  }
+
+  // CC SDK instance (@anthropic-ai/claude-agent-sdk): tools stored in _registeredTools
+  const registeredTools = (instance as unknown as Record<string, unknown>)._registeredTools;
+  if (registeredTools && typeof registeredTools === 'object') {
+    return Object.entries(registeredTools as Record<string, unknown>)
+      .filter(([, def]) => (def as Record<string, unknown>)?.enabled !== false)
+      .map(([toolName, def]) =>
+        createCcSdkBridgedTool(serverName, toolName, def as CcSdkRegisteredTool),
+      );
+  }
+
+  return [];
 }
 
 /**
@@ -103,6 +124,62 @@ function createSdkBridgedTool(
       }
 
       return formatCallToolResult(result.content, result.isError);
+    },
+  };
+}
+
+// =========================================================================
+// CC SDK instance compatibility
+// =========================================================================
+
+/**
+ * Shape of a tool entry inside the CC SDK's internal `_registeredTools` map.
+ * (@anthropic-ai/claude-agent-sdk stores tools this way internally.)
+ */
+interface CcSdkRegisteredTool {
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+  enabled?: boolean;
+  handler: (args: Record<string, unknown>, extra: unknown) => Promise<{
+    content?: Array<{ type: string; [key: string]: unknown }>;
+    isError?: boolean;
+  }>;
+}
+
+/**
+ * Create a bridged Tool from a CC SDK registered tool entry.
+ */
+function createCcSdkBridgedTool(
+  serverName: string,
+  toolName: string,
+  def: CcSdkRegisteredTool,
+): Tool {
+  const fullName = mcpToolName(serverName, toolName);
+
+  return {
+    name: fullName,
+    description: def.description ?? '',
+    inputSchema: def.inputSchema ?? { type: 'object', properties: {} },
+    permissionLevel: 'execute' as const,
+
+    async execute(
+      input: Record<string, unknown>,
+      _ctx: ToolContext,
+    ): Promise<ToolResult> {
+      try {
+        const result = await def.handler(input, {});
+        if (!result) {
+          return {
+            content: `MCP tool "${toolName}" returned no result.`,
+            isError: true,
+          };
+        }
+        return formatCallToolResult(result.content ?? [], result.isError);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: `MCP tool "${toolName}" failed: ${msg}`, isError: true };
+      }
     },
   };
 }

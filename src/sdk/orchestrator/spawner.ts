@@ -240,6 +240,9 @@ async function runSubAgent(
   let turns = 0;
   let toolUseCount = 0;
   let lastToolName: string | undefined;
+  // Cumulative token counts accumulated from each assistant response
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
   const startedAt = Date.now();
 
   try {
@@ -251,6 +254,14 @@ async function runSubAgent(
       if (msg.type === 'result') {
         costUsd = msg.total_cost_usd;
         turns = msg.num_turns;
+        // Prefer the authoritative cumulative totals from the result message
+        const resultUsage = (msg as unknown as Record<string, unknown>).usage as
+          | { input_tokens?: number; output_tokens?: number }
+          | undefined;
+        if (resultUsage) {
+          totalInputTokens = resultUsage.input_tokens ?? totalInputTokens;
+          totalOutputTokens = resultUsage.output_tokens ?? totalOutputTokens;
+        }
       }
 
       // Forward assistant/user messages to parent stream with parent_tool_use_id tagged.
@@ -263,8 +274,15 @@ async function runSubAgent(
         };
         onMessage(tagged);
 
-        // Track tool_use blocks from assistant messages for task_progress stats
+        // Track tool_use blocks and token counts from assistant messages
         if (msg.type === 'assistant') {
+          // Accumulate per-turn token usage
+          const turnUsage = msg.usage;
+          if (turnUsage) {
+            totalInputTokens += turnUsage.input_tokens;
+            totalOutputTokens += turnUsage.output_tokens;
+          }
+
           const content = msg.message?.content;
           if (Array.isArray(content)) {
             for (const block of content as unknown as Array<Record<string, unknown>>) {
@@ -286,7 +304,7 @@ async function runSubAgent(
             uuid: randomUUID(),
             last_tool_name: lastToolName,
             usage: {
-              total_tokens: 0, // sub-agent token counts tracked separately via CostTracker
+              total_tokens: totalInputTokens + totalOutputTokens,
               tool_uses: toolUseCount,
               duration_ms: Date.now() - startedAt,
             },
@@ -310,7 +328,7 @@ async function runSubAgent(
       uuid: randomUUID(),
       output_file: '',
       usage: {
-        total_tokens: 0,
+        total_tokens: totalInputTokens + totalOutputTokens,
         tool_uses: toolUseCount,
         duration_ms: Date.now() - startedAt,
       },

@@ -73,6 +73,8 @@ import {
 } from './tools/mcp/connection-manager.js';
 import { initOrchestrator } from './orchestrator/init.js';
 import { AnthropicProvider } from './llm/anthropic.js';
+import { shellStateManager } from './tools/bash/shell-state.js';
+import { backgroundRegistry } from './tools/bash/background.js';
 
 /** Auto-create a provider from options.env or process.env when options.provider is omitted. */
 function resolveProvider(options: Options) {
@@ -221,6 +223,11 @@ export function query(params: {
   // can mutate it between turns while the generator is running.
   const mcpManager = createMcpConnectionManager(mcpServersConfig);
 
+  // Stable session ID for the lifetime of this one-shot query.
+  // Shared with the query loop so that tool state (e.g. shell cwd) can be
+  // cleaned up deterministically when the query completes.
+  const querySessionId = randomUUID();
+
   const gen = (async function* (): AsyncGenerator<SDKMessage, void, undefined> {
     // Connect external MCP servers via connection manager (with reconnection support)
     try {
@@ -254,6 +261,7 @@ export function query(params: {
     }
 
     const queryOpts: QueryLoopOptions = {
+      sessionId: querySessionId,
       mcpServerStatuses: mcpStatuses.length > 0 ? mcpStatuses : undefined,
       slashCommands: slashCommandNames.length > 0 ? slashCommandNames : undefined,
       skills: options.skills && options.skills.length > 0 ? options.skills : undefined,
@@ -278,6 +286,10 @@ export function query(params: {
       orchestrator.dispose();
       // Disconnect all external MCP servers (cancels reconnect loops)
       mcpManager.disconnectAll();
+      // Release per-query shell state accumulated by the Bash tool
+      shellStateManager.removeAll(querySessionId);
+      // Opportunistic pruning: remove completed background tasks older than 1 hour
+      backgroundRegistry.pruneCompleted(3_600_000);
     }
   })();
 
@@ -769,7 +781,7 @@ import {
   transcriptExists,
   getTranscriptPath,
 } from './core/transcript.js';
-import { readdir, readFile, writeFile, stat } from 'node:fs/promises';
+import { readdir, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { basename } from 'node:path';
 
@@ -903,7 +915,14 @@ export async function listSessions(options?: ListSessionsOptions): Promise<SDKSe
     // Apply pagination
     const offset = options?.offset ?? 0;
     const limit = options?.limit ?? sessions.length;
-    return sessions.slice(offset, offset + limit);
+    const paged = sessions.slice(offset, offset + limit);
+    // Enrich with sidecar metadata in parallel
+    await Promise.all(paged.map(async (s) => {
+      const meta = await readMeta(s.sessionId, cwd);
+      if (meta.title) s.customTitle = meta.title;
+      if (meta.tag !== undefined && meta.tag !== null) s.tag = meta.tag;
+    }));
+    return paged;
   } catch {
     return [];
   }
@@ -928,7 +947,12 @@ export async function getSessionInfo(
     lastModified = fstat.mtime.toISOString();
     createdAt = fstat.birthtime.toISOString();
   } catch { /* stat failure — use defaults */ }
-  return { sessionId, summary: '', lastModified, fileSize, cwd, createdAt };
+  const info: SDKSessionInfo = { sessionId, summary: '', lastModified, fileSize, cwd, createdAt };
+  // Enrich with sidecar metadata (custom title / tag)
+  const meta = await readMeta(sessionId, cwd);
+  if (meta.title) info.customTitle = meta.title;
+  if (meta.tag !== undefined && meta.tag !== null) info.tag = meta.tag;
+  return info;
 }
 
 /**
@@ -1033,27 +1057,73 @@ export async function forkSession(
   return { sessionId: newSessionId };
 }
 
+// ---------------------------------------------------------------------------
+// Session metadata sidecar helpers
+// ---------------------------------------------------------------------------
+
+/** Sidecar metadata stored alongside a session transcript. */
+interface SessionMetadata {
+  title?: string;
+  tag?: string | null;
+}
+
+/** Path to the sidecar metadata file for a given session. */
+function metaPath(sessionId: string, cwd: string): string {
+  return getTranscriptPath(sessionId, cwd).replace(/\.jsonl$/, '.meta.json');
+}
+
+/** Read sidecar metadata; returns `{}` when absent or malformed. */
+async function readMeta(sessionId: string, cwd: string): Promise<SessionMetadata> {
+  try {
+    const raw = await readFile(metaPath(sessionId, cwd), 'utf-8');
+    return JSON.parse(raw) as SessionMetadata;
+  } catch {
+    return {};
+  }
+}
+
+/** Merge `patch` into the existing sidecar metadata (atomic write). */
+async function writeMeta(sessionId: string, cwd: string, patch: Partial<SessionMetadata>): Promise<void> {
+  const existing = await readMeta(sessionId, cwd);
+  const updated = { ...existing, ...patch };
+  // Omit null tag so the field is absent rather than explicit null
+  if (updated.tag === null) delete updated.tag;
+  const filePath = metaPath(sessionId, cwd);
+  // Ensure directory exists before writing
+  const dir = filePath.slice(0, filePath.lastIndexOf('/'));
+  await mkdir(dir, { recursive: true }).catch(() => {});
+  await writeFile(filePath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+}
+
+// ---------------------------------------------------------------------------
+// renameSession / tagSession — real implementations backed by sidecar
+// ---------------------------------------------------------------------------
+
 /**
- * Rename a session (set title).
+ * Rename a session by persisting a custom title to the metadata sidecar.
  */
 export async function renameSession(
-  _sessionId: string,
-  _title: string,
-  _options?: SessionMutationOptions,
+  sessionId: string,
+  title: string,
+  options?: SessionMutationOptions,
 ): Promise<void> {
-  // Session titles are not stored in transcript files.
-  // This would require a metadata sidecar file.
+  const cwd = options?.cwd ?? process.cwd();
+  try {
+    await writeMeta(sessionId, cwd, { title });
+  } catch { /* advisory — transcript directory may not exist yet */ }
 }
 
 /**
- * Tag a session.
+ * Tag a session (pass `null` to clear the tag).
  */
 export async function tagSession(
-  _sessionId: string,
-  _tag: string | null,
-  _options?: SessionMutationOptions,
+  sessionId: string,
+  tag: string | null,
+  options?: SessionMutationOptions,
 ): Promise<void> {
-  // Session tags are not stored in transcript files.
-  // This would require a metadata sidecar file.
+  const cwd = options?.cwd ?? process.cwd();
+  try {
+    await writeMeta(sessionId, cwd, { tag });
+  } catch { /* advisory */ }
 }
 

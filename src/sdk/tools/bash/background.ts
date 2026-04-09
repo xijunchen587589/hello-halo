@@ -26,7 +26,7 @@ export interface BackgroundTask {
 }
 
 /** Global registry of background tasks. */
-class BackgroundTaskRegistry {
+export class BackgroundTaskRegistry {
   private tasks = new Map<string, BackgroundTask>();
 
   register(command: string): BackgroundTask {
@@ -74,6 +74,19 @@ class BackgroundTaskRegistry {
       task.status = 'failed';
       task.error = error;
       task.completedAt = Date.now();
+    }
+  }
+
+  /**
+   * Remove completed/failed tasks older than `maxAgeMs` milliseconds.
+   * Running tasks are never pruned.
+   */
+  pruneCompleted(maxAgeMs: number): void {
+    const cutoff = Date.now() - maxAgeMs;
+    for (const [id, task] of this.tasks) {
+      if (task.status !== 'running' && task.completedAt !== null && task.completedAt < cutoff) {
+        this.tasks.delete(id);
+      }
     }
   }
 }

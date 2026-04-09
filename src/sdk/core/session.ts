@@ -23,6 +23,8 @@ import { initOrchestrator } from '../orchestrator/init.js';
 import type { OrchestratorHandle } from '../orchestrator/init.js';
 import { runEventHooks } from './hooks.js';
 import { TranscriptWriter, readTranscriptMessages } from './transcript.js';
+import { shellStateManager } from '../tools/bash/shell-state.js';
+import { backgroundRegistry } from '../tools/bash/background.js';
 
 // ---------------------------------------------------------------------------
 // Adaptive thinking model detection
@@ -803,6 +805,12 @@ function createSessionProxy(state: SessionState): SDKSession {
         state.mcpManager.disconnectAll();
         state.mcpManager = null;
       }
+
+      // Release per-session shell state (cwd + env vars accumulated by Bash tool)
+      shellStateManager.removeAll(state.sessionId);
+
+      // Opportunistic pruning: remove completed background tasks older than 1 hour
+      backgroundRegistry.pruneCompleted(3_600_000);
     }
   };
 
