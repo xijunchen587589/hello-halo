@@ -773,10 +773,71 @@ tool call, to pause and request user input. The SDK now supports the full flow.
 
 ---
 
+### Run 33 — Session Unit Tests (27 tests)
+
+**New: `core/session.test.ts` — 27 unit tests**
+
+Comprehensive in-process unit tests for `createSession()` — the core V2 session
+lifecycle. Uses the same mock-provider pattern as `query-loop.test.ts` (zero network I/O).
+
+**Covers:**
+
+- **Basic send/stream flow** (6 tests):
+  - `system:init` emitted on first turn
+  - `result` message emitted with `is_error:false`, `session_id`, `result` string
+  - `session_state_changed:idle` emitted after result (within same `stream()` call)
+  - `session_id` is a stable UUID consistent across all messages in a turn
+  - All messages carry a `uuid` field
+  - Init message has all required CC SDK fields (`cwd`, `model`, `tools`, `permissionMode`, `mcp_servers`)
+
+- **Multi-turn state** (4 tests):
+  - `system:init` emitted on EVERY `stream()` call (not just first)
+  - `session_id` consistent across turns
+  - Spy provider confirms prior-turn messages are present in context (history accumulation)
+  - `maxTurns=1` terminates correctly
+
+- **send() input shapes** (4 tests):
+  - Plain string
+  - Direct `{ role: 'user', content }` Message object
+  - CC SDK envelope `{ type: 'user', message: { role, content: string } }`
+  - CC SDK envelope with `ContentBlock[]` content (multi-modal)
+
+- **Session control** (5 tests):
+  - `setModel()` — spy provider confirms updated model in next-turn request
+  - `interrupt()` during idle stream — exits cleanly without hang
+  - `close()` — `send()` throws; `stream()` exits immediately (no deadlock)
+  - `setPermissionMode()` — updates config without affecting ongoing flow
+  - `[Symbol.asyncDispose]()` — calls close() cleanly
+
+- **Options forwarding** (3 tests):
+  - Custom `sessionId` reflected in result `session_id` field
+  - `env.ANTHROPIC_API_KEY` + `env.ANTHROPIC_BASE_URL` provider resolution path
+  - Init message `tools` field is `string[]` containing built-in tool names
+
+- **Result message shape** (2 tests):
+  - Required CC SDK fields: `is_error`, `result`, `session_id`, `num_turns`, `duration_ms`
+  - Usage/cost fields present (`usage` defined, `total_cost_usd` numeric-or-absent)
+
+- **Concurrent stream guard** (1 test):
+  - Two concurrent `stream()` calls — no deadlock, no panic
+
+- **Transcript persistence** (2 tests):
+  - Turn completion writes JSONL transcript to disk (verified with controlled `CLAUDE_CONFIG_DIR`)
+  - `resume:sessionId` loads seeded history — spy provider sees prior messages in context
+
+**Bug discovery: `appendToTranscript` API mismatch**
+- `appendToTranscript(transcriptPath, entry)` takes the computed path directly,
+  not `(sessionId, cwd, entry)` — tests now call it correctly via `getTranscriptPath()` first
+
+**Total: 220 unit tests + 14 e2e + 18 e2e-adjacent = 252 tests, all passing. tsc --noEmit passes.**
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)
 - [x] ~~Elicitation support~~ (Run 32)
+- [x] ~~Session unit tests~~ (Run 33)
 - [ ] Full consumer compatibility e2e test (spawn session, send message, verify all SDKMessage shapes)
 
 ### P2 (Important)
