@@ -14,7 +14,7 @@
  */
 
 import type { Tool, ToolResult, ToolContext } from '../../types/tool.js';
-import { McpClient, type McpToolDefinition } from './client.js';
+import { McpClient, type McpToolDefinition, type McpElicitationHandler } from './client.js';
 import { StdioTransport, SSETransport, HttpTransport } from './transports.js';
 import type { McpTransport } from './jsonrpc.js';
 import type { McpServerConnectionStatus } from './bridge.js';
@@ -80,6 +80,19 @@ interface ServerEntry {
 export class McpConnectionManager {
   private servers = new Map<string, ServerEntry>();
   private _disposed = false;
+  private elicitationHandler?: McpElicitationHandler;
+
+  // -------------------------------------------------------------------------
+  // Configuration
+  // -------------------------------------------------------------------------
+
+  /**
+   * Set the elicitation handler for all server connections.
+   * Must be called before connectAll() / connect() to take effect.
+   */
+  setElicitationHandler(handler: McpElicitationHandler): void {
+    this.elicitationHandler = handler;
+  }
 
   // -------------------------------------------------------------------------
   // Server registration
@@ -138,7 +151,7 @@ export class McpConnectionManager {
 
       await transport.connect();
 
-      const client = new McpClient(transport, entry.name);
+      const client = new McpClient(transport, entry.name, this.elicitationHandler);
       await client.initialize();
 
       entry.transport = transport;
@@ -464,7 +477,7 @@ export class McpConnectionManager {
 
       await transport.connect();
 
-      const client = new McpClient(transport, entry.name);
+      const client = new McpClient(transport, entry.name, this.elicitationHandler);
       await client.initialize();
 
       entry.transport = transport;
@@ -654,17 +667,28 @@ function formatCallToolResult(
 // Factory helper
 // ---------------------------------------------------------------------------
 
+/** Options for createMcpConnectionManager. */
+export interface CreateMcpConnectionManagerOptions {
+  /** Callback invoked when an MCP server requests user input (elicitation). */
+  onElicitation?: McpElicitationHandler;
+}
+
 /**
  * Create a McpConnectionManager from an mcpServers config record,
  * skipping SDK-type configs (those are handled in-process).
  *
  * @param mcpServers - The mcpServers record from Options
+ * @param options - Additional options (e.g. elicitation handler)
  * @returns A new McpConnectionManager with all external servers registered
  */
 export function createMcpConnectionManager(
   mcpServers: Record<string, unknown> | undefined,
+  options?: CreateMcpConnectionManagerOptions,
 ): McpConnectionManager {
   const mgr = new McpConnectionManager();
+  if (options?.onElicitation) {
+    mgr.setElicitationHandler(options.onElicitation);
+  }
   if (!mcpServers) return mgr;
 
   for (const [name, config] of Object.entries(mcpServers)) {

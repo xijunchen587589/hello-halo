@@ -190,6 +190,7 @@ export async function createSession(options: Options): Promise<SDKSession> {
   try {
     mcpManager = createMcpConnectionManager(
       options.mcpServers as Record<string, unknown> | undefined,
+      options.onElicitation ? { onElicitation: options.onElicitation } : undefined,
     );
     await mcpManager.connectAll();
     const extTools = mcpManager.getBridgedTools();

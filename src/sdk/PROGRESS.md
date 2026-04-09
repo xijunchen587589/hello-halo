@@ -712,11 +712,72 @@ Branch: `feature/sdk`
 
 ---
 
+### Run 32 — MCP Elicitation Support
+
+**Full MCP elicitation pipeline (server-initiated requests)**
+
+Elicitation is the MCP protocol mechanism that allows an MCP server, during a
+tool call, to pause and request user input. The SDK now supports the full flow.
+
+**Transport layer: `setRequestHandler(method, handler)`**
+- New `ServerRequestHandler` type and `setRequestHandler` method added to the
+  `McpTransport` interface (`jsonrpc.ts`)
+- All three transports (Stdio, SSE, Http) implement the method:
+  - `StdioTransport`: detects server-initiated requests in `handleLine`
+    (messages with `method` field), calls handler, writes JSON-RPC response
+    back to stdin
+  - `SSETransport`: detects in `handleSSEEvent`, POSTs response to endpoint URL
+  - `HttpTransport`: detects in `parseSSEResponse` (embedded in SSE stream),
+    POSTs response back to server URL
+  - Key dispatch: a message is a server request if it has `method` field; a
+    response if it has `result`/`error` field — mutually exclusive
+
+**McpClient: `onElicitation` wiring**
+- New `McpElicitationHandler` type matches CC SDK's `OnElicitation` signature:
+  `(request: Record<string,unknown>, options: {signal}) => Promise<...>`
+- `McpClient` constructor accepts optional third parameter `onElicitation`
+- `initialize()` now registers `elicitation/create` transport handler before
+  the MCP handshake, so elicitation is available from session start
+- `serverName` is merged into the request object so handlers know which server
+  is asking (mirrors CC SDK's `ElicitationRequest.serverName` field)
+- Declares `capabilities.elicitation` in `initialize` params only when handler
+  is provided — backward compatible
+
+**McpConnectionManager: propagation**
+- `setElicitationHandler(handler)` method added
+- `createMcpConnectionManager(mcpServers, options?)` now accepts
+  `{ onElicitation }` in options (backward compatible — optional)
+- Handler propagated to every `McpClient` on `connect()` and reconnect
+
+**End-to-end wiring**
+- `createSession(options)` passes `options.onElicitation` to the manager
+- `query(params)` passes `options.onElicitation` to the manager
+- `setMcpServers` reuses the existing manager (handler already set)
+- `McpElicitationHandler` and `CreateMcpConnectionManagerOptions` exported
+  from the public index
+
+**New: `tools/mcp/elicitation.test.ts` — 11 unit tests**
+- Transport: handler stored, called with correct params, returns result
+- Transport: multiple handlers for different methods coexist
+- McpClient: registers handler on transport after initialize
+- McpClient: no handler registered when `onElicitation` not provided
+- McpClient: `serverName` merged into request
+- McpClient: declares elicitation capability when handler provided
+- McpClient: no capability declared without handler
+- Manager: `setElicitationHandler` API
+- `createMcpConnectionManager`: accepts `onElicitation` option
+- `createMcpConnectionManager`: backward compat without option
+- `createMcpConnectionManager`: skips SDK-type servers
+
+**Total: 193 unit tests + 14 e2e + 18 e2e-adjacent = 225 tests, all passing. tsc --noEmit passes.**
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)
+- [x] ~~Elicitation support~~ (Run 32)
 - [ ] Full consumer compatibility e2e test (spawn session, send message, verify all SDKMessage shapes)
-- [ ] Elicitation support (typed request/result, onElicitation callback in MCP bridge)
 
 ### P2 (Important)
 - [x] ~~WebSearchTool real implementation~~ (Run 20)

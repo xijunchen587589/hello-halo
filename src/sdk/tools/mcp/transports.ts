@@ -16,6 +16,7 @@ import type {
   JsonRpcRequest,
   JsonRpcNotification,
   JsonRpcResponse,
+  ServerRequestHandler,
 } from './jsonrpc.js';
 
 /** Default timeout for individual JSON-RPC requests (30 seconds). */
@@ -68,9 +69,14 @@ export class StdioTransport implements McpTransport {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pending = new Map<number, PendingRequest>();
+  private requestHandlers = new Map<string, ServerRequestHandler>();
   private _connected = false;
 
   constructor(private readonly options: StdioTransportOptions) {}
+
+  setRequestHandler(method: string, handler: ServerRequestHandler): void {
+    this.requestHandlers.set(method, handler);
+  }
 
   get connected(): boolean {
     return this._connected;
@@ -143,7 +149,26 @@ export class StdioTransport implements McpTransport {
 
     try {
       const msg = JSON.parse(trimmed) as Record<string, unknown>;
-      // Only handle JSON-RPC responses (have numeric id + result or error)
+
+      // Server-initiated request: has 'method' field (and optionally 'id')
+      if (typeof msg.method === 'string') {
+        if (msg.id !== undefined) {
+          const handler = this.requestHandlers.get(msg.method);
+          if (handler) {
+            void handler(msg.params).then(
+              (result) => this.writeRpcResponse(msg.id, result),
+              (err: unknown) => this.writeRpcResponse(msg.id, undefined, {
+                code: -32000,
+                message: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          }
+        }
+        // Notifications (no id) are silently ignored
+        return;
+      }
+
+      // Response to our request: has 'id' + 'result'/'error'
       if (
         typeof msg.id === 'number' &&
         (msg.result !== undefined || msg.error !== undefined)
@@ -155,10 +180,17 @@ export class StdioTransport implements McpTransport {
           entry.resolve(msg as unknown as JsonRpcResponse);
         }
       }
-      // Server-initiated notifications are silently ignored
     } catch {
       // Non-JSON output (e.g. stderr leaking to stdout) — ignore
     }
+  }
+
+  private writeRpcResponse(id: unknown, result?: unknown, error?: { code: number; message: string }): void {
+    if (!this.process?.stdin || !this._connected) return;
+    const response = error !== undefined
+      ? { jsonrpc: '2.0', id, error }
+      : { jsonrpc: '2.0', id, result: result ?? null };
+    this.process.stdin.write(JSON.stringify(response) + '\n');
   }
 
   async send(request: JsonRpcRequest): Promise<JsonRpcResponse> {
@@ -252,8 +284,13 @@ export class SSETransport implements McpTransport {
   private endpointUrl: string | null = null;
   private abortController: AbortController | null = null;
   private pending = new Map<number, PendingRequest>();
+  private requestHandlers = new Map<string, ServerRequestHandler>();
 
   constructor(private readonly options: SSETransportOptions) {}
+
+  setRequestHandler(method: string, handler: ServerRequestHandler): void {
+    this.requestHandlers.set(method, handler);
+  }
 
   get connected(): boolean {
     return this._connected;
@@ -355,6 +392,25 @@ export class SSETransport implements McpTransport {
     if (eventType === 'message' && data) {
       try {
         const msg = JSON.parse(data) as Record<string, unknown>;
+
+        // Server-initiated request: has 'method' field
+        if (typeof msg.method === 'string') {
+          if (msg.id !== undefined) {
+            const handler = this.requestHandlers.get(msg.method);
+            if (handler) {
+              void handler(msg.params).then(
+                (result) => this.postRpcResponse(msg.id, result),
+                (err: unknown) => this.postRpcResponse(msg.id, undefined, {
+                  code: -32000,
+                  message: err instanceof Error ? err.message : String(err),
+                }),
+              );
+            }
+          }
+          return;
+        }
+
+        // Response to our request
         if (
           typeof msg.id === 'number' &&
           (msg.result !== undefined || msg.error !== undefined)
@@ -370,6 +426,18 @@ export class SSETransport implements McpTransport {
         // Ignore parse errors
       }
     }
+  }
+
+  private postRpcResponse(id: unknown, result?: unknown, error?: { code: number; message: string }): void {
+    if (!this.endpointUrl || !this._connected) return;
+    const response = error !== undefined
+      ? { jsonrpc: '2.0', id, error }
+      : { jsonrpc: '2.0', id, result: result ?? null };
+    fetch(this.endpointUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.options.headers },
+      body: JSON.stringify(response),
+    }).catch(() => { /* best-effort */ });
   }
 
   async send(request: JsonRpcRequest): Promise<JsonRpcResponse> {
@@ -449,8 +517,13 @@ export interface HttpTransportOptions {
  */
 export class HttpTransport implements McpTransport {
   private _connected = false;
+  private requestHandlers = new Map<string, ServerRequestHandler>();
 
   constructor(private readonly options: HttpTransportOptions) {}
+
+  setRequestHandler(method: string, handler: ServerRequestHandler): void {
+    this.requestHandlers.set(method, handler);
+  }
 
   get connected(): boolean {
     return this._connected;
@@ -519,7 +592,20 @@ export class HttpTransport implements McpTransport {
           } else if (line === '' && eventData) {
             try {
               const msg = JSON.parse(eventData) as Record<string, unknown>;
-              if (msg.id === requestId) {
+
+              // Server-initiated request embedded in the SSE stream
+              if (typeof msg.method === 'string' && msg.id !== undefined) {
+                const handler = this.requestHandlers.get(msg.method);
+                if (handler) {
+                  void handler(msg.params).then(
+                    (result) => this.postRpcResponse(msg.id, result),
+                    (err: unknown) => this.postRpcResponse(msg.id, undefined, {
+                      code: -32000,
+                      message: err instanceof Error ? err.message : String(err),
+                    }),
+                  );
+                }
+              } else if (msg.id === requestId) {
                 return msg as unknown as JsonRpcResponse;
               }
             } catch {
@@ -534,6 +620,18 @@ export class HttpTransport implements McpTransport {
     }
 
     throw new Error(`No response received for request id=${requestId}`);
+  }
+
+  private postRpcResponse(id: unknown, result?: unknown, error?: { code: number; message: string }): void {
+    if (!this._connected) return;
+    const response = error !== undefined
+      ? { jsonrpc: '2.0', id, error }
+      : { jsonrpc: '2.0', id, result: result ?? null };
+    fetch(this.options.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.options.headers },
+      body: JSON.stringify(response),
+    }).catch(() => { /* best-effort */ });
   }
 
   async notify(notification: JsonRpcNotification): Promise<void> {

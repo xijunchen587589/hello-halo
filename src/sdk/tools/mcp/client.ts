@@ -56,6 +56,21 @@ export interface McpCallToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// Elicitation handler type
+// ---------------------------------------------------------------------------
+
+/**
+ * Callback invoked when an MCP server requests user input (elicitation).
+ * Matches the CC SDK's OnElicitation signature.
+ * The request includes `serverName` plus all MCP elicitation params.
+ * Should return an ElicitResult: { action: 'accept'|'decline'|'cancel', content? }.
+ */
+export type McpElicitationHandler = (
+  request: Record<string, unknown>,
+  options: { signal: AbortSignal },
+) => Promise<Record<string, unknown>>;
+
+// ---------------------------------------------------------------------------
 // McpClient
 // ---------------------------------------------------------------------------
 
@@ -79,10 +94,12 @@ export class McpClient {
   private serverInfo: McpServerInfo | null = null;
   private tools: McpToolDefinition[] = [];
   private _initialized = false;
+  private abortController = new AbortController();
 
   constructor(
     private readonly transport: McpTransport,
     private readonly serverName: string,
+    private readonly onElicitation?: McpElicitationHandler,
   ) {}
 
   get initialized(): boolean {
@@ -105,15 +122,34 @@ export class McpClient {
    * then optionally discovers tools if the server advertises tool support.
    */
   async initialize(): Promise<void> {
+    // Register elicitation handler before the handshake so the server can
+    // elicit user input as soon as the session is established.
+    if (this.onElicitation) {
+      const handler = this.onElicitation;
+      const serverName = this.serverName;
+      const signal = this.abortController.signal;
+      this.transport.setRequestHandler('elicitation/create', async (params) => {
+        // Merge serverName into the request so the handler knows which server is asking.
+        const request = { serverName, ...((params as Record<string, unknown>) ?? {}) };
+        return handler(request, { signal });
+      });
+    }
+
+    const capabilities: Record<string, unknown> = {
+      roots: { listChanged: false },
+    };
+    if (this.onElicitation) {
+      // Declare elicitation capability so the server knows we support it
+      capabilities['elicitation'] = {};
+    }
+
     const request: JsonRpcRequest = {
       jsonrpc: '2.0',
       id: this.nextId++,
       method: 'initialize',
       params: {
         protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {
-          roots: { listChanged: false },
-        },
+        capabilities,
         clientInfo: {
           name: CLIENT_NAME,
           version: CLIENT_VERSION,
@@ -233,6 +269,7 @@ export class McpClient {
    * Close the client and its underlying transport.
    */
   close(): void {
+    this.abortController.abort();
     this.transport.close();
     this._initialized = false;
     this.tools = [];

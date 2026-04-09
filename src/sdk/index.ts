@@ -221,7 +221,10 @@ export function query(params: {
 
   // Hoist the MCP manager so Query control methods (toggleMcpServer/setMcpServers)
   // can mutate it between turns while the generator is running.
-  const mcpManager = createMcpConnectionManager(mcpServersConfig);
+  const mcpManager = createMcpConnectionManager(
+    mcpServersConfig,
+    options.onElicitation ? { onElicitation: options.onElicitation } : undefined,
+  );
 
   // Stable session ID for the lifetime of this one-shot query.
   // Shared with the query loop so that tool state (e.g. shell cwd) can be
@@ -707,7 +710,8 @@ export type { ExternalMcpConnection, McpServerConnectionStatus } from './tools/m
 
 // MCP connection manager (reconnection + health monitoring)
 export { McpConnectionManager, createMcpConnectionManager } from './tools/mcp/connection-manager.js';
-export type { McpServerLiveStatus } from './tools/mcp/connection-manager.js';
+export type { McpServerLiveStatus, CreateMcpConnectionManagerOptions } from './tools/mcp/connection-manager.js';
+export type { McpElicitationHandler } from './tools/mcp/client.js';
 
 // MCP external transport — client, transports, JSON-RPC
 export { McpClient } from './tools/mcp/client.js';

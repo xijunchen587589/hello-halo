@@ -38,6 +38,9 @@ export interface JsonRpcError {
 // Transport interface
 // ---------------------------------------------------------------------------
 
+/** Handler for server-initiated JSON-RPC requests. Returns the result payload. */
+export type ServerRequestHandler = (params: unknown) => Promise<unknown>;
+
 /**
  * Transport abstraction for MCP communication.
  * Handles the low-level I/O for sending/receiving JSON-RPC messages.
@@ -53,4 +56,10 @@ export interface McpTransport {
   close(): void;
   /** Whether the transport is currently connected. */
   readonly connected: boolean;
+  /**
+   * Register a handler for server-initiated requests of a given method.
+   * When the server sends a request with this method, the handler is called
+   * and its return value is sent back as the JSON-RPC response.
+   */
+  setRequestHandler(method: string, handler: ServerRequestHandler): void;
 }
