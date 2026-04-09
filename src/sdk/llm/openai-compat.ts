@@ -31,6 +31,7 @@ import {
   delayForAttempt,
   isRetryableStatus,
   parseRetryAfterMs,
+  sleep,
 } from '../utils/retry.js';
 
 // ---------------------------------------------------------------------------
@@ -119,11 +120,12 @@ export class OpenAiCompatProvider implements LlmProvider {
     const headers = this.buildHeaders();
 
     // Retry loop
+    const abortSignal = request.providerOptions?.signal as AbortSignal | undefined;
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= DEFAULT_RETRY.maxRetries; attempt++) {
       if (attempt > 0) {
         const delay = delayForAttempt(DEFAULT_RETRY, attempt - 1);
-        await new Promise((r) => setTimeout(r, delay));
+        await sleep(delay, abortSignal);
       }
 
       let response: Response;
@@ -132,9 +134,11 @@ export class OpenAiCompatProvider implements LlmProvider {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal: request.providerOptions?.signal as AbortSignal | undefined,
+          signal: abortSignal,
         });
       } catch (err) {
+        // Re-throw abort errors immediately — don't retry on abort
+        if (err instanceof Error && err.name === 'AbortError') throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         continue;
       }
@@ -145,7 +149,7 @@ export class OpenAiCompatProvider implements LlmProvider {
         if (isRetryableStatus(status) && attempt < DEFAULT_RETRY.maxRetries) {
           const retryAfterMs = parseRetryAfterMs(response.headers);
           if (retryAfterMs !== undefined) {
-            await new Promise((r) => setTimeout(r, retryAfterMs));
+            await sleep(retryAfterMs, abortSignal);
           }
           lastError = new Error(`HTTP ${status}: ${errorBody}`);
           continue;
@@ -175,12 +179,13 @@ export class OpenAiCompatProvider implements LlmProvider {
     const headers = this.buildHeaders();
 
     // Retry loop for connection
+    const abortSignal = request.providerOptions?.signal as AbortSignal | undefined;
     let response: Response | undefined;
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= DEFAULT_RETRY.maxRetries; attempt++) {
       if (attempt > 0) {
         const delay = delayForAttempt(DEFAULT_RETRY, attempt - 1);
-        await new Promise((r) => setTimeout(r, delay));
+        await sleep(delay, abortSignal);
       }
 
       try {
@@ -188,9 +193,11 @@ export class OpenAiCompatProvider implements LlmProvider {
           method: 'POST',
           headers: { ...headers, Accept: 'text/event-stream' },
           body: JSON.stringify(body),
-          signal: request.providerOptions?.signal as AbortSignal | undefined,
+          signal: abortSignal,
         });
       } catch (err) {
+        // Re-throw abort errors immediately — don't retry on abort
+        if (err instanceof Error && err.name === 'AbortError') throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         continue;
       }
@@ -201,7 +208,7 @@ export class OpenAiCompatProvider implements LlmProvider {
         if (isRetryableStatus(status) && attempt < DEFAULT_RETRY.maxRetries) {
           const retryAfterMs = parseRetryAfterMs(response.headers);
           if (retryAfterMs !== undefined) {
-            await new Promise((r) => setTimeout(r, retryAfterMs));
+            await sleep(retryAfterMs, abortSignal);
           }
           lastError = new Error(`HTTP ${status}: ${errorBody}`);
           continue;
@@ -223,6 +230,11 @@ export class OpenAiCompatProvider implements LlmProvider {
     let messageId = 'unknown';
     let modelName = '';
     const toolCallBuffers: Map<number, { id: string; name: string; jsonBuf: string }> = new Map();
+
+    // Track whether content_block_start for the reasoning/thinking block was emitted.
+    // Required so that consumer stream-processor.ts can create the thinking block UI
+    // before receiving reasoning_delta events.
+    let reasoningBlockStarted = false;
 
     // Common reasoning field names to check
     const COMMON_REASONING_FIELDS = ['reasoning_content', 'reasoning_text', 'reasoning'];
@@ -254,7 +266,7 @@ export class OpenAiCompatProvider implements LlmProvider {
         yield {
           type: 'content_block_start',
           index: 0,
-          contentBlock: { type: 'text', text: '' },
+          content_block: { type: 'text', text: '' },
         };
         messageStarted = true;
       }
@@ -279,6 +291,16 @@ export class OpenAiCompatProvider implements LlmProvider {
       for (const field of fieldsToCheck) {
         const reasoning = delta[field] as string | undefined;
         if (reasoning) {
+          // Emit content_block_start for thinking before the first reasoning chunk
+          // so consumer stream-processor.ts can create the thinking block UI.
+          if (!reasoningBlockStarted) {
+            reasoningBlockStarted = true;
+            yield {
+              type: 'content_block_start',
+              index: 0,
+              content_block: { type: 'thinking', thinking: '' },
+            };
+          }
           let evt: StreamEvent = { type: 'reasoning_delta', index: 0, reasoning };
           if (isQuirkyModel(modelId)) evt = applyStreamQuirks(modelId, evt);
           yield evt;
@@ -318,7 +340,7 @@ export class OpenAiCompatProvider implements LlmProvider {
             yield {
               type: 'content_block_start',
               index: blockIndex,
-              contentBlock: { type: 'tool_use', id: tcId, name, input: {} },
+              content_block: { type: 'tool_use', id: tcId, name, input: {} },
             };
           }
 

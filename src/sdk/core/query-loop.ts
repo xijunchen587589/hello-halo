@@ -25,6 +25,7 @@ import { assembleSystemPrompt, splitAtBoundary } from '../prompt/system-prompt.j
 import type { SystemPromptConfig } from '../prompt/system-prompt.js';
 import { truncateToolResult } from '../utils/truncate.js';
 import { ProviderError, AbortError } from '../utils/errors.js';
+import { sleep, DEFAULT_RETRY, delayForAttempt } from '../utils/retry.js';
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -140,7 +141,12 @@ export type SDKMessage =
   // Assistant message
   | {
       type: 'assistant';
-      message: { role: 'assistant'; content: ContentBlock[] };
+      /**
+       * BetaMessage-compatible object.  `usage` is nested here so that consumer
+       * code reading `assistantMsg.message?.usage` (CC SDK BetaMessage format) works
+       * correctly.  The top-level `usage` field is kept for SDK-internal use only.
+       */
+      message: { role: 'assistant'; content: ContentBlock[]; usage?: UsageInfo };
       parent_tool_use_id: string | null;
       uuid: string;
       session_id: string;
@@ -318,11 +324,6 @@ function findTool(tools: Tool[], name: string): Tool | undefined {
   return tools.find((t) => t.name === name);
 }
 
-/** Sleep helper for retry backoff. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // ---------------------------------------------------------------------------
 // Stream accumulator — collects stream events into a complete response
 // ---------------------------------------------------------------------------
@@ -335,13 +336,78 @@ interface AccumulatedResponse {
   model: string;
 }
 
-async function accumulateStream(
+/**
+ * Translate an internal StreamEvent to the CC SDK wire format for consumer
+ * compatibility.
+ *
+ * The CC SDK (and Anthropic API) use `content_block_delta` with a nested
+ * `delta` object for incremental content updates, whereas our internal
+ * StreamEvent type uses flattened top-level events for ergonomic internal use.
+ *
+ * Consumer code (stream-processor.ts) reads:
+ *   `event.type === 'content_block_delta'`
+ *   `event.delta?.type === 'text_delta'`, `event.delta.text`
+ *   `event.delta?.type === 'thinking_delta'`, `event.delta.thinking`
+ *   `event.delta?.type === 'input_json_delta'`, `event.delta.partial_json`
+ */
+function toWireStreamEvent(event: StreamEvent): Record<string, unknown> {
+  switch (event.type) {
+    case 'text_delta':
+      return {
+        type: 'content_block_delta',
+        index: event.index,
+        delta: { type: 'text_delta', text: event.text },
+      };
+    case 'thinking_delta':
+      return {
+        type: 'content_block_delta',
+        index: event.index,
+        delta: { type: 'thinking_delta', thinking: event.thinking },
+      };
+    case 'input_json_delta':
+      return {
+        type: 'content_block_delta',
+        index: event.index,
+        delta: { type: 'input_json_delta', partial_json: event.partialJson },
+      };
+    case 'signature_delta':
+      return {
+        type: 'content_block_delta',
+        index: event.index,
+        delta: { type: 'signature_delta', signature: event.signature },
+      };
+    case 'reasoning_delta':
+      // Map provider-specific reasoning_delta → thinking_delta (same concept)
+      return {
+        type: 'content_block_delta',
+        index: event.index,
+        delta: { type: 'thinking_delta', thinking: event.reasoning },
+      };
+    default:
+      // message_start, content_block_start, content_block_stop, message_stop,
+      // message_delta, error — pass through as-is (already wire-compatible)
+      return event as unknown as Record<string, unknown>;
+  }
+}
+
+/**
+ * Real-time streaming accumulator — yields `stream_event` SDKMessages as
+ * tokens arrive and returns the fully-assembled `AccumulatedResponse` when done.
+ *
+ * This replaces the previous pattern where events were collected into a
+ * `pendingStreamEvents[]` buffer and only yielded *after* the full LLM
+ * response completed — which broke the consumer's real-time streaming UI.
+ *
+ * Usage: `const result = yield* accumulateAndStream(stream, signal, sessionId);`
+ */
+async function* accumulateAndStream(
   stream: AsyncGenerator<StreamEvent, void, undefined>,
   signal: AbortSignal,
-  onEvent?: (event: StreamEvent) => void,
-): Promise<AccumulatedResponse> {
+  sessionId: string,
+  includeEvents: boolean,
+  onProgress?: (msg: SDKMessage) => void,
+): AsyncGenerator<SDKMessage, AccumulatedResponse, undefined> {
   const textChunks: string[] = [];
-  // tool_call_blocks: index -> { id, name, jsonParts }
   const toolCallBlocks = new Map<number, { id: string; name: string; jsonParts: string[] }>();
   let thinkingChunks: string[] = [];
   let thinkingIndex = -1;
@@ -355,8 +421,23 @@ async function accumulateStream(
       throw new AbortError();
     }
 
-    onEvent?.(event);
+    // Yield stream event immediately — real-time delivery to consumer.
+    // Transform to CC SDK wire format: flat delta events become `content_block_delta`
+    // with a nested `delta` object, matching what consumer stream-processor.ts expects.
+    if (includeEvents) {
+      const streamMsg: SDKMessage = {
+        type: 'stream_event',
+        // Cast: consumer reads via `(sdkMessage as any).event`, type is advisory only.
+        event: toWireStreamEvent(event) as unknown as StreamEvent,
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: sessionId,
+      };
+      yield streamMsg;
+      onProgress?.(streamMsg);
+    }
 
+    // Accumulate event into response state
     switch (event.type) {
       case 'message_start':
         msgId = event.id;
@@ -367,10 +448,10 @@ async function accumulateStream(
         break;
 
       case 'content_block_start':
-        if (event.contentBlock.type === 'tool_use') {
-          const tb = event.contentBlock as ToolUseBlock;
+        if (event.content_block.type === 'tool_use') {
+          const tb = event.content_block as ToolUseBlock;
           toolCallBlocks.set(event.index, { id: tb.id, name: tb.name, jsonParts: [] });
-        } else if (event.contentBlock.type === 'thinking') {
+        } else if (event.content_block.type === 'thinking') {
           thinkingIndex = event.index;
           thinkingChunks = [];
         }
@@ -404,8 +485,6 @@ async function accumulateStream(
         break;
 
       case 'content_block_stop':
-        break;
-
       case 'message_stop':
         break;
 
@@ -419,12 +498,10 @@ async function accumulateStream(
   // Build content blocks
   const content: ContentBlock[] = [];
 
-  // Thinking block (if any)
   if (thinkingChunks.length > 0) {
     content.push({ type: 'thinking', thinking: thinkingChunks.join('') });
   }
 
-  // Text block
   const combinedText = textChunks.join('');
   if (combinedText) {
     content.push({ type: 'text', text: combinedText });
@@ -555,7 +632,7 @@ export async function* queryLoop(
   let maxTokensRecoveryCount = 0;
   let effectiveModel = config.model;
   let usedFallback = false;
-  let retriesLeft = 2;
+  let retryAttempt = 0;
 
   while (true) {
     turn++;
@@ -612,24 +689,11 @@ export async function* queryLoop(
         ]
       : systemPrompt;
 
-    // Stream LLM response
+    // Stream LLM response — stream_events are yielded in real-time as tokens arrive.
+    // `accumulateAndStream` is a generator: it yields SDKMessage (stream_event) immediately
+    // and returns the fully-assembled AccumulatedResponse when the stream ends.
     let accumulated: AccumulatedResponse;
-    const pendingStreamEvents: SDKMessage[] = [];
     try {
-      const streamEventEmitter = config.includePartialMessages
-        ? (event: StreamEvent) => {
-            const streamMsg: SDKMessage = {
-              type: 'stream_event',
-              event,
-              parent_tool_use_id: null,
-              uuid: randomUUID(),
-              session_id: sessionId,
-            };
-            pendingStreamEvents.push(streamMsg);
-            options?.onProgress?.(streamMsg);
-          }
-        : undefined;
-
       // Resolve effort level to thinking/temperature/reasoningEffort
       const resolved = resolveEffort(config.thinking, config.effort);
 
@@ -642,30 +706,60 @@ export async function* queryLoop(
         thinking: resolved.thinking,
         temperature: resolved.temperature,
         stream: true,
-        // Pass reasoning_effort for OpenAI-compat providers via providerOptions
-        ...(resolved.reasoningEffort
-          ? { providerOptions: { reasoning_effort: resolved.reasoningEffort } }
-          : {}),
+        // Always pass AbortSignal so providers cancel in-flight HTTP requests on abort,
+        // and pass reasoning_effort for OpenAI-compat providers when set.
+        providerOptions: {
+          signal: config.abortSignal,
+          ...(resolved.reasoningEffort ? { reasoning_effort: resolved.reasoningEffort } : {}),
+        },
       });
 
-      accumulated = await accumulateStream(stream, config.abortSignal, streamEventEmitter);
+      // Delegate to the streaming accumulator — yields stream_events in real-time,
+      // returns AccumulatedResponse when done.
+      accumulated = yield* accumulateAndStream(
+        stream,
+        config.abortSignal,
+        sessionId,
+        config.includePartialMessages,
+        options?.onProgress,
+      );
 
       // Reset retry counter on success
-      retriesLeft = 2;
+      retryAttempt = 0;
     } catch (err: unknown) {
       // Handle retryable errors
       if (err instanceof ProviderError && err.retryable) {
-        // Try fallback model
+        // Try fallback model first (no cost)
         if (!usedFallback && config.fallbackModel) {
           effectiveModel = config.fallbackModel;
           usedFallback = true;
           turn--;
           continue;
         }
-        // Retry with backoff
-        if (retriesLeft > 0) {
-          retriesLeft--;
-          await sleep(1000 * (3 - retriesLeft));
+        // Retry with exponential backoff up to DEFAULT_RETRY.maxRetries attempts
+        if (retryAttempt < DEFAULT_RETRY.maxRetries) {
+          const delayMs = delayForAttempt(DEFAULT_RETRY, retryAttempt);
+          retryAttempt++;
+
+          // Emit api_retry so the consumer can display retry progress in the UI
+          const retryMsg: SDKMessage = {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: retryAttempt,
+            max_retries: DEFAULT_RETRY.maxRetries,
+            retry_delay_ms: delayMs,
+            error_status: err.statusCode ?? null,
+            session_id: sessionId,
+            uuid: randomUUID(),
+          };
+          yield retryMsg;
+          options?.onProgress?.(retryMsg);
+
+          try {
+            await sleep(delayMs, config.abortSignal);
+          } catch {
+            // Aborted during sleep — checkAbort() at top of next iteration handles it
+          }
           turn--;
           continue;
         }
@@ -699,11 +793,6 @@ export async function* queryLoop(
     costTracker.add(accumulated.usage, effectiveModel);
     tokenBudget.updateFromUsage(accumulated.usage.input_tokens);
 
-    // Yield collected stream events from the generator
-    for (const streamMsg of pendingStreamEvents) {
-      yield streamMsg;
-    }
-
     // Build and push assistant message
     const assistantMessage: Message = {
       role: 'assistant',
@@ -711,11 +800,14 @@ export async function* queryLoop(
     };
     messages.push(assistantMessage);
 
-    // Yield the assistant message
+    // Yield the assistant message.
+    // usage is nested inside `message` (BetaMessage-compatible format) so the
+    // consumer's `assistantMsg.message?.usage` lookup works, and also at the
+    // top level for SDK-internal callers that read `assistantMsg.usage`.
     const assistantUuid = randomUUID();
     const assistantMsg: SDKMessage = {
       type: 'assistant',
-      message: { role: 'assistant', content: accumulated.content },
+      message: { role: 'assistant', content: accumulated.content, usage: accumulated.usage },
       parent_tool_use_id: null,
       uuid: assistantUuid,
       session_id: sessionId,

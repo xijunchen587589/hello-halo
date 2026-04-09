@@ -26,6 +26,7 @@ import {
   delayForAttempt,
   isRetryableStatus,
   parseRetryAfterMs,
+  sleep,
 } from '../utils/retry.js';
 
 // ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ export class AnthropicProvider implements LlmProvider {
           break;
 
         case 'content_block_start': {
-          const cb = event.contentBlock;
+          const cb = event.content_block;
           if (cb.type === 'text') {
             textParts.set(event.index, (cb as TextBlock).text);
           } else if (cb.type === 'thinking') {
@@ -213,11 +214,12 @@ export class AnthropicProvider implements LlmProvider {
     const headers = this.buildHeaders();
 
     // Retry loop for transient errors
+    const abortSignal = request.providerOptions?.signal as AbortSignal | undefined;
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= DEFAULT_RETRY.maxRetries; attempt++) {
       if (attempt > 0) {
         const delay = delayForAttempt(DEFAULT_RETRY, attempt - 1);
-        await new Promise((r) => setTimeout(r, delay));
+        await sleep(delay, abortSignal);
       }
 
       let response: Response;
@@ -226,9 +228,11 @@ export class AnthropicProvider implements LlmProvider {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal: request.providerOptions?.signal as AbortSignal | undefined,
+          signal: abortSignal,
         });
       } catch (err) {
+        // Re-throw abort errors immediately — don't retry on abort
+        if (err instanceof Error && err.name === 'AbortError') throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         continue;
       }
@@ -241,7 +245,7 @@ export class AnthropicProvider implements LlmProvider {
           // Honour Retry-After header when present (supports both delta-seconds and HTTP-date)
           const retryAfterMs = parseRetryAfterMs(response.headers);
           if (retryAfterMs !== undefined) {
-            await new Promise((r) => setTimeout(r, retryAfterMs));
+            await sleep(retryAfterMs, abortSignal);
           }
           lastError = new Error(`HTTP ${status}: ${errorBody}`);
           continue;
@@ -479,8 +483,8 @@ export class AnthropicProvider implements LlmProvider {
       case 'content_block_start': {
         const index = (raw.index as number) ?? 0;
         const cb = raw.content_block as Record<string, unknown>;
-        const contentBlock = this.mapContentBlock(cb);
-        return { type: 'content_block_start', index, contentBlock };
+        const content_block = this.mapContentBlock(cb);
+        return { type: 'content_block_start', index, content_block };
       }
 
       case 'content_block_delta': {

@@ -139,6 +139,30 @@ Branch: `feature/sdk`
 - **`index.ts`** — `unstable_v2_resumeSession()` now passes `resume: sessionId` so transcript is loaded
 - tsc --noEmit passes
 
+### Run 15 — AbortSignal propagation + retry system hardening
+
+**Bug fixes (correctness):**
+- **`core/query-loop.ts`** — AbortSignal was never forwarded to LLM providers:
+  - `provider.createMessageStream()` call now always passes `signal: config.abortSignal` in `providerOptions`
+  - Providers can now cancel their in-flight HTTP requests immediately on abort (saves tokens + latency)
+- **`llm/anthropic.ts`** — abort-aware retry sleeps:
+  - Extracted `abortSignal` from `request.providerOptions?.signal` before retry loop (no more repeated casts)
+  - Replaced `new Promise(setTimeout)` with `sleep(delay, abortSignal)` — aborts during backoff are now immediate
+  - Re-throw AbortError in fetch catch block — abort no longer causes a useless retry cycle
+- **`llm/openai-compat.ts`** — same abort-awareness improvements in both `createMessage` and `createMessageStream`
+
+**Retry system improvements (`core/query-loop.ts`):**
+- Removed duplicate local `sleep` function — now imports from `utils/retry.ts`
+- Increased query-loop max retries from 2 to `DEFAULT_RETRY.maxRetries` (5)
+- Replaced fixed backoff (1–3 s) with `delayForAttempt()` exponential backoff (1 s → 60 s, ±10 % jitter)
+- Emits `system/api_retry` SDKMessage before each retry — consumer can display retry progress in UI
+- Abort-aware retry sleep in query-loop (matches provider behaviour)
+
+**Agent types (`tools/agent/agent-types.ts`):**
+- Added `fork` built-in agent type — inherits all parent tools, used for parallel sub-tasks (per CC spec)
+
+- tsc --noEmit passes
+
 ---
 
 ## Priority Queue (Next Runs)

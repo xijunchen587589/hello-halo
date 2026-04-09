@@ -22,6 +22,7 @@ export interface AgentTypeDefinition {
  * - 'general-purpose': all tools, default agent
  * - 'Explore': read-only tools, for codebase exploration
  * - 'Plan': read-only tools, for architecture planning
+ * - 'fork': identical tool set to parent agent, for parallel work
  */
 export const BUILT_IN_AGENT_TYPES: Record<string, AgentTypeDefinition> = {
   'general-purpose': {
@@ -41,6 +42,17 @@ export const BUILT_IN_AGENT_TYPES: Record<string, AgentTypeDefinition> = {
       'Read-only agent for architecture planning. ' +
       'Has access to Glob, Grep, Read, WebFetch, and WebSearch.',
     tools: ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch'],
+  },
+  /**
+   * Fork: inherits the full tool set of the spawning agent.
+   * Used for parallel work where the sub-agent needs all capabilities.
+   * The spawner resolves tool inheritance at spawn time.
+   */
+  fork: {
+    name: 'fork',
+    description:
+      'Fork of the parent agent — inherits all parent tools. ' +
+      'Use for parallel tasks that need the same capabilities as the main agent.',
   },
 };
 
