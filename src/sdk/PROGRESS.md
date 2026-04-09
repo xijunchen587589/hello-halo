@@ -230,6 +230,45 @@ Branch: `feature/sdk`
 
 ---
 
+### Run 18 — Consumer Compatibility Audit: CostTracker + PermissionResult + ModelUsage + Error Result
+
+**Bug fix: CostTracker `totalCostUsd` incorrect after model switch (`core/cost.ts`)**
+- `totalCostUsd` was a computed getter that multiplied ALL accumulated tokens by
+  `this._pricing` — a single pricing instance that changes on every `add(model)` or
+  `setModel()` call. After fallback from Opus to Sonnet, all prior Opus tokens were
+  retroactively priced at Sonnet rates, yielding a ~5x cost undercount.
+- Replaced with `_totalCostUsd` running accumulator: each `add()` call computes the
+  per-call cost at the correct model pricing and accumulates it. `totalCostUsd` getter
+  now returns the pre-computed sum. `reset()` also clears `_totalCostUsd` and `_modelUsage`.
+
+**Bug fix: PermissionResult deny `message` field required but consumer omits it (`types/config.ts`, `core/query-loop.ts`)**
+- Consumer's `createCanUseTool` returns `{ behavior: 'deny', updatedInput }` without
+  a `message` field (permission-handler.ts:129). Our SDK required `message: string` on
+  the deny variant and read it unconditionally in query-loop.ts:1041, producing
+  `"Permission denied: undefined"`.
+- Changed `PermissionResult` deny variant: `message` is now optional (`message?: string`).
+- Updated query-loop deny handling: uses `permResult.message` when present, falls back
+  to `'Permission denied'` when omitted.
+
+**Enhancement: `ModelUsageEntry.contextWindow` field (`core/cost.ts`)**
+- Consumer reads `modelUsage[model].contextWindow` from result messages for context
+  window display (message-utils.ts:276). Our `ModelUsageEntry` was missing this field,
+  causing silent fallback to 200K default.
+- Added `contextWindow: number` to `ModelUsageEntry` interface.
+- `CostTracker.add()` now calls `contextWindowForModel(modelKey)` when creating a new
+  entry, populating the field with the correct per-model context window size.
+
+**Enhancement: error result `result` field + `stop_reason` (`core/query-loop.ts`)**
+- Consumer reads `message.result` from all result messages (message-utils.ts:213),
+  including errors. Our error result type only had `errors: string[]`, so error messages
+  displayed as empty content in the UI.
+- Added `result: string` field to error result type — set to `errors.join('\n')`.
+- Added `stop_reason: string | null` to error result type for CC SDK conformance.
+
+- tsc --noEmit passes
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)

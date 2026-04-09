@@ -191,13 +191,17 @@ export type SDKMessage =
   | {
       type: 'result';
       subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd';
+      /** Error details as individual messages (CC SDK canonical field). */
       errors: string[];
+      /** Joined error text for consumer compat (consumer reads `message.result`). */
+      result: string;
       is_error: true;
       num_turns: number;
       total_cost_usd: number;
       usage: UsageInfo;
       modelUsage: Record<string, ModelUsageEntry>;
       session_id: string;
+      stop_reason: string | null;
       duration_ms: number;
       duration_api_ms: number;
       permission_denials: unknown[];
@@ -635,17 +639,20 @@ export async function* queryLoop(
     subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd',
     errors: string[],
     numTurns: number,
+    stopReason: string | null = null,
   ): SDKMessage {
     return {
       type: 'result',
       subtype,
       errors,
+      result: errors.join('\n'),
       is_error: true,
       num_turns: numTurns,
       total_cost_usd: costTracker.totalCostUsd,
       usage: costTracker.getUsage(),
       modelUsage: costTracker.getModelUsage(),
       session_id: sessionId,
+      stop_reason: stopReason,
       duration_ms: Date.now() - startTime,
       duration_api_ms: totalApiTimeMs,
       permission_denials: [],
@@ -1038,7 +1045,9 @@ export async function* queryLoop(
             toolUseID: toolUse.id,
           });
           if (permResult.behavior === 'deny') {
-            const deniedContent = `Permission denied: ${permResult.message}`;
+            const deniedContent = permResult.message
+              ? `Permission denied: ${permResult.message}`
+              : 'Permission denied';
             const elapsed = (Date.now() - (toolStartTimes.get(toolUse.id) ?? Date.now())) / 1000;
             const doneMsg = toolProgress(toolUse.name, toolUse.id, elapsed);
             pendingToolProgress.push(doneMsg);

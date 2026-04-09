@@ -5,6 +5,7 @@
  */
 
 import type { UsageInfo } from '../types/provider.js';
+import { contextWindowForModel } from '../prompt/constants.js';
 
 // ---------------------------------------------------------------------------
 // ModelPricing — per-model token pricing in USD per million tokens
@@ -122,6 +123,8 @@ export interface ModelUsageEntry {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
   total_cost_usd: number;
+  /** Context window size for this model in tokens. */
+  contextWindow: number;
 }
 
 export class CostTracker {
@@ -129,6 +132,8 @@ export class CostTracker {
   private _outputTokens = 0;
   private _cacheCreationTokens = 0;
   private _cacheReadTokens = 0;
+  /** Running total cost in USD, accumulated per-call with correct pricing. */
+  private _totalCostUsd = 0;
   private _pricing: ModelPricing;
   private _modelUsage = new Map<string, ModelUsageEntry>();
 
@@ -171,6 +176,9 @@ export class CostTracker {
         cacheRead * pricing.cacheReadPerMtk) /
       1_000_000;
 
+    // Accumulate total cost per-call so model switches don't retroactively reprice history
+    this._totalCostUsd += callCost;
+
     if (existing) {
       existing.input_tokens += input;
       existing.output_tokens += output;
@@ -184,20 +192,14 @@ export class CostTracker {
         cache_creation_input_tokens: cacheCreation,
         cache_read_input_tokens: cacheRead,
         total_cost_usd: callCost,
+        contextWindow: contextWindowForModel(modelKey),
       });
     }
   }
 
   /** Total accumulated cost in USD. */
   get totalCostUsd(): number {
-    const p = this._pricing;
-    return (
-      (this._inputTokens * p.inputPerMtk +
-        this._outputTokens * p.outputPerMtk +
-        this._cacheCreationTokens * p.cacheCreationPerMtk +
-        this._cacheReadTokens * p.cacheReadPerMtk) /
-      1_000_000
-    );
+    return this._totalCostUsd;
   }
 
   /** Total input tokens recorded. */
@@ -241,6 +243,8 @@ export class CostTracker {
     this._outputTokens = 0;
     this._cacheCreationTokens = 0;
     this._cacheReadTokens = 0;
+    this._totalCostUsd = 0;
+    this._modelUsage.clear();
   }
 
   /** Get cumulative usage as a flat object. */
