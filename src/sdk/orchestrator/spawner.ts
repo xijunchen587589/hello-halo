@@ -228,6 +228,7 @@ async function runSubAgent(
       subtype: 'task_started',
       task_id: agentId,
       tool_use_id: parentToolUseId,
+      description: request.description,
       session_id: sessionIdForMessages,
       uuid: randomUUID(),
     });
@@ -306,6 +307,7 @@ async function runSubAgent(
       status: completionStatus,
       session_id: sessionIdForMessages,
       uuid: randomUUID(),
+      output_file: '',
       usage: {
         total_tokens: 0,
         tool_uses: toolUseCount,

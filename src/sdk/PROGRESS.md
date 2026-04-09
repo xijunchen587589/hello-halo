@@ -333,12 +333,53 @@ Branch: `feature/sdk`
 
 ---
 
+### Run 21 — Consumer Compatibility Audit + Fixes
+
+**Bug fix: `agents` init field shape mismatch (HIGH severity active bug)**
+- Consumer (`stream-processor.ts:785`) casts `msg.agents as string[]` — expected agent names
+- SDK was emitting `Array<{ name, description, model }>` (objects, not strings)
+- Changed `queryLoop()` to emit `agents: Object.keys(config.agents)` (name strings only)
+- This fixes `[object Object]` being forwarded to the frontend instead of agent names
+
+**Enhancement: `task_started` now includes `description` field**
+- CC SDK's `SDKTaskStartedMessage` declares `description: string` as required
+- Spawner now emits `description: request.description` in task_started messages
+- Consumer's sub-agent UI can display what the agent is doing
+
+**Enhancement: `task_notification` now includes `output_file` field**
+- CC SDK's `SDKTaskNotificationMessage` declares `output_file: string` as required
+- Spawner now includes `output_file: ''` (in-process agents don't write output files)
+- Prevents structural mismatch if consumer ever reads this field
+
+**Enhancement: `api_retry` now includes CC-compatible `error` field**
+- CC SDK's `SDKAPIRetryMessage` has `error: SDKAssistantMessageError` (typed string union)
+- Added `classifyApiError(statusCode)` helper that maps HTTP status codes to:
+  - 401/403 → 'authentication_failed', 402 → 'billing_error', 429 → 'rate_limit'
+  - 400/422 → 'invalid_request', 5xx → 'server_error', other → 'unknown'
+- Both `api_retry` emission and the `SDKMessage` type union now include the `error` field
+
+**Enhancement: error result `stop_reason` values**
+- `error_max_turns` now has `stop_reason: 'max_turns'` (was `null`)
+- `error_max_budget_usd` now has `stop_reason: 'max_budget'` (was `null`)
+
+**Enhancement: session stream concurrency guard**
+- `session.stream()` now tracks the active generator via `state.activeStream`
+- If a new `stream()` call arrives while a previous one is running, the old generator is
+  gracefully returned before the new one starts — prevents two generators competing for
+  the same pending message queue
+- Uses `innerStream()` indirection with `try/finally` to auto-clear `state.activeStream`
+
+- tsc --noEmit passes
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)
-- [ ] Worker Thread isolation for background agents (true parallelism)
+- [ ] Full consumer compatibility e2e test (spawn session, send message, verify all SDKMessage shapes)
 
 ### P2 (Important)
 - [x] ~~WebSearchTool real implementation~~ (Run 20)
+- [ ] Worker Thread isolation for background agents (deferred: CC Rust uses Tokio tasks, not threads; our Promise-based approach is equivalent)
 - [ ] Agent progress summaries (agentProgressSummaries fork+summarize every 30s)
 - [ ] Typed system subtypes for task_started/task_progress/task_notification in SDKMessage union

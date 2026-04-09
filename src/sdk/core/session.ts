@@ -465,6 +465,26 @@ function createSessionProxy(state: SessionState): SDKSession {
         throw new Error('Session is closed');
       }
 
+      // Concurrency guard: only one stream generator at a time.
+      // If a previous stream is active, return it to release its query loop.
+      if (state.activeStream) {
+        await state.activeStream.return(undefined);
+      }
+
+      // Create and register this generator as the active stream.
+      // Uses an indirection so the generator function can register itself.
+      const self = innerStream();
+      state.activeStream = self;
+      try {
+        yield* self;
+      } finally {
+        if (state.activeStream === self) {
+          state.activeStream = null;
+        }
+      }
+  };
+
+  async function* innerStream(): AsyncGenerator<SDKMessage, void, undefined> {
       // If there are no pending messages, wait until send() wakes us up.
       if (state.pendingMessages.length === 0 && !state.closed) {
         await new Promise<void>((resolve) => {
@@ -573,7 +593,7 @@ function createSessionProxy(state: SessionState): SDKSession {
 
         yield msg;
       }
-  };
+  }
 
   session.close = function close(): void {
     if (!state.closed) {

@@ -136,7 +136,7 @@ export type SDKMessage =
       permissionMode?: string;
       slash_commands?: string[];
       skills?: string[];
-      agents?: Array<{ name: string; description: string; model?: string }>;
+      agents?: string[];
       uuid: string;
     }
   // Assistant message
@@ -152,7 +152,7 @@ export type SDKMessage =
       uuid: string;
       session_id: string;
       usage?: UsageInfo;
-      error?: string;
+      error?: AssistantMessageError;
     }
   // User message (tool results)
   | {
@@ -248,6 +248,7 @@ export type SDKMessage =
       max_retries: number;
       retry_delay_ms: number;
       error_status: number | null;
+      error: 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
       session_id: string;
       uuid: string;
     };
@@ -255,6 +256,19 @@ export type SDKMessage =
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+type AssistantMessageError = 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
+
+/** Classify an HTTP status code into the CC SDK error category string. */
+function classifyApiError(statusCode: number | undefined): AssistantMessageError {
+  if (!statusCode) return 'unknown';
+  if (statusCode === 401 || statusCode === 403) return 'authentication_failed';
+  if (statusCode === 402) return 'billing_error';
+  if (statusCode === 429) return 'rate_limit';
+  if (statusCode === 400 || statusCode === 422) return 'invalid_request';
+  if (statusCode >= 500) return 'server_error';
+  return 'unknown';
+}
 
 /** Build the system prompt string from config. */
 function buildSystemPrompt(
@@ -608,13 +622,9 @@ export async function* queryLoop(
     messages.push(...initialPrompt);
   }
 
-  // Build agent info from config.agents
-  const agentInfos = config.agents
-    ? Object.entries(config.agents).map(([name, def]) => ({
-        name,
-        description: def.description,
-        model: def.model,
-      }))
+  // Build agent names from config.agents (CC SDK emits string[], not objects)
+  const agentNames = config.agents
+    ? Object.keys(config.agents)
     : undefined;
 
   // Yield init event
@@ -625,7 +635,7 @@ export async function* queryLoop(
     tools: tools.map((t) => t.name),
     model: config.model,
     cwd: config.cwd,
-    agents: agentInfos,
+    agents: agentNames,
     mcp_servers: options?.mcpServerStatuses,
     slash_commands: options?.slashCommands,
     skills: options?.skills,
@@ -681,6 +691,7 @@ export async function* queryLoop(
         'error_max_turns',
         [`Max turns exceeded: ${turn - 1} turns completed, limit is ${config.maxTurns}`],
         turn - 1,
+        'max_turns',
       );
       yield resultMsg;
       options?.onProgress?.(resultMsg);
@@ -693,6 +704,7 @@ export async function* queryLoop(
         'error_max_budget_usd',
         [`Budget exceeded: $${costTracker.totalCostUsd.toFixed(4)} spent, limit is $${config.maxBudgetUsd.toFixed(4)}`],
         turn - 1,
+        'max_budget',
       );
       yield resultMsg;
       options?.onProgress?.(resultMsg);
@@ -786,6 +798,7 @@ export async function* queryLoop(
             max_retries: DEFAULT_RETRY.maxRetries,
             retry_delay_ms: delayMs,
             error_status: err.statusCode ?? null,
+            error: classifyApiError(err.statusCode),
             session_id: sessionId,
             uuid: randomUUID(),
           };
