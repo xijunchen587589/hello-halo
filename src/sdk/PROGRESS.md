@@ -646,15 +646,46 @@ Branch: `feature/sdk`
 
 ---
 
+### Run 30 — Dynamic MCP Server Management
+
+**Feature: `McpConnectionManager.removeServer()`, `toggle()`, `setServers()`**
+- `removeServer(name)` — disconnect then deregister from the internal server map
+- `toggle(name, enabled)` — connect or disconnect without removing config,
+  so servers can be re-enabled cheaply; throws for unregistered names
+- `setServers(configs)` — atomic diff: add new servers (connect), remove absent ones
+  (disconnect + deregister), restart servers whose JSON config changed;
+  returns `{ added, removed, errors }` matching `McpSetServersResult`
+
+**Feature: Real `toggleMcpServer` + `setMcpServers` in session query proxy**
+- `refreshMcpToolsFromManager(state)` helper in `session.ts`:
+  rebuilds `state.tools` and `state.mcpServerStatuses` after each dynamic MCP change
+- `reconnectMcpServer()` now calls `refreshMcpToolsFromManager` after restart
+- `toggleMcpServer()` and `setMcpServers()` fully wired: delegate to `McpConnectionManager`
+  then refresh tools/statuses in the live session state
+
+**Feature: Real `toggleMcpServer` + `setMcpServers` in `query()` path (`index.ts`)**
+- `mcpManager` hoisted above the generator so Query control methods can reach it
+- `syncToolsFromManager(tools, mgr)` helper splices manager-owned tools in-place
+- `wrapGeneratorAsQuery` now accepts optional `mcpManager` + `toolsRef` to enable
+  real-time MCP toggling even in the stateless `query()` path
+
+**Tests: 28 new unit tests in `tools/mcp/connection-manager.test.ts`**
+- Covers addServer (idempotency, initial state), removeServer (deregister, spy disconnect),
+  toggle (throws unknown, disconnect path, connect-when-disabled), setServers (add/remove/restart/
+  unchanged/errors/empty), getStatuses, getBridgedTools, disconnectAll
+
+**Total: 150 unit tests + 14 e2e = 164 tests, all passing. tsc --noEmit passes.**
+
+---
+
 ## Priority Queue (Next Runs)
 
 ### P1 (Critical)
 - [ ] Full consumer compatibility e2e test (spawn session, send message, verify all SDKMessage shapes)
+- [ ] Elicitation support (typed request/result, onElicitation callback in MCP bridge)
 
 ### P2 (Important)
 - [x] ~~WebSearchTool real implementation~~ (Run 20)
-- [ ] Worker Thread isolation for background agents (deferred: CC Rust uses Tokio tasks, not threads; our Promise-based approach is equivalent)
+- [x] ~~Dynamic MCP server management~~ (Run 30)
+- [ ] Worker Thread isolation for background agents (deferred)
 - [ ] Agent progress summaries (agentProgressSummaries fork+summarize every 30s)
-- [x] ~~Typed system subtypes for task_started/task_progress/task_notification in SDKMessage union~~ (Run 22 + Run 25 complete)
-- [ ] Dynamic MCP server management (setMcpServers real implementation)
-- [ ] Elicitation support (typed request/result, onElicitation callback wiring)
