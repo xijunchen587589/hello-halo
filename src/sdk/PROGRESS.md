@@ -179,12 +179,32 @@ In-process execution, OpenAI-compat providers, Worker Thread multi-agent isolati
   - `healthCheck()`: with key → healthy; no key → unavailable with reason
 - **424 tests total** (18 test files)
 
+### Run 40 — stream-parser.ts Unit Tests
+- **31 new unit tests** (`llm/stream-parser.test.ts`):
+  - **Basic parsing**: single object, multiple objects, `data:` without space,
+    trailing whitespace trimmed, nested objects/arrays
+  - **[DONE] sentinel**: stops before subsequent data lines, stops even with more
+    network chunks queued, handles [DONE] as the only event
+  - **event: prefix**: attaches `__event` field to next data object; cleared after one use;
+    absent when no `event:` preceded; whitespace handling around event name
+  - **Skipped lines**: empty SSE boundary lines, `:` comments, unknown-prefix lines,
+    `data:` with blank payload
+  - **Chunked data**: JSON split mid-value across two reads; newline in next chunk;
+    multiple events in one read; one-character-per-chunk reassembly;
+    `event:` type split across chunks
+  - **Malformed JSON**: single bad line skipped, multiple bad lines skipped —
+    generator continues to valid lines without throwing
+  - **AbortSignal**: pre-aborted signal yields nothing; signal firing during a read
+    still delivers that read's data but prevents the next read (abort detected at
+    top of following iteration — accurate per-spec behavior documented in test)
+  - **Edge cases**: `body:null` / `body:undefined` throw; reader lock released on
+    normal completion and on mid-stream exception; empty stream (immediate done);
+    stream with only comments/empty lines
+- **455 tests total** (19 test files)
+
 ---
 
 ## Priority Queue (Next Runs)
 
 ### P1 (Important)
 - [ ] Worker Thread isolation for background agents (current fire-and-forget Promise model)
-
-### P2
-- [ ] stream-parser.ts unit tests (chunked SSE, event prefix, [DONE], abort)
