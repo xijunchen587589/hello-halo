@@ -517,9 +517,15 @@ export async function getOrCreateV2Session(
   if (useHaloSdk) {
     // Dynamic import — SDK is only loaded when the user explicitly enables it.
     // Keeps it out of the main process startup bundle entirely.
-    const { createSession: haloCreateSession } = await import('@hello-halo/agent-sdk')
-    session = (await haloCreateSession(sdkOptions as any)) as unknown as V2SDKSession
-    console.log(`[Agent][${conversationId}] Using Halo SDK (experimental)`)
+    // @vite-ignore skips bundler resolution so builds succeed without src/sdk.
+    try {
+      const { createSession: haloCreateSession } = await import(/* @vite-ignore */ '@hello-halo/agent-sdk')
+      session = (await haloCreateSession(sdkOptions as any)) as unknown as V2SDKSession
+      console.log(`[Agent][${conversationId}] Using Halo SDK (experimental)`)
+    } catch {
+      console.warn(`[Agent][${conversationId}] Halo SDK not available, falling back to Anthropic SDK`)
+      session = (await unstable_v2_createSession(sdkOptions as any)) as unknown as V2SDKSession
+    }
   } else {
     session = (await unstable_v2_createSession(sdkOptions as any)) as unknown as V2SDKSession
   }

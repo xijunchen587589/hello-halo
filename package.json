@@ -134,8 +134,7 @@
     "ws": "^8.18.3",
     "yaml": "^2.8.2",
     "zod": "^3.24.1",
-    "zustand": "^4.5.0",
-    "@hello-halo/agent-sdk": "file:./src/sdk"
+    "zustand": "^4.5.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
@@ -165,6 +164,7 @@
     "vitest": "^1.6.1"
   },
   "optionalDependencies": {
+    "@hello-halo/agent-sdk": "file:./src/sdk",
     "@parcel/watcher-darwin-arm64": "^2.5.6",
     "@parcel/watcher-darwin-x64": "^2.5.6",
     "@parcel/watcher-linux-x64-glibc": "^2.5.6",
