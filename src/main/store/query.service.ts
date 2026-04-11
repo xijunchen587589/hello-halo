@@ -106,6 +106,7 @@ function supportsType(source: RegistrySource, type?: AppType): boolean {
     case 'smithery':
       return type === 'mcp'
     case 'claude-skills':
+    case 'skillhub':
       return type === 'skill'
     case 'halo':
     default:
@@ -223,8 +224,8 @@ export class QueryService {
     })
     const proxy = await this.queryProxySources(params, proxyRegistries)
 
-    // Merge: mirror items first (local, fast), then proxy
-    const items = [...mirror.items, ...proxy.items]
+    // Merge: proxy items first (SkillHub), then mirror
+    const items = [...proxy.items, ...mirror.items]
     const total = (mirror.total ?? 0) + (proxy.total ?? 0)
     const hasMore = mirror.hasMore || proxy.hasMore
 
@@ -412,8 +413,20 @@ export class QueryService {
           count: proxy.total ?? proxy.items.length,
           hasMore: proxy.hasMore,
         })
+      } else if (t === 'skill') {
+        // Mirror sources + proxy sources that support skill (e.g. SkillHub)
+        const mirror = this.queryMirror(previewParams)
+        const skillProxies = proxyRegistries.filter(r => supportsType(r, 'skill'))
+        const proxy = await this.queryProxySources(previewParams, skillProxies)
+        allItems.push(...proxy.items, ...mirror.items)
+        allSources.push(...mirror.sources, ...proxy.sources)
+        groups.push({
+          type: t,
+          count: mirror.total + (proxy.total ?? proxy.items.length),
+          hasMore: mirror.hasMore || proxy.hasMore,
+        })
       } else {
-        // Mirror sources for automation/skill
+        // Mirror sources for automation
         const mirror = this.queryMirror(previewParams)
         allItems.push(...mirror.items)
         allSources.push(...mirror.sources)
