@@ -63,6 +63,7 @@ export default defineConfig({
     build: {
       sourcemap: true,
       rollupOptions: {
+        external: ['@hello-halo/agent-sdk'],
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           // File watcher worker — runs in a separate child process
