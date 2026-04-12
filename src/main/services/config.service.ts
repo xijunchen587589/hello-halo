@@ -425,8 +425,8 @@ interface HaloConfig {
     promptProfile?: 'official' | 'halo'
     configDirMode?: 'halo' | 'cc' | 'custom'
     customConfigDir?: string
-    /** Experimental: switch agent engine. 'cc' = Claude Code SDK (default), 'halo' = Halo SDK. */
-    sdkEngine?: 'cc' | 'halo'
+    /** Experimental: switch agent engine. 'anthropic' = Claude Code SDK (default), 'halo' = Halo SDK. */
+    sdkEngine?: 'anthropic' | 'halo'
   }
   remoteAccess: {
     enabled: boolean

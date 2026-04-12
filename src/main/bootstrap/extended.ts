@@ -77,6 +77,7 @@ async function initPlatformAndApps(): Promise<void> {
   const t0 = performance.now()
 
   // ── Phase 0: Store ──────────────────────────────────────────────────────
+  // Note: SDK is initialized earlier in index.ts (before essential services)
   const db = await initStore()
   platformDb = db
 

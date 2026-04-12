@@ -12,7 +12,7 @@ import path from 'path'
 import os from 'os'
 import { existsSync, copyFileSync, mkdirSync } from 'fs'
 import { app } from 'electron'
-import { unstable_v2_createSession } from '@anthropic-ai/claude-agent-sdk'
+import { createSession } from './resolved-sdk'
 import { getConfig, onApiConfigChange, getCredentialsGeneration } from '../config.service'
 import { onMcpAppsChange } from '../../apps/manager/service'
 import { getConversation } from '../conversation.service'
@@ -510,25 +510,8 @@ export async function getOrCreateV2Session(
   if (effectiveSessionId) {
     sdkOptions.resume = effectiveSessionId
   }
-  // Requires SDK patch: native SDK ignores most sdkOptions parameters
-  // Use 'as any' to bypass type check, actual params handled by patched SDK
-  const useHaloSdk = getConfig().agent?.sdkEngine === 'halo'
-  let session: V2SDKSession
-  if (useHaloSdk) {
-    // Dynamic import — SDK is only loaded when the user explicitly enables it.
-    // Keeps it out of the main process startup bundle entirely.
-    // @vite-ignore skips bundler resolution so builds succeed without src/sdk.
-    try {
-      const { createSession: haloCreateSession } = await import(/* @vite-ignore */ '@hello-halo/agent-sdk')
-      session = (await haloCreateSession(sdkOptions as any)) as unknown as V2SDKSession
-      console.log(`[Agent][${conversationId}] Using Halo SDK (experimental)`)
-    } catch {
-      console.warn(`[Agent][${conversationId}] Halo SDK not available, falling back to Anthropic SDK`)
-      session = (await unstable_v2_createSession(sdkOptions as any)) as unknown as V2SDKSession
-    }
-  } else {
-    session = (await unstable_v2_createSession(sdkOptions as any)) as unknown as V2SDKSession
-  }
+  // resolved-sdk handles sdkEngine switch (Halo SDK vs CC SDK) transparently
+  const session = (await createSession(sdkOptions)) as unknown as V2SDKSession
 
   // Log PID for health system verification (via SDK patch)
   const pid = (session as any).pid

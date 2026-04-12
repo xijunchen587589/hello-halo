@@ -86,6 +86,7 @@
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^3.0.0",
     "@lezer/highlight": "^1.2.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@parcel/watcher": "^2.5.6",
     "@replit/codemirror-lang-svelte": "^6.0.0",
     "@streamdown/code": "^1.0.2",
@@ -158,6 +159,7 @@
     "vitest": "^1.6.1"
   },
   "optionalDependencies": {
+    "@hello-halo/agent-sdk": "file:src/sdk/halo-sdk",
     "@parcel/watcher-darwin-arm64": "^2.5.6",
     "@parcel/watcher-darwin-x64": "^2.5.6",
     "@parcel/watcher-linux-x64-glibc": "^2.5.6",

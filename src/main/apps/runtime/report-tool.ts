@@ -10,7 +10,7 @@
 
 import { z } from 'zod'
 import { randomUUID } from 'crypto'
-import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
+import { tool, createSdkMcpServer } from '../../services/agent/resolved-sdk'
 import type { ActivityStore } from './store'
 import type { ActivityEntry, ActivityEntryType, ActivityEntryContent } from './types'
 import { broadcastToAll } from '../../http/websocket'

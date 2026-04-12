@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from 'crypto'
-import { unstable_v2_createSession } from '@anthropic-ai/claude-agent-sdk'
+import { createSession } from '../../services/agent/resolved-sdk'
 import type { InstalledApp } from '../manager'
 import { resolvePermission } from '../../../shared/apps/app-types'
 import type { MemoryService, MemoryCallerScope } from '../../platform/memory'
@@ -363,7 +363,7 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
         workDir
       )
     } else {
-      session = await unstable_v2_createSession(sdkOptions as any)
+      session = await createSession(sdkOptions)
     }
     console.log(`[Runtime][${runTag}] V2 session created, sending initial message`)
 
