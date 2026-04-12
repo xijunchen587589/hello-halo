@@ -10,7 +10,7 @@
     "dev": "cross-env HALO_DATA_DIR=~/.halo-dev electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "postinstall": "patch-package && electron-builder install-app-deps && electron-rebuild -f -w better-sqlite3",
+    "postinstall": "node scripts/postinstall.mjs",
     "bump-rc": "node scripts/bump-rc-version.mjs",
     "build:mac": "npm run bump-rc && npm run build && electron-builder --mac",
     "build:win": "npm run bump-rc && npm run build && electron-builder --win",
@@ -48,8 +48,8 @@
     "cap:run:ios": "npm run cap:sync && npx cap run ios"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.1.76",
-    "@anthropic-ai/claude-code": "latest",
+    "@anthropic-ai/claude-agent-sdk": "0.2.89",
+    "@anthropic-ai/claude-code": "2.1.89",
     "@anthropic-ai/sdk": "latest",
     "@anthropic-ai/tokenizer": "^0.0.4",
     "@capacitor/android": "^8.2.0",
@@ -109,6 +109,7 @@
     "i18next": "^25.7.4",
     "ignore": "^7.0.5",
     "lucide-react": "^0.555.0",
+    "node-pty": "^1.1.0",
     "nodemailer": "^8.0.1",
     "open": "^10.2.0",
     "proxy-agent": "^7.0.0",
@@ -184,7 +185,8 @@
     "asarUnpack": [
       "node_modules/cloudflared/**/*",
       "node_modules/@parcel/watcher-*/**/*",
-      "node_modules/better-sqlite3/build/Release/*.node"
+      "node_modules/better-sqlite3/build/Release/*.node",
+      "node_modules/node-pty/prebuilds/**"
     ],
     "publish": {
       "provider": "github",
@@ -254,7 +256,8 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "resources/installer.nsh"
     },
     "linux": {
       "icon": "resources/linux",
