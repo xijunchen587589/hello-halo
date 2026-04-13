@@ -53,6 +53,7 @@ import { registerImSessionHandlers } from '../ipc/im-sessions'
 import { registerStoreHandlers } from '../ipc/store'
 import { registerCliConfigHandlers } from '../ipc/cli-config'
 import { initRegistryService, shutdownRegistryService } from '../store'
+import { cleanupImChannelTempFiles } from '../apps/runtime/im-channels'
 
 // Module-level reference to db for cleanup
 let platformDb: DatabaseManager | null = null
@@ -75,6 +76,10 @@ let platformDb: DatabaseManager | null = null
 async function initPlatformAndApps(): Promise<void> {
   console.log('[Bootstrap] Platform+Apps initialization starting...')
   const t0 = performance.now()
+
+  // ── Pre-init: Background cleanup (non-blocking) ─────────────────────────
+  // Remove stale IM channel media temp files from previous sessions (>24h old).
+  cleanupImChannelTempFiles()
 
   // ── Phase 0: Store ──────────────────────────────────────────────────────
   // Note: SDK is initialized earlier in index.ts (before essential services)

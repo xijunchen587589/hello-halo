@@ -34,6 +34,7 @@ import { resolveCredentialsForSdk, buildBaseSdkOptions } from './sdk-config'
 import { createHaloAppsMcpServer } from '../../apps/conversation-mcp'
 import { createWebSearchMcpServer } from '../web-search'
 import { startConsumer, type ConsumerHandle } from './session-consumer'
+import { hasActiveTeamTasks } from './subagent-handler'
 
 // ============================================
 // Session Maps
@@ -82,10 +83,13 @@ const pendingConsumerRebuilds = new Set<string>()
 function isSessionBusy(conversationId: string): boolean {
   if (activeSessions.has(conversationId)) return true
   const consumer = consumers.get(conversationId)
-  // A running consumer is only "busy" when actively processing a turn
-  // (getActiveSessionState() != null). Between turns it waits in stream() —
-  // that is idle and should be eligible for the 30-min timeout cleanup.
-  return !!(consumer && consumer.getActiveSessionState())
+  if (!consumer?.isRunning) return false
+  // Actively processing a turn — definitely busy.
+  if (consumer.getActiveSessionState()) return true
+  // Consumer is idle between turns (waiting in stream()), but the CC subprocess
+  // may still have team agents running. Their results will arrive as a future turn.
+  // Treat such sessions as busy to prevent the 30-min cleanup from killing them.
+  return hasActiveTeamTasks(consumer.getLastTurnThoughts())
 }
 
 // ============================================
@@ -463,10 +467,35 @@ export async function getOrCreateV2Session(
       const needsConfigRebuild = config && needsSessionRebuild(existing, config)
 
       if (needsCredentialRebuild || needsConfigRebuild) {
-        // Force rebuild: stop consumer (if any), close old session, create new.
-        // This is safe because getOrCreateV2Session is called from sendMessage
-        // before the new turn starts — the consumer is idle (waiting in stream()),
-        // not actively processing a turn.
+        // Before rebuilding, check whether the CC subprocess has active team agents.
+        // The consumer appears idle between turns (getActiveSessionState() == null) but
+        // the CC subprocess may be waiting for parallel agents to report back — their
+        // results arrive as a future autonomous turn. Killing the session now would
+        // abort all in-flight agent tasks.
+        //
+        // When active team agents are detected:
+        //   - Clear any pending rebuild flag so the consumer keeps running through the
+        //     team's remaining turns without breaking early.
+        //   - Return the existing session: the new message is queued and processed on
+        //     the current session (may run on old model/config for that one turn).
+        //   - After team tasks complete, the credential/config mismatch persists, so
+        //     the next sendMessage will trigger a clean rebuild at that point.
+        const consumer = consumers.get(conversationId)
+        const isIdleBetweenTurns = consumer?.isRunning && !consumer.getActiveSessionState()
+        if (isIdleBetweenTurns && hasActiveTeamTasks(consumer!.getLastTurnThoughts())) {
+          // Clear the flag that invalidateAllSessions may have set — we don't want
+          // the consumer to break after the next team turn while messages are queued.
+          pendingConsumerRebuilds.delete(conversationId)
+          console.log(
+            `[Agent][${conversationId}] Session rebuild deferred — active team agents detected ` +
+            `(${needsCredentialRebuild ? `gen ${existing.credentialsGeneration}→${currentGen}` : 'config changed'}). ` +
+            `Will rebuild after team tasks complete.`
+          )
+          existing.lastUsedAt = Date.now()
+          return existing.session
+        }
+
+        // No active team agents — safe to rebuild now.
         if (needsCredentialRebuild) {
           console.log(`[Agent][${conversationId}] Credentials changed (gen ${existing.credentialsGeneration} → ${currentGen}), recreating session`)
         } else {

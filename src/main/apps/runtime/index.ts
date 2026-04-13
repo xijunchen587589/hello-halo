@@ -47,7 +47,7 @@ import { MIGRATION_NAMESPACE, migrations } from './migrations'
 import { createEventRouter, type EventRouter } from './event-router'
 import { FileWatcherSource } from './sources/file-watcher.source'
 import { WebhookSource, type WebhookSecretResolver } from './sources/webhook.source'
-import { ImChannelManager, WecomBotProvider } from './im-channels'
+import { ImChannelManager, WecomBotProvider, setActiveImChannelManager } from './im-channels'
 import { ImSessionRegistry, setImSessionRegistry } from './im-session-registry'
 import { dispatchInboundMessage } from './dispatch-inbound'
 import { getConfig } from '../../services/config.service'
@@ -229,6 +229,10 @@ export async function initAppRuntime(
   const imChannelManager = new ImChannelManager()
   imChannelManagerInstance = imChannelManager
 
+  // Expose via module-level accessor so dispatch-inbound.ts can resolve
+  // fileCapability without a circular import (dispatch-inbound ← index ← dispatch-inbound).
+  setActiveImChannelManager(imChannelManager)
+
   // Register built-in providers
   imChannelManager.registerProvider(new WecomBotProvider())
   // Future: imChannelManager.registerProvider(new FeishuBotProvider())
@@ -347,6 +351,7 @@ export async function shutdownAppRuntime(): Promise<void> {
   if (imChannelManagerInstance) {
     imChannelManagerInstance.stopAll()
     imChannelManagerInstance = null
+    setActiveImChannelManager(null)
   }
 
   imSessionRegistryInstance = null

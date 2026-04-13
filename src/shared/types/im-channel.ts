@@ -137,6 +137,44 @@ export interface ImChannelInstance {
    * The Manager calls this once after creating the instance.
    */
   onInbound(handler: (msg: InboundMessage, reply: ReplyHandle) => void): void
+
+  /**
+   * Optional file-sending capability.
+   *
+   * Not all channels support file uploads — this is opt-in.
+   * Channel adapters implement the platform-specific upload logic internally.
+   * Absence means the channel is text-only for outbound.
+   */
+  fileCapability?: ImFileCapability
+}
+
+// ============================================
+// ImFileCapability
+// ============================================
+
+/**
+ * Channel-agnostic file sending interface.
+ *
+ * Implemented by channel adapters that support outbound file delivery.
+ * The adapter handles all platform-specific upload logic (chunked WebSocket
+ * upload for WeCom, HTTP multipart for Feishu, etc.).
+ */
+export interface ImFileCapability {
+  /**
+   * Upload a local file and send it to the specified chat.
+   *
+   * @param chatId - Target platform-side conversation ID
+   * @param filePath - Absolute path to the local file
+   * @param chatType - Conversation type ('direct' | 'group')
+   * @param filename - Display filename (defaults to basename of filePath)
+   * @returns true if sent successfully, false on recoverable failure
+   */
+  sendFile(
+    chatId: string,
+    filePath: string,
+    chatType: 'direct' | 'group',
+    filename?: string
+  ): Promise<boolean>
 }
 
 // ============================================

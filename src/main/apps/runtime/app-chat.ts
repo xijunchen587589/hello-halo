@@ -51,6 +51,7 @@ import {
 } from '../../services/agent/session-manager'
 import { stopGeneration } from '../../services/agent/control'
 import { buildAppChatSystemPrompt } from './prompt-chat'
+import { createFileSendMcpServer } from './im-channels/file-send-mcp'
 import { mergeConfigWithDefaults } from './config-defaults'
 import { createReportToolServer, type ReportToolContext } from './report-tool'
 import { createNotifyToolServer } from './notify-tool'
@@ -63,6 +64,9 @@ import { createMemoryStatusMcpServer } from '../../platform/memory/snapshot'
 // Key builders live in shared/ so the renderer can import them without
 // depending on main-process modules.
 import { getAppChatConversationId, buildImSessionKey } from '../../../shared/apps/im-keys'
+import type { ProgressEvent } from '../../../shared/types/inbound-message'
+import type { ImageAttachment } from '../../services/agent/types'
+import { ProgressEventParser } from './progress-formatter'
 export { getAppChatConversationId, buildImSessionKey }
 
 // ============================================
@@ -77,10 +81,17 @@ export interface AppChatRequest {
   spaceId: string
   /** User's message text */
   message: string
-  /** Optional image attachments (same format as main chat) */
-  images?: Array<{ type: string; media_type: string; data: string }>
+  /** Optional image attachments for multimodal input */
+  images?: ImageAttachment[]
   /** Enable extended thinking mode */
   thinkingEnabled?: boolean
+  /**
+   * Optional callback invoked with each progress event during AI execution.
+   * Used by IM channel adapters for real-time streaming progress to the IM channel.
+   * Called for tool_call, tool_result, thinking, text_delta, and status events.
+   * Errors in this callback are caught and logged — they must not interrupt execution.
+   */
+  onProgress?: (event: ProgressEvent) => void
   /**
    * Optional callback invoked with the AI's final response text.
    * Used by external bridges (e.g., WeCom Bot) to auto-reply
@@ -94,6 +105,15 @@ export interface AppChatRequest {
    *   "app-chat:{appId}:{channel}:{chatType}:{chatId}"
    */
   conversationId?: string
+  /**
+   * Optional file-send function for IM channels that support outbound file delivery.
+   *
+   * When present, a `send_file_to_chat` MCP tool is injected into the agent session,
+   * allowing the AI to send local files (reports, exports, images) back to the user.
+   * The function is pre-bound to the current chatId and chatType by dispatch-inbound.ts.
+   * Absent for text-only channels and for the native Halo chat UI.
+   */
+  imFileSend?: (filePath: string, filename?: string) => Promise<boolean>
 }
 
 // ============================================
@@ -146,7 +166,7 @@ const scopedContexts = new Map<string, BrowserContext>()
 export async function sendAppChatMessage(
   request: AppChatRequest
 ): Promise<void> {
-  const { appId, spaceId, message, images, thinkingEnabled, onReply } = request
+  const { appId, spaceId, message, images, thinkingEnabled, onReply, onProgress, imFileSend } = request
   const conversationId = request.conversationId ?? getAppChatConversationId(appId)
 
   console.log(`[AppChat][${appId}] sendMessage: "${message.substring(0, 100)}"`)
@@ -236,8 +256,13 @@ export async function sendAppChatMessage(
     'halo-apps': createHaloAppsMcpServer(spaceId),
     'web-search': createWebSearchMcpServer(),
     ...(usesAIBrowser ? { 'ai-browser': createAIBrowserMcpServer(scopedBrowserCtx, workDir) } : {}),
+    // Inject file-send tool when the originating IM channel supports file delivery
+    ...(imFileSend ? { 'im-file-send': createFileSendMcpServer(imFileSend) } : {}),
   }
-  console.log(`[AppChat][${appId}] MCP servers: [${Object.keys(mcpServers).join(', ')}], aiBrowser=${usesAIBrowser}`)
+  console.log(
+    `[AppChat][${appId}] MCP servers: [${Object.keys(mcpServers).join(', ')}], ` +
+    `aiBrowser=${usesAIBrowser}, fileSend=${imFileSend ? 'yes' : 'no'}`
+  )
 
   // ── 5. Build SDK options ─────────────────────────────
   const abortController = new AbortController()
@@ -327,6 +352,10 @@ export async function sendAppChatMessage(
     // See: stream-processor.ts TODO about lastTextContent pollution.
     let lastAssistantText = ''
 
+    // One stateful parser per message: accumulates tool input JSON and thinking
+    // text across delta events, emits complete ProgressEvents on block_stop.
+    const progressParser = onProgress ? new ProgressEventParser() : null
+
     await processStream({
       v2Session,
       sessionState,
@@ -383,6 +412,18 @@ export async function sendAppChatMessage(
                 .map((b: any) => b.text)
                 .join('')
               if (text) lastAssistantText = text
+            }
+          }
+
+          // Emit progress events to IM channel if callback provided
+          if (onProgress && progressParser) {
+            const progressEvent = progressParser.feed(sdkMessage)
+            if (progressEvent) {
+              try {
+                onProgress(progressEvent)
+              } catch (progressErr) {
+                console.error(`[AppChat][${appId}] onProgress callback error:`, progressErr)
+              }
             }
           }
         }

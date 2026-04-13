@@ -31,6 +31,7 @@ import { useSpaceStore } from '../../stores/space.store'
 import { useTranslation } from '../../i18n'
 import type { AppSpec, SkillSpec } from '../../../shared/apps/spec-types'
 import { AppModelSelector } from './AppModelSelector'
+import { SystemPromptEditor } from './SystemPromptEditor'
 import {
   parseDigitalHumanZip,
   parseDigitalHumanFolder,
@@ -791,13 +792,11 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
                 <label className="text-sm text-foreground">
                   {t('System Prompt')} <span className="text-red-400">*</span>
                 </label>
-                <textarea
+                <SystemPromptEditor
                   value={form.systemPrompt}
-                  onChange={e => updateField('systemPrompt', e.target.value)}
+                  onChange={v => updateField('systemPrompt', v)}
                   placeholder={t('Describe what this app should do on each scheduled run. This is the core instruction that drives the AI.')}
-                  rows={6}
-                  className="w-full px-3 py-2 text-sm bg-secondary border border-border rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground/50"
-                  spellCheck={false}
+                  required
                 />
               </div>
 

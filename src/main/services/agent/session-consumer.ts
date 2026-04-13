@@ -25,7 +25,7 @@
  *   - Never exits between turns
  */
 
-import type { V2SDKSession, SessionState } from './types'
+import type { V2SDKSession, SessionState, Thought } from './types'
 import type { StreamResult } from './stream-processor'
 import { processStream } from './stream-processor'
 import { emitAgentEvent } from './events'
@@ -54,6 +54,9 @@ export interface ConsumerHandle {
   readonly isRunning: boolean
   /** Get the current turn's SessionState (for injection, stop, etc.) */
   getActiveSessionState(): SessionState | null
+  /** Get thoughts accumulated in the most recently completed turn.
+   * Used by session-manager to detect active team agents between turns. */
+  getLastTurnThoughts(): Thought[]
 }
 
 /**
@@ -71,6 +74,10 @@ interface ConsumerState {
   currentSessionState: SessionState | null
   /** Running flag */
   running: boolean
+  /** Thoughts from the most recently completed turn.
+   * Persists between turns so session-manager can detect active team agents
+   * even while the consumer is idle (waiting for the next turn). */
+  lastTurnThoughts: Thought[]
 }
 
 // ============================================
@@ -103,6 +110,7 @@ export function startConsumer(
     processingTurn: false,
     currentSessionState: null,
     running: true,
+    lastTurnThoughts: [],
   }
 
   // Fire and forget — errors are logged but don't propagate
@@ -132,6 +140,9 @@ export function startConsumer(
     },
     getActiveSessionState() {
       return state.currentSessionState
+    },
+    getLastTurnThoughts() {
+      return state.lastTurnThoughts
     },
   }
 
@@ -212,6 +223,10 @@ async function consumeLoop(v2Session: V2SDKSession, state: ConsumerState): Promi
         consecutiveEmptyIterations = 0
 
         persistTurnResult(spaceId, conversationId, result)
+
+        // Retain thoughts from this turn so session-manager can detect active team
+        // agents between turns (consumer idle but CC subprocess still has work).
+        state.lastTurnThoughts = result.thoughts
 
         // Emit agent:complete — injection messages are absorbed mid-turn by CC,
         // they do NOT produce a separate turn, so always complete normally.

@@ -26,6 +26,7 @@ import { api } from '../../api'
 import { AppModelSelector } from './AppModelSelector'
 import { AppNotifyChannelsSection } from './AppNotifyChannelsSection'
 import { appTypeLabel } from './appTypeUtils'
+import { SystemPromptEditor } from './SystemPromptEditor'
 
 // Lazy-load CodeMirrorEditor to keep initial bundle small
 const CodeMirrorEditor = lazy(() =>
@@ -682,12 +683,11 @@ function SettingsTab({ app, appId, t }: SettingsTabProps) {
           {/* System Prompt */}
           <div className="space-y-1.5">
             <label className="text-sm text-foreground">{t('System Prompt')}</label>
-            <textarea
+            <SystemPromptEditor
               value={specSystemPrompt}
-              onChange={e => { setSpecSystemPrompt(e.target.value); setSpecSaveSuccess(false); setSpecError(null) }}
-              rows={6}
-              spellCheck={false}
-              className="w-full px-3 py-2 text-sm bg-secondary border border-border rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-primary text-foreground font-mono"
+              onChange={v => { setSpecSystemPrompt(v); setSpecSaveSuccess(false); setSpecError(null) }}
+              onDone={() => { if (specHasChanges) void handleSpecSave() }}
+              fontMono
             />
           </div>
 
