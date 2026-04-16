@@ -458,6 +458,13 @@ export async function getOrCreateV2Session(
       console.log(`[Agent][${conversationId}] Session transport not ready (process dead), recreating...`)
       closeV2SessionForRebuild(conversationId)
       // Fall through to create new session
+    } else if (consumers.get(conversationId)?.isRunning === false) {
+      // Consumer exited (e.g., race between session recreation and invalidateAllSessions
+      // during OAuth token refresh). The CC process is alive but nobody is reading its
+      // output — a zombie session. Rebuild to restore a healthy session + consumer.
+      console.log(`[Agent][${conversationId}] Consumer exited, session is zombie — rebuilding`)
+      closeV2SessionForRebuild(conversationId)
+      // Fall through to create new session
     } else {
       // Check if credentials have changed since session was created
       // This catches race conditions where session was created with stale credentials

@@ -47,6 +47,19 @@ function isStopCommand(body: string): boolean {
   return STOP_COMMANDS.has(body.trim().toLowerCase())
 }
 
+/**
+ * Bilingual rejection message sent when a DM is blocked by replyScope policy.
+ * Hardcoded because the backend does not have renderer i18n loaded.
+ */
+const DM_REJECTED_MESSAGE =
+  '⚠️ This bot only responds in group chats. Please contact the bot administrator for access.\n' +
+  '⚠️ 该机器人仅在群聊中响应，请联系管理员开通权限。'
+
+/** Bilingual rejection for group messages blocked by 'direct'-only scope. */
+const GROUP_REJECTED_MESSAGE =
+  '⚠️ This bot only responds to direct messages.\n' +
+  '⚠️ 该机器人仅在私聊中响应。'
+
 // ============================================
 // Helpers
 // ============================================
@@ -116,6 +129,30 @@ export async function dispatchInboundMessage(
   if (!app.spaceId) {
     console.warn(`${LOG_TAG} App "${app.spec.name}" (${app.id}) has no spaceId — cannot dispatch`)
     return
+  }
+
+  // ── Reply scope check (security gate) ─────────────────────────
+  // Default: 'all' for backward compatibility (existing instances without the
+  // field should not break). New instances default to 'group' in the UI.
+  const channelManager = getActiveImChannelManager()
+  const instanceCfg = channelManager?.getInstanceConfig(instanceId)
+  const replyScope = instanceCfg?.replyScope ?? 'all'
+
+  if (replyScope !== 'all' && replyScope !== msg.chatType) {
+    const rejectionMsg = msg.chatType === 'direct' ? DM_REJECTED_MESSAGE : GROUP_REJECTED_MESSAGE
+    console.log(
+      `${LOG_TAG} Blocked by replyScope: scope=${replyScope}, chatType=${msg.chatType}, ` +
+      `channel=${msg.channel}, chatId=${msg.chatId}, instanceId=${instanceId}`
+    )
+    reply.send(rejectionMsg).catch(() => {})
+    return
+  }
+
+  // ── Streaming disable check ───────────────────────────────────
+  // When streaming is disabled, strip the streaming handle so the runtime
+  // sends only the final reply — no thinking process or tool calls leak.
+  if (instanceCfg?.streaming === false && reply.streaming) {
+    reply = { ...reply, streaming: undefined }
   }
 
   // Build isolated session key

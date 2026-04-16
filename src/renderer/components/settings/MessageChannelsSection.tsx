@@ -310,6 +310,8 @@ interface InstanceCardProps {
   onChange: (instance: ImChannelInstanceConfig) => void
   onDelete: () => void
   onReconnect: () => void
+  /** Warning message when this instance's Bot ID conflicts with another instance */
+  duplicateWarning?: string
 }
 
 function InstanceCard({
@@ -321,6 +323,7 @@ function InstanceCard({
   onChange,
   onDelete,
   onReconnect,
+  duplicateWarning,
 }: InstanceCardProps) {
   const { t } = useTranslation()
   const isConnected = status?.connected ?? false
@@ -416,6 +419,21 @@ function InstanceCard({
     setDraft(null)
     onChange({ ...instance, appId })
   }
+
+  const handleStreamingChange = () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    setDraft(null)
+    onChange({ ...instance, streaming: instance.streaming === false ? undefined : false })
+  }
+
+  const handleReplyScopeChange = (scope: string) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    setDraft(null)
+    onChange({ ...instance, replyScope: scope as ImChannelInstanceConfig['replyScope'] })
+  }
+
+  const isStreamingEnabled = instance.streaming !== false
+  const replyScope = instance.replyScope ?? 'all'
 
   return (
     <div className="border border-border/60 rounded-lg overflow-hidden bg-card/50">
@@ -530,8 +548,13 @@ function InstanceCard({
                 value={(currentCfg.botId as string) ?? ''}
                 onChange={(e) => handleConfigChange('botId', e.target.value)}
                 placeholder="aib-xxx"
-                className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className={`w-full bg-muted border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary ${
+                  duplicateWarning ? 'border-amber-500' : 'border-border'
+                }`}
               />
+              {duplicateWarning && (
+                <p className="text-xs text-amber-500">{duplicateWarning}</p>
+              )}
             </div>
             <div className="space-y-1">
               <label className="text-sm text-muted-foreground">
@@ -579,6 +602,57 @@ function InstanceCard({
             <p className="text-xs text-muted-foreground">
               {t('All messages from this Bot will be handled by this digital human')}
             </p>
+          </div>
+
+          {/* Reply scope */}
+          <div className="space-y-1">
+            <label className="text-sm text-muted-foreground">{t('Reply Scope')}</label>
+            <select
+              value={replyScope}
+              onChange={(e) => handleReplyScopeChange(e.target.value)}
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
+            >
+              <option value="group">{t('Group chats only')}</option>
+              <option value="all">{t('All messages')}</option>
+              <option value="direct">{t('Direct messages only')}</option>
+            </select>
+            {replyScope === 'all' && (
+              <p className="text-xs text-amber-500">
+                {t('Caution: Enabling direct messages allows any user to interact with this digital human privately')}
+              </p>
+            )}
+            {replyScope === 'group' && (
+              <p className="text-xs text-muted-foreground">
+                {t('Private messages will be rejected for security')}
+              </p>
+            )}
+          </div>
+
+          {/* Streaming toggle */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <p className="text-sm text-muted-foreground">{t('Streaming')}</p>
+              <p className="text-xs text-muted-foreground/70">
+                {isStreamingEnabled
+                  ? t('Shows thinking process in real-time')
+                  : t('Only sends the final reply')}
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isStreamingEnabled}
+                onChange={handleStreamingChange}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
+                <div
+                  className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform ${
+                    isStreamingEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                  } mt-0.5`}
+                />
+              </div>
+            </label>
           </div>
 
           {/* Connection status */}
@@ -814,6 +888,25 @@ export function MessageChannelsSection({ config, setConfig }: MessageChannelsSec
     }
   }, [config, setConfig])
 
+  /**
+   * Check if a given instance has a duplicate Bot ID among other enabled instances.
+   * Returns a warning message if duplicate found, undefined otherwise.
+   */
+  const getDuplicateWarning = useCallback((instance: ImChannelInstanceConfig, allInstances: ImChannelInstanceConfig[]): string | undefined => {
+    const botId = (instance.config.botId as string)?.trim()
+    if (!botId || !instance.enabled) return undefined
+    const duplicate = allInstances.find(
+      other => other.id !== instance.id
+        && other.type === instance.type
+        && other.enabled
+        && (other.config.botId as string)?.trim() === botId
+    )
+    if (duplicate) {
+      return t('This Bot ID is already in use by another instance. Each Bot can only be bound to one digital human.')
+    }
+    return undefined
+  }, [t])
+
   const handleInstanceChange = useCallback((updated: ImChannelInstanceConfig) => {
     const newInstances = instances.map(i => i.id === updated.id ? updated : i)
     saveInstances(newInstances)
@@ -826,6 +919,7 @@ export function MessageChannelsSection({ config, setConfig }: MessageChannelsSec
       enabled: false,
       appId: '',
       config: { botId: '', secret: '', wsUrl: '' },
+      replyScope: 'group', // Secure default for new instances
     }
     const newInstances = [...instances, newInstance]
     saveInstances(newInstances)
@@ -976,6 +1070,7 @@ export function MessageChannelsSection({ config, setConfig }: MessageChannelsSec
                   onChange={handleInstanceChange}
                   onDelete={() => handleDeleteInstance(inst.id)}
                   onReconnect={() => handleReconnectInstance(inst.id)}
+                  duplicateWarning={getDuplicateWarning(inst, instances)}
                 />
               ))}
 

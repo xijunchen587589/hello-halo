@@ -47,6 +47,22 @@ export interface ImChannelInstanceConfig {
   appId: string
   /** Provider-specific configuration (e.g., botId, secret, wsUrl for WeCom) */
   config: Record<string, unknown>
+  /**
+   * Whether to enable streaming (thinking process + tool calls) for this instance.
+   * When false, only the final reply is sent — no intermediate progress events.
+   * Default: true (streaming enabled).
+   */
+  streaming?: boolean
+  /**
+   * Reply scope — controls which chat types this instance responds to.
+   *   'all'    — respond to both group and direct messages
+   *   'group'  — only respond in group chats (secure)
+   *   'direct' — only respond to direct messages
+   *
+   * Runtime default (when undefined): 'all' for backward compatibility.
+   * New instances created via UI default to 'group' for security.
+   */
+  replyScope?: 'all' | 'group' | 'direct'
 }
 
 // ============================================
