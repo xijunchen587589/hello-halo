@@ -38,6 +38,7 @@ import { emitAgentEvent } from '../../services/agent/events'
 import { resolveCredentialsForSdk, buildBaseSdkOptions } from '../../services/agent/sdk-config'
 import { createCanUseTool } from '../../services/agent/permission-handler'
 import { getImPermissionContext } from './im-permission-registry'
+import type { GuestPolicy } from '../../../shared/types/im-channel'
 import { createAIBrowserMcpServer, createScopedBrowserContext } from '../../services/ai-browser'
 import type { BrowserContext } from '../../services/ai-browser/context'
 import { processStream } from '../../services/agent/stream-processor'
@@ -109,6 +110,75 @@ const ALL_BUILTIN_TOOLS = [
   'WebSearch',
   'Write',
 ]
+
+/**
+ * Halo MCP servers that are always safe for guests (read-only, no side effects).
+ * These are injected into guest sessions regardless of GuestPolicy.
+ */
+const GUEST_SAFE_MCP = new Set(['web-search', 'halo-report', 'halo-memory'])
+
+/**
+ * Halo MCP servers controlled by GuestPolicy toggle switches.
+ * Maps MCP server name → GuestPolicy boolean field name.
+ * If the toggle is not set (undefined/false), the MCP is not injected for guests.
+ */
+const GUEST_TOGGLEABLE_MCP: Record<string, keyof GuestPolicy> = {
+  'ai-browser':   'allowAiBrowser',
+  'halo-email':   'allowEmail',
+  'halo-notify':  'allowNotify',
+  'halo-apps':    'allowApps',
+  'im-file-send': 'allowFileSend',
+}
+
+/**
+ * Build a filtered MCP servers map for guest sessions.
+ *
+ * Three-tier filtering:
+ *   1. User-installed MCPs (from db) → only if listed in allowedUserMcp whitelist
+ *   2. Halo safe MCPs → always injected (web-search, halo-report, halo-memory)
+ *   3. Halo toggleable MCPs → injected only if corresponding GuestPolicy flag is true
+ *   4. Unknown MCPs (future additions) → NOT injected (conservative strategy)
+ *
+ * @param allMcpServers - Complete MCP servers map (already built for owner session)
+ * @param dbMcpServers - User-installed MCP servers from database (null if none)
+ * @param policy - Guest policy from channel instance config
+ */
+function buildGuestMcpServers(
+  allMcpServers: Record<string, any>,
+  dbMcpServers: Record<string, unknown> | null,
+  policy?: GuestPolicy
+): Record<string, any> {
+  const result: Record<string, any> = {}
+
+  for (const [name, server] of Object.entries(allMcpServers)) {
+    // User-installed MCP → whitelist control
+    if (dbMcpServers && name in dbMcpServers) {
+      if (policy?.allowedUserMcp?.includes(name)) {
+        result[name] = server
+      }
+      continue
+    }
+
+    // Halo safe MCP → always inject
+    if (GUEST_SAFE_MCP.has(name)) {
+      result[name] = server
+      continue
+    }
+
+    // Halo toggleable MCP → check policy switch
+    const toggleKey = GUEST_TOGGLEABLE_MCP[name]
+    if (toggleKey) {
+      if (policy?.[toggleKey]) {
+        result[name] = server
+      }
+      continue
+    }
+
+    // Unknown MCP (future additions) → NOT injected (conservative)
+  }
+
+  return result
+}
 
 // ============================================
 // Types
@@ -253,6 +323,10 @@ export async function sendAppChatMessage(
   // ── Merge config_schema defaults into userConfig ────
   const mergedConfig = mergeConfigWithDefaults(app.userConfig, app.spec.config_schema)
 
+  // Read IM permission context early — needed for both system prompt (ownerNames)
+  // and SDK options (guest tool restrictions). null for native Halo chat.
+  const permCtx = getImPermissionContext(conversationId)
+
   const systemPrompt = buildAppChatSystemPrompt({
     appSpec: app.spec,
     memoryInstructions,
@@ -261,6 +335,7 @@ export async function sendAppChatMessage(
     workDir,
     modelInfo: resolvedCreds.displayModel,
     senderIdentity,
+    ownerNames: permCtx?.ownerNames,
   })
 
   // ── 4. Build MCP servers ─────────────────────────────
@@ -349,26 +424,32 @@ export async function sendAppChatMessage(
 
   // ── IM guest permission control ────────────────────────────────
   // For non-owner senders in IM sessions, restrict available tools via SDK options.
-  // Two layers, split by tool prefix:
+  // Two layers:
   //   1. disallowedTools (built-in) — blacklist computed by inverting the guest's whitelist.
   //      ALL_BUILTIN_TOOLS minus guest's allowed tools = disallowed. The SDK removes
   //      these from the model's visible tool pool entirely (API-level removal).
-  //   2. allowedTools (MCP) — permission pre-approval for MCP tools. Non-interactive
-  //      sessions auto-deny any MCP tool not in this list (whitelist semantics).
+  //   2. MCP injection control — filter which MCP servers are injected for guests.
+  //      Not injected = model can't see the tool at all. Replaces old allowedTools MCP approach.
   // Owner sessions are unaffected (bypassPermissions, full tool access).
-  const permCtx = getImPermissionContext(conversationId)
+  // permCtx was read earlier (before system prompt build) for ownerNames injection.
   if (permCtx && !permCtx.isOwner) {
     const guestAllowed = permCtx.guestPolicy?.allowedTools ?? []
-    // Split into built-in vs MCP
+    // Split: built-in tools only (mcp__ entries are legacy, ignored here)
     const builtinAllowedSet = new Set(guestAllowed.filter(t => !t.startsWith('mcp__')))
-    const mcpAllowed = guestAllowed.filter(t => t.startsWith('mcp__'))
     // Invert whitelist → blacklist for built-in tools
     const disallowed = ALL_BUILTIN_TOOLS.filter(t => !builtinAllowedSet.has(t))
     sdkOptions.disallowedTools = disallowed
-    sdkOptions.allowedTools = mcpAllowed
+    sdkOptions.allowedTools = []
+    if (sdkOptions.extraArgs) {
+      delete sdkOptions.extraArgs['dangerously-skip-permissions']
+    }
+    sdkOptions.permissionMode = 'default'
+    // MCP injection control: only inject servers the guest is allowed to see
+    sdkOptions.mcpServers = buildGuestMcpServers(mcpServers, dbMcpServers, permCtx.guestPolicy)
     console.log(
       `[AppChat][${appId}] Guest session: sender=${permCtx.senderId}, ` +
-      `allowed=[${Array.from(builtinAllowedSet)}], disallowed=${disallowed.length} tools, mcpAllowed=[${mcpAllowed}]`
+      `allowed=[${Array.from(builtinAllowedSet)}], disallowed=${disallowed.length} tools, ` +
+      `mcpServers=[${Object.keys(sdkOptions.mcpServers).join(', ')}]`
     )
   }
 

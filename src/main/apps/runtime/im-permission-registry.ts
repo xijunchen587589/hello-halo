@@ -44,6 +44,8 @@ export interface ImPermissionContext {
   isOwner: boolean
   /** Resolved guest policy (from channel instance config). Only meaningful when !isOwner. */
   guestPolicy?: GuestPolicy
+  /** Owner user IDs for security prompt injection. Present when owners are configured. */
+  ownerNames?: string[]
 }
 
 // ============================================

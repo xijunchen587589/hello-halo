@@ -685,9 +685,8 @@ function InstanceCard({
 // ============================================
 
 /**
- * Safe built-in tools that can be granted to guests.
- * Dangerous tools (Bash, Write, Edit, NotebookEdit) are intentionally excluded —
- * they are never selectable in the UI and invisible to guest sessions at the SDK level.
+ * Built-in tools that can be granted to guests.
+ * All tools are off by default — owners choose which to enable.
  */
 const GUEST_SAFE_BUILTIN_TOOLS = [
   { name: 'Read', group: 'file' },
@@ -697,6 +696,10 @@ const GUEST_SAFE_BUILTIN_TOOLS = [
   { name: 'WebSearch', group: 'network' },
   { name: 'Agent', group: 'other' },
   { name: 'TodoWrite', group: 'other' },
+  { name: 'Bash', group: 'advanced' },
+  { name: 'Write', group: 'advanced' },
+  { name: 'Edit', group: 'advanced' },
+  { name: 'NotebookEdit', group: 'advanced' },
 ] as const
 
 /** Group labels for tool tags */
@@ -704,7 +707,20 @@ const TOOL_GROUP_LABELS: Record<string, string> = {
   file: 'File Read',
   network: 'Network',
   other: 'Other',
+  advanced: 'Advanced',
 }
+
+/**
+ * Halo MCP toggle definitions for the guest policy UI.
+ * Replaces the old free-text mcp__ input.
+ */
+const HALO_MCP_TOGGLES: { key: keyof GuestPolicy; labelKey: string }[] = [
+  { key: 'allowAiBrowser', labelKey: 'AI Browser' },
+  { key: 'allowEmail',     labelKey: 'Email' },
+  { key: 'allowNotify',    labelKey: 'Notifications' },
+  { key: 'allowApps',      labelKey: 'Digital Humans' },
+  { key: 'allowFileSend',  labelKey: 'File Send' },
+]
 
 interface PermissionSectionProps {
   instance: ImChannelInstanceConfig
@@ -722,18 +738,19 @@ function PermissionSection({ instance, onChange, onDebouncedChange }: Permission
   const guestPolicy = instance.guestPolicy
   const guestAccessEnabled = hasOwners && guestPolicy !== undefined
 
+  // Load installed MCP apps for the user MCP whitelist
+  const { apps } = useAppsStore()
+  const mcpApps = apps.filter(a => a.spec.type === 'mcp')
+
   // Local draft state for text fields (avoids cursor jumping during debounce)
   const [ownersDraft, setOwnersDraft] = useState<string | null>(null)
-  const [mcpDraft, setMcpDraft] = useState<string | null>(null)
 
-  // Derive display values (draft takes priority over stored value)
+  // Derive display values
   const currentAllowedTools = guestPolicy?.allowedTools ?? []
   const builtinNames = new Set(GUEST_SAFE_BUILTIN_TOOLS.map(t => t.name))
   const selectedBuiltinTools = new Set(currentAllowedTools.filter(t => builtinNames.has(t)))
-  const storedMcpText = currentAllowedTools.filter(t => t.startsWith('mcp__')).join(', ')
 
   const ownersDisplay = ownersDraft ?? owners.join(', ')
-  const mcpDisplay = mcpDraft ?? storedMcpText
 
   // ── Handlers ──
 
@@ -754,7 +771,6 @@ function PermissionSection({ instance, onChange, onDebouncedChange }: Permission
   }
 
   const handleOwnersBlur = () => {
-    // Clear draft on blur — next render picks up the committed value
     setOwnersDraft(null)
   }
 
@@ -766,14 +782,6 @@ function PermissionSection({ instance, onChange, onDebouncedChange }: Permission
     }
   }
 
-  const buildAllowedTools = (builtinSet: Set<string>, mcpText: string): string[] => {
-    const mcpParsed = mcpText
-      .split(/[,\n]/)
-      .map(s => s.trim())
-      .filter(Boolean)
-    return [...Array.from(builtinSet), ...mcpParsed]
-  }
-
   const handleBuiltinToolToggle = (toolName: string) => {
     const newSet = new Set(selectedBuiltinTools)
     if (newSet.has(toolName)) {
@@ -781,19 +789,23 @@ function PermissionSection({ instance, onChange, onDebouncedChange }: Permission
     } else {
       newSet.add(toolName)
     }
-    const merged = buildAllowedTools(newSet, mcpDraft ?? storedMcpText)
-    // Toggle is immediate
-    onChange({ ...instance, guestPolicy: { ...guestPolicy, allowedTools: merged } })
+    onChange({ ...instance, guestPolicy: { ...guestPolicy, allowedTools: Array.from(newSet) } })
   }
 
-  const handleMcpToolsChange = (value: string) => {
-    setMcpDraft(value)
-    const merged = buildAllowedTools(selectedBuiltinTools, value)
-    onDebouncedChange({ ...instance, guestPolicy: { ...guestPolicy, allowedTools: merged } })
+  const handleMcpToggle = (key: keyof GuestPolicy) => {
+    const current = guestPolicy?.[key] as boolean | undefined
+    onChange({ ...instance, guestPolicy: { ...guestPolicy, [key]: !current } })
   }
 
-  const handleMcpBlur = () => {
-    setMcpDraft(null)
+  const handleUserMcpToggle = (specId: string) => {
+    const current = guestPolicy?.allowedUserMcp ?? []
+    const updated = current.includes(specId)
+      ? current.filter(s => s !== specId)
+      : [...current, specId]
+    onChange({
+      ...instance,
+      guestPolicy: { ...guestPolicy, allowedUserMcp: updated.length > 0 ? updated : undefined },
+    })
   }
 
   // ── Render ──
@@ -884,7 +896,7 @@ function PermissionSection({ instance, onChange, onDebouncedChange }: Permission
                     {t('Allowed Tools')}
                   </label>
 
-                  {/* Built-in tool tags grouped */}
+                  {/* Built-in tool tags grouped — unchanged from original */}
                   {Object.entries(TOOL_GROUP_LABELS).map(([group, label]) => {
                     const tools = GUEST_SAFE_BUILTIN_TOOLS.filter(t => t.group === group)
                     if (tools.length === 0) return null
@@ -914,23 +926,70 @@ function PermissionSection({ instance, onChange, onDebouncedChange }: Permission
                     )
                   })}
 
-                  <p className="text-xs text-muted-foreground/60 mt-1">
-                    {t('Bash, Write, Edit are always restricted for guests.')}
-                  </p>
+                  {/* MCP capabilities — replaces old free-text mcp__ input */}
+                  <div className="mt-2 pt-2 border-t border-border/40 space-y-3">
+                    {/* Halo built-in MCP toggles */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground/70">
+                        {t('Halo Capabilities')}
+                      </label>
+                      {HALO_MCP_TOGGLES.map(({ key, labelKey }) => {
+                        const isOn = Boolean(guestPolicy?.[key])
+                        return (
+                          <div key={key} className="flex items-center justify-between">
+                            <p className="text-sm text-muted-foreground">{t(labelKey)}</p>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={isOn}
+                                onChange={() => handleMcpToggle(key)}
+                                className="sr-only peer"
+                              />
+                              <div className="w-9 h-5 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
+                                <div
+                                  className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${
+                                    isOn ? 'translate-x-4' : 'translate-x-0.5'
+                                  } mt-0.5`}
+                                />
+                              </div>
+                            </label>
+                          </div>
+                        )
+                      })}
+                    </div>
 
-                  {/* MCP tools text input */}
-                  <div className="space-y-1 mt-2">
-                    <label className="text-xs text-muted-foreground/70">
-                      {t('MCP Tools (advanced)')}
-                    </label>
-                    <textarea
-                      value={mcpDisplay}
-                      onChange={(e) => handleMcpToolsChange(e.target.value)}
-                      onBlur={handleMcpBlur}
-                      placeholder={t('e.g. mcp__web-search__web_search')}
-                      rows={1}
-                      className="w-full bg-muted border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary resize-none font-mono"
-                    />
+                    {/* User-installed MCP servers (only shown when any are installed) */}
+                    {mcpApps.length > 0 && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground/70">
+                        {t('Installed MCP Servers')}
+                      </label>
+                      {mcpApps.map(app => {
+                      const specId = app.specId
+                      const isAllowed = guestPolicy?.allowedUserMcp?.includes(specId) ?? false
+                      return (
+                        <div key={specId} className="flex items-center justify-between">
+                          <p className="text-sm text-muted-foreground">{app.spec.name}</p>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isAllowed}
+                              onChange={() => handleUserMcpToggle(specId)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
+                              <div
+                                className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ${
+                                  isAllowed ? 'translate-x-4' : 'translate-x-0.5'
+                                } mt-0.5`}
+                              />
+                            </div>
+                          </label>
+                        </div>
+                      )
+                    })}
+                  </div>
+                    )}
                   </div>
                 </div>
               )}

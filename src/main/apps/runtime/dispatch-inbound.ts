@@ -256,6 +256,7 @@ export async function dispatchInboundMessage(
     senderName,
     isOwner,
     guestPolicy: hasOwnerRestriction ? instanceCfg?.guestPolicy : undefined,
+    ownerNames: hasOwnerRestriction ? owners! : undefined,
   })
 
   // Inject file attachment context so the AI can access them via the Read tool.

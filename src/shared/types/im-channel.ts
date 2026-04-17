@@ -37,25 +37,41 @@ import type { InboundMessage, ReplyHandle } from './inbound-message'
  * When `allowedTools` is an empty array, no tools are allowed.
  *
  * At runtime, this list is split by prefix:
- *   - Built-in tools (no prefix) → SDK `tools` option (API-level tool visibility)
- *   - MCP tools (`mcp__*`)       → SDK `allowedTools` (permission pre-approval;
- *                                   non-interactive sessions auto-deny the rest)
+ *   - Built-in tools (no prefix) → SDK `disallowedTools` (inverted whitelist)
+ *   - MCP tools (`mcp__*`)       → legacy; replaced by injection-control fields below
  *
  * Used by ImChannelInstanceConfig (persisted) and ImPermissionContext (runtime).
  */
 export interface GuestPolicy {
   /**
-   * Tool names the guest is allowed to use (white-list).
-   * Includes both SDK built-in tools (Read, Grep, Glob, etc.)
-   * and MCP tool names (prefixed with `mcp__<server>__<tool>`).
-   *
-   * Only safe built-in tools should be listed here — dangerous tools
-   * (Bash, Write, Edit, NotebookEdit) are excluded from the UI selector.
+   * Built-in tool names the guest is allowed to use (white-list).
+   * All built-in tools are selectable in the UI (advanced tools like
+   * Bash, Write, Edit, NotebookEdit are in a separate group). All off by default.
    *
    * undefined = all tools allowed (no tool restriction)
    * []        = no tools allowed
    */
   allowedTools?: string[]
+
+  // ── Halo MCP injection control (new — replaces mcp__ entries in allowedTools) ──
+  // Conservative strategy: not configured = not injected for guests.
+
+  /** Allow guest to use AI browser */
+  allowAiBrowser?: boolean
+  /** Allow guest to send email on behalf of owner */
+  allowEmail?: boolean
+  /** Allow guest to send notifications */
+  allowNotify?: boolean
+  /** Allow guest to manage digital humans */
+  allowApps?: boolean
+  /** Allow guest to send files via IM */
+  allowFileSend?: boolean
+
+  /**
+   * User-installed MCP server names (specId) that guests are allowed to use.
+   * Only servers in this list are injected into guest sessions.
+   */
+  allowedUserMcp?: string[]
 }
 
 // ============================================
