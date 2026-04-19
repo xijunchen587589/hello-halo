@@ -38,6 +38,13 @@ export interface ModelCapabilitiesPreset {
   version: number
   /** ISO date of when this preset was last updated */
   updatedAt: string
+  /**
+   * Prefix-based fallback patterns.
+   * When no exact match exists in `models`, the service tries the longest
+   * matching prefix from this map. Useful for model families where all
+   * variants share the same capabilities (e.g. all Claude Opus → 200K).
+   */
+  patterns?: Record<string, ModelCapability>
   /** Map of model ID → capability data */
   models: Record<string, ModelCapability>
 }

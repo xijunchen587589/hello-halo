@@ -24,7 +24,7 @@ const DEFAULT_CAPABILITY: ModelCapability = {
   displayName: '',
   provider: '',
   contextWindow: 128_000,
-  maxOutputTokens: 8_192,
+  maxOutputTokens: 16_384,
   vision: false,
   thinking: false
 }
@@ -43,8 +43,9 @@ type ActiveTab = 'visual' | 'json'
 export function ModelConfigPanel({ modelId, overrides, onChange }: ModelConfigPanelProps) {
   const { t } = useTranslation()
 
-  // ── Collapse state ─────────────────────────────────────────────────────
+  // ── Collapse state (auto-expand when no preset found) ──────────────────
   const [isOpen, setIsOpen] = useState(false)
+  const [autoExpandedForModel, setAutoExpandedForModel] = useState<string>('')
 
   // ── Preset data ────────────────────────────────────────────────────────
   const [preset, setPreset] = useState<ModelCapability | null>(null)
@@ -90,6 +91,15 @@ export function ModelConfigPanel({ modelId, overrides, onChange }: ModelConfigPa
 
     return () => { cancelled = true }
   }, [modelId])
+
+  // ── Auto-expand when no preset matched (so user sees fallback values) ───
+  useEffect(() => {
+    if (loadingPreset || !modelId) return
+    if (preset === null && autoExpandedForModel !== modelId) {
+      setIsOpen(true)
+      setAutoExpandedForModel(modelId)
+    }
+  }, [loadingPreset, preset, modelId, autoExpandedForModel])
 
   // ── Sync JSON editor when switching to the JSON tab or when modelId changes ──
   useEffect(() => {
