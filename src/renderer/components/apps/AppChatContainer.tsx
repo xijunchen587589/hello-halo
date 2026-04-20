@@ -38,13 +38,15 @@ export function AppChatContainer({ appId, spaceId }: AppChatContainerProps) {
     imPanelOpen,
     selectedImSession,
     toggleImPanel,
+    openImPanel,
     selectImSession,
   } = useAppsPageStore()
 
-  // Reset IM session selection when switching apps
+  // Reset IM session selection and open panel when switching apps
   useEffect(() => {
     selectImSession(null)
-  }, [appId, selectImSession])
+    openImPanel()
+  }, [appId, selectImSession, openImPanel])
 
   // Check if any IM session is actively generating (for badge indicator)
   const hasActiveImSession = useImActiveIndicator(appId)

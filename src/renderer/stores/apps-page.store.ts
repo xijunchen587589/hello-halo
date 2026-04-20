@@ -86,6 +86,7 @@ interface AppsPageState {
   setInitialAppId: (appId: string | null) => void
   setShowInstallDialog: (show: boolean) => void
   toggleImPanel: () => void
+  openImPanel: () => void
   selectImSession: (session: ImSessionRecord | null) => void
   fetchImSessions: (appId: string) => Promise<void>
   reset: () => void
@@ -167,6 +168,8 @@ export const useAppsPageStore = create<AppsPageState>((set, get) => ({
   setShowInstallDialog: (show) => set({ showInstallDialog: show }),
 
   toggleImPanel: () => set(s => ({ imPanelOpen: !s.imPanelOpen })),
+
+  openImPanel: () => set({ imPanelOpen: true }),
 
   selectImSession: (session) => set({ selectedImSession: session }),
 
