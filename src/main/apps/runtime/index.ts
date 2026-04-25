@@ -76,7 +76,6 @@ export type {
 // Re-export error types
 export {
   AppNotRunnableError,
-  NoSubscriptionsError,
   ConcurrencyLimitError,
   EscalationNotFoundError,
   RunExecutionError,

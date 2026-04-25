@@ -34,6 +34,12 @@ import { CreateSpaceForm } from '../space/CreateSpaceForm'
 import type { AppSpec, SkillSpec } from '../../../shared/apps/spec-types'
 import { AppModelSelector } from './AppModelSelector'
 import { SystemPromptEditor } from './SystemPromptEditor'
+import { Switch } from '../ui/Switch'
+import { SchedulePicker } from './SchedulePicker'
+import {
+  isValidPreset,
+  type ScheduleValue,
+} from './schedule-utils'
 import {
   parseDigitalHumanZip,
   parseDigitalHumanFolder,
@@ -51,18 +57,6 @@ const CodeMirrorEditor = lazy(() =>
 // ============================================
 
 type InstallMode = 'visual' | 'yaml' | 'import'
-
-const FREQUENCY_PRESETS = [
-  { label: '1m', value: '1m' },
-  { label: '5m', value: '5m' },
-  { label: '15m', value: '15m' },
-  { label: '30m', value: '30m' },
-  { label: '1h', value: '1h' },
-  { label: '2h', value: '2h' },
-  { label: '6h', value: '6h' },
-  { label: '12h', value: '12h' },
-  { label: '1d', value: '1d' },
-]
 
 const DEFAULT_YAML_TEMPLATE = `\
 # ============================================
@@ -169,6 +163,8 @@ interface VisualFormState {
   author: string
   systemPrompt: string
   frequency: string
+  scheduleEnabled: boolean
+  scheduleValue: ScheduleValue
 }
 
 const INITIAL_FORM: VisualFormState = {
@@ -177,10 +173,12 @@ const INITIAL_FORM: VisualFormState = {
   author: '',
   systemPrompt: '',
   frequency: '1h',
+  scheduleEnabled: true,
+  scheduleValue: { type: 'every', every: '1h' },
 }
 
 function buildSpecFromForm(form: VisualFormState): AppSpec {
-  return {
+  const spec: AppSpec = {
     spec_version: '1.0',
     name: form.name.trim(),
     version: '1.0',
@@ -188,32 +186,52 @@ function buildSpecFromForm(form: VisualFormState): AppSpec {
     description: form.description.trim(),
     type: 'automation',
     system_prompt: form.systemPrompt.trim(),
-    subscriptions: [
-      {
-        source: {
-          type: 'schedule' as const,
-          config: { every: form.frequency },
-        },
-      },
-    ],
   }
+
+  if (form.scheduleEnabled) {
+    const sv = form.scheduleValue
+    const config = sv.type === 'every'
+      ? { every: sv.every }
+      : { cron: sv.cron }
+    spec.subscriptions = [
+      { source: { type: 'schedule' as const, config } },
+    ]
+  }
+
+  return spec
 }
 
-function extractFrequency(parsed: Record<string, unknown>): string | null {
+function extractFormFromParsed(parsed: Record<string, unknown>): {
+  frequency: string
+  scheduleEnabled: boolean
+  scheduleValue: ScheduleValue
+} {
   try {
     const subs = parsed.subscriptions as Array<Record<string, unknown>> | undefined
-    if (!subs || subs.length === 0) return null
+    if (!subs || subs.length === 0) {
+      return { frequency: '1h', scheduleEnabled: false, scheduleValue: { type: 'every', every: '1h' } }
+    }
     const source = subs[0]?.source as Record<string, unknown> | undefined
-    if (!source) return null
+    if (!source || source.type !== 'schedule') {
+      return { frequency: '1h', scheduleEnabled: false, scheduleValue: { type: 'every', every: '1h' } }
+    }
     const config = source.config as Record<string, unknown> | undefined
-    return (config?.every as string) ?? null
+    if (config?.cron) {
+      return {
+        frequency: '1h',
+        scheduleEnabled: true,
+        scheduleValue: { type: 'cron', cron: config.cron as string },
+      }
+    }
+    const every = (config?.every as string) ?? '1h'
+    return {
+      frequency: isValidPreset(every) ? every : '1h',
+      scheduleEnabled: true,
+      scheduleValue: { type: 'every', every },
+    }
   } catch {
-    return null
+    return { frequency: '1h', scheduleEnabled: true, scheduleValue: { type: 'every', every: '1h' } }
   }
-}
-
-function isValidPreset(freq: string): boolean {
-  return FREQUENCY_PRESETS.some(p => p.value === freq)
 }
 
 // ============================================
@@ -388,13 +406,15 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
     try {
       const parsed = parseYaml(yamlContent) as Record<string, unknown> | null
       if (parsed && typeof parsed === 'object') {
-        const freq = extractFrequency(parsed)
+        const { frequency, scheduleEnabled, scheduleValue } = extractFormFromParsed(parsed)
         setForm({
           name: String(parsed.name ?? ''),
           description: String(parsed.description ?? ''),
           author: String(parsed.author ?? ''),
           systemPrompt: String(parsed.system_prompt ?? ''),
-          frequency: (freq && isValidPreset(freq)) ? freq : '1h',
+          frequency,
+          scheduleEnabled,
+          scheduleValue,
         })
       }
     } catch {
@@ -802,28 +822,29 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
               </div>
 
               <div className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {t('Schedule')}
-                </h3>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground">{t('Run every')}</span>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t('Schedule')}
+                  </h3>
+                  <Switch
+                    checked={form.scheduleEnabled}
+                    onCheckedChange={checked => {
+                      setForm(prev => ({ ...prev, scheduleEnabled: checked }))
+                      setError(null)
+                    }}
+                    size="sm"
+                  />
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {FREQUENCY_PRESETS.map(preset => (
-                    <button
-                      key={preset.value}
-                      type="button"
-                      onClick={() => updateField('frequency', preset.value)}
-                      className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                        form.frequency === preset.value
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80'
-                      }`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
+                {form.scheduleEnabled ? (
+                  <SchedulePicker
+                    value={form.scheduleValue}
+                    onChange={sv => setForm(prev => ({ ...prev, scheduleValue: sv }))}
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {t('No scheduled trigger. This app can be triggered manually or via IM bot.')}
+                  </p>
+                )}
               </div>
             </>
           ) : mode === 'yaml' ? (

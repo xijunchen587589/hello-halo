@@ -22,19 +22,6 @@ export class AppNotRunnableError extends Error {
 }
 
 /**
- * Thrown when attempting to activate an App that has no subscriptions.
- */
-export class NoSubscriptionsError extends Error {
-  readonly name = 'NoSubscriptionsError'
-  readonly appId: string
-
-  constructor(appId: string) {
-    super(`App ${appId} has no subscriptions to activate`)
-    this.appId = appId
-  }
-}
-
-/**
  * Thrown when a trigger is rejected due to a concurrency constraint.
  *
  * Two cases:

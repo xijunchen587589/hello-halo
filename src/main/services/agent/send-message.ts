@@ -133,6 +133,7 @@ export async function sendMessage(
       configDirMode: config.agent?.configDirMode,
       customConfigDir: config.agent?.customConfigDir,
       enableTeams: config.agent?.enableTeams,
+      disabledTools: config.agent?.disabledTools,
     })
 
     // Apply dynamic configurations (AI Browser, Thinking mode)

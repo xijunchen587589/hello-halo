@@ -38,7 +38,7 @@ derived via `z.infer<>`.
 
 | `type` value | Description | Requires `system_prompt` | Requires `mcp_server` | Can have `subscriptions` |
 |---|---|---|---|---|
-| `automation` | A digital human that runs automatically in the background | ✅ | ✗ | ✅ (at least 1 required) |
+| `automation` | A digital human that runs automatically in the background | ✅ | ✗ | ✅ (optional — apps with no subscriptions are IM/manual-only) |
 | `skill` | A capability invoked on demand by the user | ✅ | ✗ | ✗ |
 | `mcp` | Wraps an MCP server | ✗ | ✅ | ✗ |
 | `extension` | Extension / theme | ✗ | ✗ | ✗ |
@@ -69,7 +69,7 @@ system_prompt: |           # required for automation/skill
 | `type` | `"automation" \| "skill" \| "mcp" \| "extension"` | **Yes** | Determines runtime behavior; see table above. |
 | `icon` | `string` | No | Icon identifier (e.g. `"shopping"`, `"news"`) or an image URL. |
 | `system_prompt` | `string` | **Required** when `type=automation` or `type=skill` | The core instruction for the AI — the "soul" of the digital human. Injected into the system prompt on every run. |
-| `subscriptions` | `SubscriptionDef[]` | Recommended when `type=automation` | List of trigger sources; see Section 3. Allowed only for `automation`. |
+| `subscriptions` | `SubscriptionDef[]` | Optional when `type=automation` | List of trigger sources; see Section 3. Allowed only for `automation`. When omitted, the app operates in IM/manual-trigger-only mode. |
 | `config_schema` | `InputDef[]` | No | Configuration fields presented to the user at install time; see Section 4. |
 | `requires` | `Requires` | No | Declares MCP and Skill dependencies; see Section 5. |
 | `filters` | `FilterRule[]` | No | Pre-execution event filter rules; see Section 6. |

@@ -126,8 +126,14 @@ export interface AgentConfig {
   configDirMode?: 'halo' | 'cc' | 'custom';  // Claude CLI config directory mode
   customConfigDir?: string;  // Custom config dir path (when configDirMode === 'custom')
   enableTeams?: boolean;    // Enable Agent Teams (multi-agent collaboration)
+  disabledTools?: string[]; // Tools disabled by user (Extended Capabilities toggles)
   logHttpRequests?: boolean; // [Developer] Log raw outbound HTTP requests to http-raw.log
 }
+
+// Schedule value type (used by apps.store + schedule components)
+export type ScheduleValue =
+  | { type: 'every'; every: string }
+  | { type: 'cron'; cron: string }
 
 // CLI config types (used by CLIConfigSection)
 export type ConfigDirMode = 'halo' | 'cc' | 'custom';

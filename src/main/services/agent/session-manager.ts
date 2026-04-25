@@ -666,6 +666,7 @@ export async function ensureSessionWarm(
     configDirMode: config.agent?.configDirMode,
     customConfigDir: config.agent?.customConfigDir,
     enableTeams: config.agent?.enableTeams,
+    disabledTools: config.agent?.disabledTools,
   })
 
   try {

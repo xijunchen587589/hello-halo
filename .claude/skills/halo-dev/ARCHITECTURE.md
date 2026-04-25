@@ -477,11 +477,19 @@ Notes:
 
 ## 16) Startup / Shutdown Lifecycle
 
+### Three-tier startup architecture
+
+| Tier | Phase | Failure impact | Typical tasks |
+|------|-------|----------------|---------------|
+| **Tier 1 Essential** | Blocks first screen | Fatal | IPC handler registration, window creation |
+| **Tier 2 Extended** | After first screen, non-blocking | Feature unavailable | IM connections, scheduler, app activation |
+| **Tier 3 Idle** | After Tier 2 completes | Invisible to user | Default app seed, analytics snapshot |
+
 ### Startup phases
 
 1. `app.whenReady()` creates window and initializes core app directories.
-2. `initializeEssentialServices()` runs synchronously for first-screen features.
-3. After `ready-to-show`, `initializeExtendedServices()` registers deferred handlers/services.
+2. `initializeEssentialServices()` runs synchronously for first-screen features. **(Tier 1)**
+3. After `ready-to-show`, `initializeExtendedServices()` registers deferred handlers/services. **(Tier 2)**
 4. `initializeExtendedServices()` triggers `initPlatformAndApps()` asynchronously:
    - Phase 0: `initStore()`
    - Phase 1 (parallel): `initScheduler({ db })`, `initEventBus()`, `initMemory()`
@@ -489,6 +497,10 @@ Notes:
    - Phase 2: `initAppManager({ db })`
    - Phase 3: `initAppRuntime({ db, appManager, scheduler, eventBus, memory, background })`
    - Start loops only after wiring: `scheduler.start()`, `eventBus.start()`
+5. After `scheduler.start()`, idle tasks are registered and drained sequentially. **(Tier 3)**
+   - Each task yields to the event loop via `setImmediate` between executions.
+   - Failures are logged as warnings and never interrupt the queue or the process.
+   - Implemented in `src/main/bootstrap/idle-queue.ts` (`registerIdleTask`, `startIdleDrain`).
 
 ### Shutdown behavior
 

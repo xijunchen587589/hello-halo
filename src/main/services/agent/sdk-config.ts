@@ -15,6 +15,7 @@ import type { ApiCredentials } from './types'
 import { inferOpenAIWireApi, credentialsToBackendConfig } from './helpers'
 import { buildSystemPrompt, DEFAULT_ALLOWED_TOOLS } from './system-prompt'
 import { createCanUseTool } from './permission-handler'
+import { DEFAULT_DISABLED_TOOLS, TEAM_TOOLS } from '../../../shared/constants/disabled-tools'
 
 // ============================================
 // Configuration
@@ -92,6 +93,35 @@ export interface BaseSdkOptionsParams {
   customConfigDir?: string
   /** Enable Agent Teams (multi-agent collaboration) */
   enableTeams?: boolean
+  /** Tools disabled by user (Extended Capabilities toggles) */
+  disabledTools?: string[]
+}
+
+// ============================================
+// Tool Filtering
+// ============================================
+
+/**
+ * Build the final disallowed tools list from user config + implicit rules.
+ * When userDisabledTools is undefined (not yet configured), applies defaults.
+ * Deduplicates to avoid passing the same tool name twice.
+ */
+function buildDisallowedTools(
+  userDisabledTools?: string[],
+  enableTeams?: boolean
+): string[] {
+  const set = new Set<string>()
+
+  // User-configured disabled tools, or defaults for unconfigured users
+  const effectiveDisabled = userDisabledTools ?? [...DEFAULT_DISABLED_TOOLS]
+  for (const tool of effectiveDisabled) set.add(tool)
+
+  // When Agent Teams is off, also disable team-related tools
+  if (!enableTeams) {
+    for (const tool of TEAM_TOOLS) set.add(tool)
+  }
+
+  return Array.from(set)
 }
 
 // ============================================
@@ -456,6 +486,13 @@ export function buildBaseSdkOptions(params: BaseSdkOptionsParams): Record<string
     // Sandbox config is written to CLAUDE_CONFIG_DIR/settings.json (see ensureSandboxSettings)
     // instead of passing via SDK's sandbox option → --settings flag → tmpdir temp file.
     // This avoids CLI creating a temp file and chokidar watching the entire tmpdir.
+  }
+
+  // Build disallowed tools list from user config + implicit rules
+  const disallowedTools = buildDisallowedTools(params.disabledTools, params.enableTeams)
+  if (disallowedTools.length > 0) {
+    sdkOptions.disallowedTools = disallowedTools
+    console.log(`[SDK Config] Disallowed tools (${disallowedTools.length}): ${disallowedTools.join(', ')}`)
   }
 
   // Add MCP servers if provided

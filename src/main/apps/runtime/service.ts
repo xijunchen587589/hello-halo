@@ -37,7 +37,7 @@ import type {
   RunFinishedEvent,
   RuntimeUnsubscribe,
 } from './types'
-import { AppNotRunnableError, NoSubscriptionsError, EscalationNotFoundError, ConcurrencyLimitError } from './errors'
+import { AppNotRunnableError, EscalationNotFoundError, ConcurrencyLimitError } from './errors'
 import { Semaphore } from './concurrency'
 import { executeRun } from './execute'
 import { readSessionMessages } from './session-store'
@@ -856,10 +856,7 @@ export function createAppRuntimeService(deps: AppRuntimeDeps): AppRuntimeService
         return
       }
 
-      const subscriptions = app.spec.subscriptions
-      if (!subscriptions || subscriptions.length === 0) {
-        throw new NoSubscriptionsError(appId)
-      }
+      const subscriptions = app.spec.subscriptions ?? []
 
       console.log(`[Runtime] Activating app: ${appId} (${app.spec.name})`)
 

@@ -60,6 +60,8 @@ import { registerModelCapabilitiesHandlers } from '../ipc/model-capabilities'
 import { registerWeixinIlinkHandlers } from '../ipc/weixin-ilink'
 import { initRegistryService, shutdownRegistryService } from '../store'
 import { cleanupImChannelTempFiles } from '../apps/runtime/im-channels'
+import { registerIdleTask, startIdleDrain } from './idle-queue'
+import { seedDefaultAppIfNeeded } from '../apps/manager/seed'
 
 // Module-level reference to db for cleanup
 let platformDb: DatabaseManager | null = null
@@ -116,8 +118,6 @@ async function initPlatformAndApps(): Promise<void> {
   // Wire lifecycle events (install/uninstall/run) into the analytics pipeline.
   // Must come after both appManager and runtime are ready.
   installAppsSubscribers(appManager, runtime)
-  // Fire-and-forget startup snapshot (no await — never blocks bootstrap).
-  void runStartupSnapshot(appManager, runtime)
 
   // ── Phase 4: Registry Service (App Store) ─────────────────────────────
   initRegistryService({ db })
@@ -125,6 +125,13 @@ async function initPlatformAndApps(): Promise<void> {
   // ── Start timer loops AFTER all wiring is complete ──────────────────────
   // This ensures no events fire before subscriptions are registered.
   scheduler.start()
+
+  // ── Tier 3: Idle tasks ─────────────────────────────────────────────────
+  // Non-critical tasks that run after all essential infrastructure is ready.
+  // Failures are logged as warnings and never affect core functionality.
+  registerIdleTask('seed-default-app', () => seedDefaultAppIfNeeded(appManager))
+  registerIdleTask('startup-snapshot', () => runStartupSnapshot(appManager, runtime))
+  startIdleDrain()
 
   const dt = performance.now() - t0
   console.log(`[Bootstrap] Platform+Apps initialized in ${dt.toFixed(1)}ms`)

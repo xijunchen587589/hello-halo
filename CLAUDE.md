@@ -6,6 +6,8 @@
 ```
 No need to write translation files because the translation is automated.
 
+Before making any changes, you must read the halo-dev skill.
+
 Run `npm run i18n` before commit by user.
 
 **rules.**

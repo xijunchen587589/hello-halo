@@ -452,6 +452,8 @@ interface HaloConfig {
     /** Experimental: switch agent engine. 'anthropic' = Claude Code SDK (default), 'halo' = Halo SDK. */
     sdkEngine?: 'anthropic' | 'halo'
     enableTeams?: boolean
+    /** Tools disabled by user (Extended Capabilities toggles) */
+    disabledTools?: string[]
     /** Developer: log raw outbound HTTP requests to http-raw.log */
     logHttpRequests?: boolean
   }

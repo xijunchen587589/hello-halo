@@ -1,14 +1,62 @@
 /**
  * Advanced Section Component
- * Developer-level settings: prompt profile, max turns, CLI integration
+ * Developer-level settings: prompt profile, extended capabilities, max turns, CLI integration
  */
 
 import { useState } from 'react'
-import { AlertTriangle, Terminal } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Puzzle, Terminal } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import { api } from '../../api'
 import type { HaloConfig } from '../../types'
 import { CLIConfigSection } from './CLIConfigSection'
+import { Switch } from '../ui/Switch'
+
+// ─── Extended Capabilities ──────────────────────────────────────────────────────
+
+/**
+ * Capability groups shown in the Extended Capabilities panel.
+ * Each group maps a user-facing feature toggle to the underlying CC tools it controls.
+ *
+ * When a capability is disabled, its tools are added to `config.agent.disabledTools`,
+ * which flows to the SDK's `disallowedTools` option — completely hiding them from
+ * the model (saving tokens).
+ */
+const CAPABILITY_GROUPS = [
+  {
+    id: 'teams',
+    labelKey: 'Agent Teams',
+    descKey: 'Multi-agent collaboration. Agents can spawn teammates to work in parallel.',
+    tools: ['TeamCreate', 'TeamDelete', 'SendMessage'],
+  },
+  {
+    id: 'planMode',
+    labelKey: 'Plan Mode',
+    descKey: 'Step-by-step planning workflow with approval gates.',
+    tools: ['EnterPlanMode', 'ExitPlanMode'],
+  },
+  {
+    id: 'worktree',
+    labelKey: 'Git Worktree',
+    descKey: 'Isolated git worktree for parallel branch work.',
+    tools: ['EnterWorktree', 'ExitWorktree'],
+  },
+  {
+    id: 'cron',
+    labelKey: 'Scheduled Tasks',
+    descKey: 'Built-in cron job scheduling. Halo has its own automation system.',
+    tools: ['CronCreate', 'CronDelete', 'CronList'],
+  },
+  {
+    id: 'notebook',
+    labelKey: 'Notebook Editing',
+    descKey: 'Jupyter notebook (.ipynb) cell editing.',
+    tools: ['NotebookEdit'],
+  },
+] as const
+
+import { DEFAULT_DISABLED_TOOLS } from '../../../shared/constants/disabled-tools'
+
+// ─── Component ──────────────────────────────────────────────────────────────────
 
 interface AdvancedSectionProps {
   config: HaloConfig | null
@@ -22,19 +70,34 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
   const [promptProfile, setPromptProfileState] = useState<'official' | 'halo'>(
     config?.agent?.promptProfile ?? 'halo'
   )
-  const [enableTeams, setEnableTeamsState] = useState(config?.agent?.enableTeams ?? false)
+  const [disabledTools, setDisabledToolsState] = useState<string[]>(
+    config?.agent?.disabledTools ?? DEFAULT_DISABLED_TOOLS
+  )
   const [logHttpRequests, setLogHttpRequestsState] = useState(config?.agent?.logHttpRequests ?? false)
+  const [capsPanelOpen, setCapsPanelOpen] = useState(false)
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  const isCapabilityEnabled = (group: typeof CAPABILITY_GROUPS[number]) =>
+    group.tools.every(tool => !disabledTools.includes(tool))
+
+  const saveAgentConfig = async (patch: Partial<NonNullable<HaloConfig['agent']>>) => {
+    const updatedConfig = {
+      ...config,
+      agent: { ...config?.agent, ...patch }
+    } as HaloConfig
+    await api.setConfig({ agent: updatedConfig.agent })
+    setConfig(updatedConfig)
+    return updatedConfig
+  }
+
+  // ─── Handlers ───────────────────────────────────────────────────────────────
 
   const handleMaxTurnsChange = async (value: number) => {
     const clamped = Math.max(10, Math.min(9999, value))
     setMaxTurnsState(clamped)
     try {
-      const updatedConfig = {
-        ...config,
-        agent: { ...config?.agent, maxTurns: clamped }
-      } as HaloConfig
-      await api.setConfig({ agent: updatedConfig.agent })
-      setConfig(updatedConfig)
+      await saveAgentConfig({ maxTurns: clamped })
     } catch (error) {
       console.error('[AdvancedSection] Failed to update maxTurns:', error)
       setMaxTurnsState(config?.agent?.maxTurns ?? 50)
@@ -44,50 +107,56 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
   const handlePromptProfileChange = async (profile: 'official' | 'halo') => {
     setPromptProfileState(profile)
     try {
-      const updatedConfig = {
-        ...config,
-        agent: { ...config?.agent, promptProfile: profile }
-      } as HaloConfig
-      await api.setConfig({ agent: updatedConfig.agent })
-      setConfig(updatedConfig)
+      await saveAgentConfig({ promptProfile: profile })
     } catch (error) {
       console.error('[AdvancedSection] Failed to update promptProfile:', error)
       setPromptProfileState(config?.agent?.promptProfile ?? 'halo')
     }
   }
 
-  const handleEnableTeamsChange = async (enabled: boolean) => {
-    setEnableTeamsState(enabled)
+  const handleCapabilityToggle = async (group: typeof CAPABILITY_GROUPS[number], enabled: boolean) => {
+    const currentEnabled = isCapabilityEnabled(group)
+    if (currentEnabled === enabled) return
+
+    let newDisabled: string[]
+    if (enabled) {
+      // Remove this group's tools from disabled list
+      newDisabled = disabledTools.filter(t => !(group.tools as readonly string[]).includes(t))
+    } else {
+      // Add this group's tools to disabled list (dedup)
+      const set = new Set(disabledTools)
+      for (const tool of group.tools) set.add(tool)
+      newDisabled = Array.from(set)
+    }
+    setDisabledToolsState(newDisabled)
+
     try {
-      const updatedConfig = {
-        ...config,
-        agent: { ...config?.agent, enableTeams: enabled }
-      } as HaloConfig
-      await api.setConfig({ agent: updatedConfig.agent })
-      setConfig(updatedConfig)
+      // Agent Teams needs the dedicated enableTeams flag for env var
+      const extraPatch: Partial<NonNullable<HaloConfig['agent']>> = {}
+      if (group.id === 'teams') {
+        extraPatch.enableTeams = enabled
+      }
+      await saveAgentConfig({ disabledTools: newDisabled, ...extraPatch })
     } catch (error) {
-      console.error('[AdvancedSection] Failed to update enableTeams:', error)
-      setEnableTeamsState(config?.agent?.enableTeams ?? false)
+      console.error('[AdvancedSection] Failed to update capability:', error)
+      setDisabledToolsState(config?.agent?.disabledTools ?? DEFAULT_DISABLED_TOOLS)
     }
   }
 
   const handleLogHttpRequestsChange = async (enabled: boolean) => {
     setLogHttpRequestsState(enabled)
     try {
-      const updatedConfig = {
-        ...config,
-        agent: { ...config?.agent, logHttpRequests: enabled }
-      } as HaloConfig
-      await api.setConfig({ agent: updatedConfig.agent })
-      setConfig(updatedConfig)
+      await saveAgentConfig({ logHttpRequests: enabled })
     } catch (error) {
       console.error('[AdvancedSection] Failed to update logHttpRequests:', error)
       setLogHttpRequestsState(config?.agent?.logHttpRequests ?? false)
     }
   }
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <section id="advanced" className="bg-card rounded-xl border border-border p-6">
+    <section id="advanced" className="bg-card rounded-xl border border-border p-4 sm:p-6">
       <h2 className="text-lg font-medium mb-4">{t('Advanced')}</h2>
 
       {/* Warning banner */}
@@ -141,29 +210,58 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
           </div>
         </div>
 
-        {/* Agent Teams */}
-        <div className="flex items-center justify-between pt-4 border-t border-border">
-          <div className="flex-1">
-            <p className="font-medium">{t('Agent Teams')}</p>
-            <p className="text-sm text-muted-foreground">
-              {t('Enable multi-agent collaboration. When enabled, the AI can spawn teammate agents to work in parallel. Consumes additional tokens and context.')}
-            </p>
+        {/* Extended Capabilities */}
+        <div className="pt-4 border-t border-border">
+          <div className="border border-border rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setCapsPanelOpen(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2.5">
+                <Puzzle className="w-4 h-4 text-muted-foreground" />
+                <span className="font-medium text-sm">{t('Extended Capabilities')}</span>
+              </div>
+              {capsPanelOpen
+                ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                : <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              }
+            </button>
+
+            {capsPanelOpen && (
+              <div className="border-t border-border">
+                {/* Hint */}
+                <p className="px-4 pt-3 pb-2 text-xs text-muted-foreground">
+                  {t('Extra tools consume additional tokens per message. Enable only what you need.')}
+                </p>
+
+                {/* Capability toggles */}
+                <div className="px-4 pb-4 space-y-0">
+                  {CAPABILITY_GROUPS.map((group, idx) => {
+                    const enabled = isCapabilityEnabled(group)
+                    return (
+                      <div
+                        key={group.id}
+                        className={`flex items-center justify-between py-3 ${
+                          idx > 0 ? 'border-t border-border' : ''
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0 mr-3">
+                          <p className="font-medium text-sm">{t(group.labelKey)}</p>
+                          <p className="text-xs text-muted-foreground">{t(group.descKey)}</p>
+                        </div>
+                        <Switch
+                          checked={enabled}
+                          onCheckedChange={(checked) => handleCapabilityToggle(group, checked)}
+                          size="sm"
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-          <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
-            <input
-              type="checkbox"
-              checked={enableTeams}
-              onChange={(e) => handleEnableTeamsChange(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
-              <div
-                className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform ${
-                  enableTeams ? 'translate-x-5' : 'translate-x-0.5'
-                } mt-0.5`}
-              />
-            </div>
-          </label>
         </div>
 
         {/* Max Turns per Message */}
@@ -220,21 +318,12 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
               {t('Useful for inspecting exact LLM API payloads. Disable when not needed.')}
             </p>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4 mt-0.5">
-            <input
-              type="checkbox"
-              checked={logHttpRequests}
-              onChange={(e) => handleLogHttpRequestsChange(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-secondary rounded-full peer peer-checked:bg-primary transition-colors">
-              <div
-                className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform ${
-                  logHttpRequests ? 'translate-x-5' : 'translate-x-0.5'
-                } mt-0.5`}
-              />
-            </div>
-          </label>
+          <Switch
+            checked={logHttpRequests}
+            onCheckedChange={handleLogHttpRequestsChange}
+            size="sm"
+            className="ml-4 mt-0.5"
+          />
         </div>
 
         {/* Claude CLI Integration */}

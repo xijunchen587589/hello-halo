@@ -21,6 +21,7 @@ import type {
   ActivityQueryOptions,
 } from '../../shared/apps/app-types'
 import type { AppSpec } from '../../shared/apps/spec-types'
+import type { ScheduleValue } from '../types'
 
 // ============================================
 // State Interface
@@ -69,6 +70,7 @@ interface AppsState {
   updateAppFrequency: (appId: string, subscriptionId: string, frequency: string) => Promise<boolean>
   updateAppOverrides: (appId: string, overrides: Record<string, unknown>) => Promise<boolean>
   updateAppSpec: (appId: string, specPatch: Record<string, unknown>) => Promise<boolean>
+  updateAppSchedule: (appId: string, subscriptionId: string, value: ScheduleValue) => Promise<boolean>
 
   // ── Space Management ────────────────────
   /**
@@ -432,6 +434,24 @@ export const useAppsStore = create<AppsState>((set, get) => ({
       console.error('[AppsStore] updateAppSpec error:', err)
       return false
     }
+  },
+
+  updateAppSchedule: async (appId, subscriptionId, value) => {
+    if (value.type === 'every') {
+      return get().updateAppFrequency(appId, subscriptionId, value.every)
+    }
+    // cron: update via spec merge patch
+    const app = get().apps.find(a => a.id === appId)
+    if (!app || app.spec.type !== 'automation') return false
+    const subs = app.spec.subscriptions ?? []
+    const newSubs = subs.map((s, i) => {
+      const sid = s.id ?? String(i)
+      if (sid === subscriptionId) {
+        return { ...s, source: { type: 'schedule' as const, config: { cron: value.cron } } }
+      }
+      return s
+    })
+    return get().updateAppSpec(appId, { subscriptions: newSubs })
   },
 
   // ── Space Management ─────────────────

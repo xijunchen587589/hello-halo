@@ -29,6 +29,13 @@ import { AppModelSelector } from './AppModelSelector'
 import { AppNotifyChannelsSection } from './AppNotifyChannelsSection'
 import { appTypeLabel } from './appTypeUtils'
 import { SystemPromptEditor } from './SystemPromptEditor'
+import { Switch } from '../ui/Switch'
+import { SchedulePicker } from './SchedulePicker'
+import {
+  extractScheduleValue,
+  applyScheduleValue,
+  type ScheduleValue,
+} from './schedule-utils'
 
 // Lazy-load CodeMirrorEditor to keep initial bundle small
 const CodeMirrorEditor = lazy(() =>
@@ -42,74 +49,8 @@ const CodeMirrorEditor = lazy(() =>
 type ConfigTab = 'settings' | 'yaml'
 
 // ============================================
-// Frequency Presets
-// ============================================
-
-const FREQUENCY_PRESETS = [
-  { label: '1m', value: '1m' },
-  { label: '5m', value: '5m' },
-  { label: '15m', value: '15m' },
-  { label: '30m', value: '30m' },
-  { label: '1h', value: '1h' },
-  { label: '2h', value: '2h' },
-  { label: '6h', value: '6h' },
-  { label: '12h', value: '12h' },
-  { label: '1d', value: '1d' },
-]
-
-// ============================================
 // Helpers
 // ============================================
-
-/** Parse a duration string like "30m", "2h", "1d" into milliseconds */
-function durationToMs(dur: string): number {
-  const match = dur.match(/^(\d+)([smhd])$/)
-  if (!match) return 0
-  const val = Number(match[1])
-  switch (match[2]) {
-    case 's': return val * 1000
-    case 'm': return val * 60_000
-    case 'h': return val * 3_600_000
-    case 'd': return val * 86_400_000
-    default: return 0
-  }
-}
-
-/** Format a duration string to a human-readable label */
-function formatFrequency(dur: string, t: (s: string, opts?: Record<string, unknown>) => string): string {
-  const match = dur.match(/^(\d+)([smhd])$/)
-  if (!match) return dur
-  const val = Number(match[1])
-  switch (match[2]) {
-    case 's': return t('Every {{count}}s', { count: val })
-    case 'm': return t('Every {{count}}m', { count: val })
-    case 'h': return t('Every {{count}}h', { count: val })
-    case 'd': return t('Every {{count}}d', { count: val })
-    default: return dur
-  }
-}
-
-/** Get the effective frequency for a subscription (user override > spec default) */
-function getEffectiveFrequency(sub: SubscriptionDef, app: InstalledApp, index: number): string | null {
-  const subId = sub.id ?? String(index)
-  const userOverride = app.userOverrides?.frequency?.[subId]
-  if (userOverride) return userOverride
-  if (sub.frequency?.default) return sub.frequency.default
-  if (sub.source.type === 'schedule') {
-    return sub.source.config.every ?? null
-  }
-  return null
-}
-
-/** Filter frequency presets by min/max constraints from the subscription */
-function filterPresets(sub: SubscriptionDef): typeof FREQUENCY_PRESETS {
-  const minMs = sub.frequency?.min ? durationToMs(sub.frequency.min) : 0
-  const maxMs = sub.frequency?.max ? durationToMs(sub.frequency.max) : Infinity
-  return FREQUENCY_PRESETS.filter(p => {
-    const ms = durationToMs(p.value)
-    return ms >= minMs && ms <= maxMs
-  })
-}
 
 /** Serialize an AppSpec to clean YAML, stripping undefined/null fields */
 function specToYaml(spec: AppSpec): string {
@@ -145,22 +86,11 @@ function ConfigField({ def, value, onChange, t }: ConfigFieldProps) {
               <p className="text-xs text-muted-foreground mt-0.5">{def.description}</p>
             )}
           </div>
-          <button
-            id={id}
-            type="button"
-            role="switch"
-            aria-checked={!!currentValue}
-            onClick={() => onChange(def.key, !currentValue)}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${
-              currentValue ? 'bg-primary' : 'bg-muted'
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow transform transition-transform mt-0.5 ${
-                currentValue ? 'translate-x-[18px]' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
+          <Switch
+            checked={!!currentValue}
+            onCheckedChange={checked => onChange(def.key, checked)}
+            size="sm"
+          />
         </div>
       )
 
@@ -245,56 +175,6 @@ function ConfigField({ def, value, onChange, t }: ConfigFieldProps) {
 }
 
 // ============================================
-// Frequency Editor
-// ============================================
-
-interface FrequencyEditorProps {
-  subscription: SubscriptionDef
-  subscriptionIndex: number
-  app: InstalledApp
-  onFrequencyChange: (subscriptionId: string, frequency: string) => void
-  t: (s: string, opts?: Record<string, unknown>) => string
-}
-
-function FrequencyEditor({ subscription, subscriptionIndex, app, onFrequencyChange, t }: FrequencyEditorProps) {
-  const subId = subscription.id ?? String(subscriptionIndex)
-  const currentFreq = getEffectiveFrequency(subscription, app, subscriptionIndex)
-  const presets = filterPresets(subscription)
-
-  if (presets.length === 0 || !currentFreq) return null
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-foreground">
-          {subscription.source.type === 'schedule'
-            ? t('Schedule frequency')
-            : t('Check frequency')}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {formatFrequency(currentFreq, t)}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {presets.map(preset => (
-          <button
-            key={preset.value}
-            onClick={() => onFrequencyChange(subId, preset.value)}
-            className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-              currentFreq === preset.value
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80'
-            }`}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ============================================
 // InfoTip — small hover tooltip for label explanations
 // ============================================
 
@@ -328,7 +208,7 @@ interface SettingsTabProps {
 }
 
 function SettingsTab({ app, appId, spaceName, t }: SettingsTabProps) {
-  const { updateAppConfig, updateAppFrequency, updateAppSpec, updateAppOverrides, grantPermission, revokePermission } = useAppsStore()
+  const { updateAppConfig, updateAppSpec, updateAppOverrides, grantPermission, revokePermission } = useAppsStore()
   const { setView } = useAppStore()
 
   // Check if email notification channel is configured
@@ -393,7 +273,6 @@ function SettingsTab({ app, appId, spaceName, t }: SettingsTabProps) {
   const browserLoginEntries = resolvedSpec.browser_login ?? []
   const subscriptions = specSubscriptions
   const hasConfig = configSchema.length > 0
-  const hasFrequency = subscriptions.some(s => s.frequency || s.source.type === 'schedule')
 
   // Spec fields change detection
   const specHasChanges =
@@ -456,8 +335,39 @@ function SettingsTab({ app, appId, spaceName, t }: SettingsTabProps) {
     setConfigSaveSuccess(false)
   }
 
-  async function handleFrequencyChange(subscriptionId: string, frequency: string) {
-    await updateAppFrequency(appId, subscriptionId, frequency)
+  // Determine whether the app currently has a schedule subscription
+  const scheduleSubscription = subscriptions.find(s => s.source.type === 'schedule')
+  const hasSchedule = !!scheduleSubscription
+
+  // Current schedule value for SchedulePicker
+  const currentScheduleValue: ScheduleValue | null = scheduleSubscription
+    ? extractScheduleValue(scheduleSubscription)
+    : null
+
+  async function handleScheduleToggle(enabled: boolean) {
+    if (enabled) {
+      // Add default schedule subscription
+      const newSubs = [
+        ...subscriptions,
+        { source: { type: 'schedule' as const, config: { every: '1h' } } },
+      ]
+      await updateAppSpec(appId, { subscriptions: newSubs })
+    } else {
+      // Remove all schedule subscriptions, preserve non-schedule ones
+      const nonScheduleSubs = subscriptions.filter(s => s.source.type !== 'schedule')
+      await updateAppSpec(appId, {
+        subscriptions: nonScheduleSubs.length > 0 ? nonScheduleSubs : [],
+      })
+    }
+  }
+
+  async function handleScheduleValueChange(value: ScheduleValue) {
+    if (!scheduleSubscription) return
+    const updated = applyScheduleValue(scheduleSubscription, value)
+    const newSubs = subscriptions.map(s =>
+      s === scheduleSubscription ? updated : s
+    )
+    await updateAppSpec(appId, { subscriptions: newSubs })
   }
 
   async function handleOpenDataFolder() {
@@ -473,22 +383,29 @@ function SettingsTab({ app, appId, spaceName, t }: SettingsTabProps) {
           User Settings (top section)
           ════════════════════════════════════════════ */}
 
-      {/* ── Frequency Settings ── */}
-      {hasFrequency && (
-        <div className="space-y-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {t('Schedule')}
-          </h3>
-          {subscriptions.map((sub, idx) => (
-            <FrequencyEditor
-              key={sub.id ?? idx}
-              subscription={sub}
-              subscriptionIndex={idx}
-              app={app}
-              onFrequencyChange={handleFrequencyChange}
-              t={t}
+      {/* ── Schedule Settings ── */}
+      {isAutomation && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t('Schedule')}
+            </h3>
+            <Switch
+              checked={hasSchedule}
+              onCheckedChange={handleScheduleToggle}
+              size="sm"
             />
-          ))}
+          </div>
+          {hasSchedule && currentScheduleValue ? (
+            <SchedulePicker
+              value={currentScheduleValue}
+              onChange={handleScheduleValueChange}
+            />
+          ) : !hasSchedule && (
+            <p className="text-xs text-muted-foreground">
+              {t('No scheduled trigger. This app can be triggered manually or via IM bot.')}
+            </p>
+          )}
         </div>
       )}
 
@@ -522,28 +439,17 @@ function SettingsTab({ app, appId, spaceName, t }: SettingsTabProps) {
               {t('Enable browser tools for web automation')}
             </p>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={resolvePermission(app, 'ai-browser')}
-            onClick={async () => {
-              const isEnabled = resolvePermission(app, 'ai-browser')
-              if (isEnabled) {
-                await revokePermission(appId, 'ai-browser')
-              } else {
+          <Switch
+            checked={resolvePermission(app, 'ai-browser')}
+            onCheckedChange={async (checked) => {
+              if (checked) {
                 await grantPermission(appId, 'ai-browser')
+              } else {
+                await revokePermission(appId, 'ai-browser')
               }
             }}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${
-              resolvePermission(app, 'ai-browser') ? 'bg-primary' : 'bg-muted'
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow transform transition-transform mt-0.5 ${
-                resolvePermission(app, 'ai-browser') ? 'translate-x-[18px]' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
+            size="sm"
+          />
         </div>
         {/* Warn when user disabled a permission the spec declares */}
         {!resolvePermission(app, 'ai-browser') && app.spec.permissions?.includes('ai-browser') && (
@@ -564,32 +470,19 @@ function SettingsTab({ app, appId, spaceName, t }: SettingsTabProps) {
               {t('Allow this app to read, send, and manage emails and calendar')}
             </p>
           </div>
-          <button
-            type="button"
-            role="switch"
-            disabled={!emailConfigured}
-            aria-checked={emailConfigured && resolvePermission(app, 'email', false)}
-            onClick={async () => {
+          <Switch
+            checked={emailConfigured && resolvePermission(app, 'email', false)}
+            onCheckedChange={async (checked) => {
               if (!emailConfigured) return
-              const isEnabled = resolvePermission(app, 'email', false)
-              if (isEnabled) {
-                await revokePermission(appId, 'email')
-              } else {
+              if (checked) {
                 await grantPermission(appId, 'email')
+              } else {
+                await revokePermission(appId, 'email')
               }
             }}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${
-              !emailConfigured
-                ? 'bg-muted/50 cursor-not-allowed'
-                : resolvePermission(app, 'email', false) ? 'bg-primary' : 'bg-muted'
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow transform transition-transform mt-0.5 ${
-                emailConfigured && resolvePermission(app, 'email', false) ? 'translate-x-[18px]' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
+            disabled={!emailConfigured}
+            size="sm"
+          />
         </div>
         {/* Not configured: show hint with link to settings */}
         {!emailConfigured && (

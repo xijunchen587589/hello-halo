@@ -97,6 +97,7 @@
     "cloudflared": "^0.7.1",
     "clsx": "^2.1.0",
     "croner": "^10.0.1",
+    "cronstrue": "^3.14.0",
     "diff": "^8.0.2",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
