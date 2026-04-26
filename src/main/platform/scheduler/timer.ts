@@ -243,7 +243,7 @@ export class SchedulerTimer {
 
       // Find due jobs
       const dueJobs = this.findDueJobs(now)
-      console.debug(`[Scheduler] Tick: ${dueJobs.length} due, ${this.store.getAll().filter(j => j.enabled).length} enabled total`)
+      console.debug(`[Scheduler] Tick: ${dueJobs.length} due, ${this.store.listJobs().filter(j => j.enabled).length} enabled total`)
 
       if (dueJobs.length === 0) {
         // No due jobs, but do maintenance recompute for any that need it

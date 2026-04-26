@@ -45,8 +45,35 @@ describe('deepSeekAdapter', () => {
     })
   })
 
-  it('has no transformRequest — converter produces spec-compliant output by default', () => {
-    expect(deepSeekAdapter.transformRequest).toBeUndefined()
+  describe('transformRequest', () => {
+    it('is a no-op when reasoning_effort is absent', () => {
+      const body: Record<string, unknown> = {
+        model: 'deepseek-reasoner',
+        messages: [{ role: 'assistant', content: 'hi' }]
+      }
+      deepSeekAdapter.transformRequest!(body, undefined)
+      // No reasoning_content injected
+      expect((body.messages as any[])[0].reasoning_content).toBeUndefined()
+    })
+
+    it('ensures every assistant message has reasoning_content when reasoning_effort is set', () => {
+      const body: Record<string, unknown> = {
+        model: 'deepseek-reasoner',
+        reasoning_effort: 'medium',
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi' },
+          { role: 'assistant', content: 'bye' }
+        ]
+      }
+      deepSeekAdapter.transformRequest!(body, undefined)
+      const msgs = body.messages as any[]
+      // user messages are untouched
+      expect(msgs[0].reasoning_content).toBeUndefined()
+      // assistant messages get reasoning_content (empty string if no thinking blocks)
+      expect(msgs[1].reasoning_content).toBe('')
+      expect(msgs[2].reasoning_content).toBe('')
+    })
   })
 })
 
