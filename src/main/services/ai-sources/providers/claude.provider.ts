@@ -24,20 +24,23 @@
  * - anthropic-beta is computed per model (see buildBetaHeaders) to match the
  *   official getAllModelBetas() output for the firstParty + OAuth subscriber
  *   profile (the only profile hello-halo runs in)
- * - User-Agent tracks the bundled @anthropic-ai/claude-code version
- *   dynamically; freezing a stale tag (e.g. claude-cli/2.1.2) makes the
- *   client trivially identifiable once Anthropic enforces a version floor
  * - Must delete x-api-key header (use Authorization: Bearer instead)
- * - Must add '?beta=true' to /v1/messages URL
+ * - User-Agent is intentionally NOT set here — the Claude Code subprocess's
+ *   bundled @anthropic-ai/sdk already injects the canonical
+ *   `claude-cli/<version> (external, cli)` UA on every request. Re-injecting
+ *   it from the provider produced a duplicate value at the undici layer
+ *   (case-insensitive header merge: `User-Agent` + `user-agent`), which is
+ *   itself a fingerprint that no real CLI ever emits.
+ * - The /v1/messages URL does NOT include ?beta=true here; the bundled
+ *   @anthropic-ai/sdk's BetaMessages.create() appends it itself, and the
+ *   router forwards that query string through. Adding it again in the
+ *   backend URL was redundant.
  *
  * Note: Halo uses the official Anthropic Claude SDK which handles tool naming
  * correctly, so we don't need to add/strip the mcp_ prefix ourselves.
  */
 
 import { randomBytes, createHash, randomUUID } from 'crypto'
-import { existsSync, readFileSync } from 'fs'
-import path from 'path'
-import { app } from 'electron'
 import { proxyFetch } from '../../proxy-fetch'
 import type {
   OAuthAISourceProvider,
@@ -68,29 +71,29 @@ const CLAUDE_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback'
 /**
  * OAuth scopes.
  *
- * Matches the official CLI's ALL_OAUTH_SCOPES set (CONSOLE ∪ CLAUDE_AI scopes)
- * for the standard `claude /login` Pro/Max flow — i.e. inferenceOnly=false.
- * Sending a smaller subset would cause feature gates (sessions, MCP, file
- * upload) to fail server-side once Anthropic enforces scope checks.
+ * Two sets, mirroring the official CLI:
+ *
+ * - `CLAUDE_AI_OAUTH_SCOPES` — the Claude.ai (Pro/Max) inference scopes used
+ *   on token refresh; matches the official `y$8` array in claude-code 2.1.89.
+ *   Refresh deliberately narrows from the authorize-time scope by dropping
+ *   `org:create_api_key`.
+ *
+ * - `CLAUDE_AUTHORIZE_SCOPES` — the union sent at the initial authorize
+ *   request; matches the official `H41` (ALL_OAUTH_SCOPES). Sending a
+ *   smaller subset would cause feature gates (sessions, MCP, file upload)
+ *   to fail server-side once Anthropic enforces scope checks.
  */
-const CLAUDE_SCOPES = [
-  'org:create_api_key',
+const CLAUDE_AI_OAUTH_SCOPES = [
   'user:profile',
   'user:inference',
   'user:sessions:claude_code',
   'user:mcp_servers',
   'user:file_upload',
-].join(' ')
+]
+const CLAUDE_AUTHORIZE_SCOPES = ['org:create_api_key', ...CLAUDE_AI_OAUTH_SCOPES].join(' ')
 
 /** API endpoint */
 const CLAUDE_API_BASE = 'https://api.anthropic.com'
-
-/**
- * Fallback CLI version used in the User-Agent if reading the bundled
- * @anthropic-ai/claude-code package.json fails. Keep this aligned with the
- * pinned version in package.json so the fallback is never demonstrably stale.
- */
-const CLAUDE_CLI_VERSION_FALLBACK = '2.1.89'
 
 /** Token refresh threshold — refresh 5 minutes before expiry */
 const TOKEN_REFRESH_THRESHOLD_MS = 5 * 60 * 1000
@@ -140,65 +143,6 @@ function buildBetaHeaders(model: string, is1mContext: boolean): string[] {
   }
 
   return betas
-}
-
-// ============================================================================
-// User-Agent
-// ============================================================================
-
-/** Cached CLI version (resolved once on first use; the bundled package can't change at runtime). */
-let cachedClaudeCliVersion: string | null = null
-
-/**
- * Resolve the version of the bundled @anthropic-ai/claude-code package.
- *
- * The candidate list mirrors resolveClaudeCodeCliPath() in agent/sdk-config.ts
- * so packaged, dev, and built-but-unpackaged (E2E) modes all resolve.
- */
-function getClaudeCliVersion(): string {
-  if (cachedClaudeCliVersion) return cachedClaudeCliVersion
-
-  const PKG_RELATIVE = 'node_modules/@anthropic-ai/claude-code/package.json'
-  const candidates = app.isPackaged
-    ? [path.join(app.getAppPath(), PKG_RELATIVE)]
-    : [
-        path.join(app.getAppPath(), PKG_RELATIVE),
-        path.join(app.getAppPath(), '..', '..', PKG_RELATIVE),
-      ]
-
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue
-    try {
-      const pkg = JSON.parse(readFileSync(candidate, 'utf-8')) as { version?: unknown }
-      if (typeof pkg.version === 'string' && pkg.version.length > 0) {
-        cachedClaudeCliVersion = pkg.version
-        return pkg.version
-      }
-    } catch (err) {
-      console.warn('[Claude] Failed to parse claude-code package.json:', err)
-    }
-  }
-
-  console.warn(
-    `[Claude] Unable to resolve @anthropic-ai/claude-code version, falling back to ${CLAUDE_CLI_VERSION_FALLBACK}`
-  )
-  cachedClaudeCliVersion = CLAUDE_CLI_VERSION_FALLBACK
-  return cachedClaudeCliVersion
-}
-
-/**
- * Build the User-Agent header.
- *
- * Format mirrors the official CLI's lS() helper:
- *   `claude-cli/<version> (external, cli)`
- *
- * The official builder also appends agent-sdk / client-app / workload
- * segments based on env vars; hello-halo issues these requests from the
- * Electron main process (no SDK env vars set), so the bare entrypoint
- * variant is the correct match.
- */
-function getClaudeUserAgent(): string {
-  return `claude-cli/${getClaudeCliVersion()} (external, cli)`
 }
 
 // ============================================================================
@@ -256,18 +200,27 @@ class ClaudeProvider implements OAuthAISourceProvider {
   /**
    * Build the BackendRequestConfig for each outgoing API request.
    *
-   * Key details:
+   * Header set:
    * - Authorization: Bearer <access_token> (NOT x-api-key)
    * - anthropic-beta is computed per-model by buildBetaHeaders(); see that
-   *   helper for the exact set and the official CLI logic it mirrors
-   * - user-agent tracks the bundled CLI version dynamically; see
-   *   getClaudeUserAgent() for rationale
-   * - URL must have ?beta=true appended to /v1/messages
+   *   helper for the exact set and the official CLI logic it mirrors. The
+   *   router merges this with the SDK's anthropic-beta (deduplicated).
+   * - x-client-request-id: a fresh UUID per request. The CC subprocess only
+   *   injects this header when ANTHROPIC_BASE_URL points at api.anthropic.com,
+   *   and Halo configures it to point at localhost — so the CC subprocess
+   *   skips it and Halo is the sole emitter. No duplication.
    *
-   * Note: ?beta=true is included directly in the URL because the Anthropic
-   * OAuth endpoint requires it. The handleAnthropicPassthrough in request-handler
-   * will pass through the SDK's queryString separately (if any), but the OAuth
-   * beta flag must be ensured by the provider.
+   * Headers intentionally NOT set:
+   * - user-agent / User-Agent — owned by the bundled @anthropic-ai/sdk in the
+   *   CC subprocess. Setting it here caused a `User-Agent: X, X` duplicate
+   *   at the undici layer (case-insensitive merge of `User-Agent` and
+   *   `user-agent`).
+   *
+   * URL:
+   * - Plain `/v1/messages` — the bundled @anthropic-ai/sdk's
+   *   BetaMessages.create() appends `?beta=true` itself, and the router
+   *   forwards that query string. Hardcoding it here was redundant and
+   *   risked forcing it onto non-beta paths if the route ever changed.
    */
   getBackendConfig(config: AISourcesConfig): BackendRequestConfig | null {
     const c = config['claude'] as OAuthSourceConfig | undefined
@@ -285,13 +238,10 @@ class ClaudeProvider implements OAuthAISourceProvider {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${c.accessToken}`,
       'anthropic-beta': betas.join(','),
-      'user-agent': getClaudeUserAgent(),
       'x-client-request-id': randomUUID()
     }
 
-    // The URL includes ?beta=true as required by the OAuth endpoint.
-    // handleAnthropicPassthrough appends SDK queryString with '&' when URL already has '?'.
-    const url = `${CLAUDE_API_BASE}/v1/messages?beta=true`
+    const url = `${CLAUDE_API_BASE}/v1/messages`
 
     return {
       url,
@@ -356,7 +306,7 @@ class ClaudeProvider implements OAuthAISourceProvider {
       url.searchParams.set('client_id', CLAUDE_CLIENT_ID)
       url.searchParams.set('response_type', 'code')
       url.searchParams.set('redirect_uri', CLAUDE_REDIRECT_URI)
-      url.searchParams.set('scope', CLAUDE_SCOPES)
+      url.searchParams.set('scope', CLAUDE_AUTHORIZE_SCOPES)
       url.searchParams.set('code_challenge', pkce.challenge)
       url.searchParams.set('code_challenge_method', 'S256')
       url.searchParams.set('state', pkce.verifier)
@@ -539,7 +489,10 @@ class ClaudeProvider implements OAuthAISourceProvider {
    *
    * Token refresh details:
    * - POST to CLAUDE_TOKEN_URL
-   * - Body: { grant_type: "refresh_token", refresh_token, client_id }
+   * - Body: { grant_type, refresh_token, client_id, scope }
+   *   `scope` is required to match the official CLI; it narrows the
+   *   refreshed token to the Claude.ai inference scopes (drops
+   *   `org:create_api_key`).
    * - Response: { access_token, refresh_token, expires_in }
    */
   async refreshTokenWithConfig(config: AISourcesConfig): Promise<ProviderResult<{
@@ -563,7 +516,10 @@ class ClaudeProvider implements OAuthAISourceProvider {
         body: JSON.stringify({
           grant_type: 'refresh_token',
           refresh_token: c.refreshToken,
-          client_id: CLAUDE_CLIENT_ID
+          client_id: CLAUDE_CLIENT_ID,
+          // Refresh narrows the token from the authorize-time superset
+          // (drops org:create_api_key) — matches the official CLI's default.
+          scope: CLAUDE_AI_OAUTH_SCOPES.join(' ')
         })
       })
 
