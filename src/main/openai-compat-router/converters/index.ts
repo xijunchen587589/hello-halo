@@ -10,12 +10,12 @@
 // Request converters
 export {
   convertAnthropicToOpenAIChat,
-  convertRequestToChat
+  convertRequest as convertRequestToChat
 } from './request/anthropic-to-openai-chat'
 
 export {
   convertAnthropicToOpenAIResponses,
-  convertRequestToResponses
+  convertRequest as convertRequestToResponses
 } from './request/anthropic-to-openai-responses'
 
 // Response converters

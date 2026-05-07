@@ -173,6 +173,219 @@ describe('Request Converters', () => {
       // Disabled thinking must NOT produce any reasoning field
       expect(result.request.reasoning_effort).toBeUndefined()
     })
+
+    // ====================================================================
+    // reasoning_content injection from thinking blocks
+    // ====================================================================
+
+    it('should inject reasoning_content when assistant has thinking blocks', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Hello' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'The user greeted me, I should respond warmly.' },
+              { type: 'text', text: 'Hi there!' }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      expect(msgs[1].role).toBe('assistant')
+      expect(msgs[1].reasoning_content).toBe('The user greeted me, I should respond warmly.')
+      expect(msgs[1].content).toBe('Hi there!')
+    })
+
+    it('should join multiple thinking blocks within one turn', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Solve this' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'Step 1: parse the problem' },
+              { type: 'thinking', thinking: 'Step 2: compute the answer' },
+              { type: 'text', text: 'The answer is 42' }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      expect(msgs[1].reasoning_content).toBe('Step 1: parse the problem\nStep 2: compute the answer')
+    })
+
+    it('should inject reasoning_content alongside tool_calls', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Search this' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'I need to search for this query.' },
+              {
+                type: 'tool_use',
+                id: 'call_search',
+                name: 'search',
+                input: { query: 'test' }
+              }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      expect(msgs[1].role).toBe('assistant')
+      expect(msgs[1].reasoning_content).toBe('I need to search for this query.')
+      expect(msgs[1].content).toBeNull()
+      expect(msgs[1].tool_calls).toHaveLength(1)
+      expect(msgs[1].tool_calls[0].function.name).toBe('search')
+    })
+
+    it('should not inject reasoning_content when no thinking blocks present', () => {
+      const request: AnthropicRequest = {
+        model: 'gpt-4',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Hello' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'Hi!' }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      expect(msgs[1].content).toBe('Hi!')
+      expect(msgs[1].reasoning_content).toBeUndefined()
+    })
+
+    it('should not inject reasoning_content on user messages', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Hello' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'thought' },
+              { type: 'text', text: 'Hi' }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      expect(msgs[0].reasoning_content).toBeUndefined()
+      expect(msgs[1].reasoning_content).toBeDefined()
+    })
+
+    it('should handle multi-turn with thinking blocks in different turns', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Q1' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'thinking-1' },
+              { type: 'text', text: 'A1' }
+            ]
+          },
+          { role: 'user', content: 'Q2' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'thinking-2' },
+              { type: 'text', text: 'A2' }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      expect(msgs[1].reasoning_content).toBe('thinking-1')
+      expect(msgs[3].reasoning_content).toBe('thinking-2')
+    })
+
+    it('should inject empty reasoning_content on all assistant messages when reasoning_effort is set', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi' },
+          { role: 'user', content: 'how are you' },
+          { role: 'assistant', content: 'good' }
+        ],
+        thinking: { type: 'enabled', budget_tokens: 8000 }
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      expect(result.request.reasoning_effort).toBe('medium')
+      const msgs = result.request.messages as any[]
+      // All assistant messages get reasoning_content even without thinking blocks
+      expect(msgs[0].role).toBe('user')
+      expect(msgs[0].reasoning_content).toBeUndefined() // user messages untouched
+      expect(msgs[1].role).toBe('assistant')
+      expect(msgs[1].reasoning_content).toBe('') // empty: no thinking block
+      expect(msgs[2].role).toBe('user')
+      expect(msgs[3].role).toBe('assistant')
+      expect(msgs[3].reasoning_content).toBe('') // empty: no thinking block
+    })
+
+    it('should inject empty reasoning_content on messages without thinking blocks when thinking exists in conversation', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-v4-pro',
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: 'Q1' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'thinking-1' },
+              { type: 'text', text: 'A1' }
+            ]
+          },
+          { role: 'user', content: 'Q2' },
+          { role: 'assistant', content: 'A2' } // no thinking block
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const msgs = result.request.messages as any[]
+      // First assistant message has real thinking
+      expect(msgs[1].reasoning_content).toBe('thinking-1')
+      // Second assistant message (no thinking block) gets empty string
+      // because thinking exists in the conversation, so all must carry it
+      expect(msgs[3].reasoning_content).toBe('')
+    })
   })
 
   describe('convertAnthropicToOpenAIResponses', () => {

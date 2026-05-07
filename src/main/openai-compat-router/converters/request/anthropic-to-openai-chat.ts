@@ -49,6 +49,20 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
     openaiRequest.reasoning_effort = reasoningEffort
   }
 
+  // Ensure every assistant message carries the reasoning_content field when
+  // thinking mode is active OR thinking blocks are present in the conversation
+  // history. This handles providers (DeepSeek et al.) that require the field on
+  // ALL assistant messages once any thinking content exists in the conversation.
+  const hasThinkingInConversation = openaiRequest.messages
+    .some((m) => m.role === 'assistant' && 'reasoning_content' in m)
+  if (reasoningEffort || hasThinkingInConversation) {
+    for (const msg of openaiRequest.messages) {
+      if (msg.role === 'assistant' && !('reasoning_content' in msg)) {
+        ;(msg as unknown as Record<string, unknown>).reasoning_content = ''
+      }
+    }
+  }
+
   return {
     request: openaiRequest,
     hasImages,

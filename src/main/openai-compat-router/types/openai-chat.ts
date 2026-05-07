@@ -69,6 +69,8 @@ export interface OpenAIChatAssistantMessage {
   name?: string
   tool_calls?: OpenAIChatToolCall[]
   refusal?: string | null
+  /** Reasoning content from thinking blocks — echoed back in multi-turn conversations */
+  reasoning_content?: string
 }
 
 export interface OpenAIChatToolMessage {
