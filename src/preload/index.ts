@@ -139,6 +139,7 @@ export interface HaloAPI {
   testMcpConnections: () => Promise<{ success: boolean; servers: unknown[]; error?: string }>
   answerQuestion: (data: { conversationId: string; id: string; answers: Record<string, string> }) => Promise<IpcResponse>
   injectMessage: (data: { conversationId: string; message: string }) => Promise<IpcResponse>
+  getEngineCapabilities: () => Promise<IpcResponse>
 
   // Event listeners
   onAgentMessage: (callback: (data: unknown) => void) => () => void
@@ -557,6 +558,7 @@ const api: HaloAPI = {
   testMcpConnections: () => ipcRenderer.invoke('agent:test-mcp'),
   answerQuestion: (data) => ipcRenderer.invoke('agent:answer-question', data),
   injectMessage: (data) => ipcRenderer.invoke('agent:inject-message', data),
+  getEngineCapabilities: () => ipcRenderer.invoke('agent:get-engine-capabilities'),
 
   // Event listeners
   onAgentMessage: (callback) => createEventListener('agent:message', callback),

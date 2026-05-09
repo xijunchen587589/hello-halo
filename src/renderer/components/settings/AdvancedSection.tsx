@@ -241,13 +241,13 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Cpu className="w-4 h-4 text-muted-foreground shrink-0" />
-            <p className="font-medium">{t('Agent SDK Engine')}</p>
+            <p className="font-medium">{t('AI Agent Engine')}</p>
             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
               {t('Experimental')}
             </span>
           </div>
           <p className="text-sm text-muted-foreground mb-3">
-            {t('Choose the underlying SDK that powers the AI agent')}
+            {t('Choose the underlying engine that powers the AI agent')}
           </p>
 
           <div className="space-y-2">
@@ -263,7 +263,7 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
               />
               <div>
                 <p className="font-medium text-sm">{t('Claude Code SDK')}</p>
-                <p className="text-xs text-muted-foreground">{t('Official Anthropic SDK (default)')}</p>
+                <p className="text-xs text-muted-foreground">{t('Powered by the official Anthropic Claude Code engine. Works with a wide range of frontier models. (Default)')}</p>
               </div>
             </label>
 
@@ -279,7 +279,7 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
               />
               <div>
                 <p className="font-medium text-sm">{t('Halo SDK')}</p>
-                <p className="text-xs text-muted-foreground">{t('Module-level invocation with faster startup. Optimized for open-source models. Mirrors Claude Code SDK behavior. Experimental.')}</p>
+                <p className="text-xs text-muted-foreground">{t('The official Halo agent engine. Lightweight on resources, faster startup, optimized for open-source models. Experimental.')}</p>
               </div>
             </label>
 
@@ -295,25 +295,30 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
               />
               <div>
                 <p className="font-medium text-sm">{t('Codex SDK')}</p>
-                <p className="text-xs text-muted-foreground">{t('Codex SDK adapter that implements the Claude Code protocol for compatible Halo agent behavior. Experimental.')}</p>
+                <p className="text-xs text-muted-foreground">{t('Powered by the official OpenAI Codex SDK. Better suited for GPT-family models. Experimental.')}</p>
               </div>
             </label>
           </div>
 
           {/* Restart required notice */}
           {sdkEngineChanged && (
-            <div className="flex items-center justify-between mt-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-              <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
-                <RefreshCw className="w-4 h-4 shrink-0" />
-                <span>{t('Restart required for the SDK engine change to take effect.')}</span>
+            <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                  <RefreshCw className="w-4 h-4 shrink-0" />
+                  <span>{t('Restart required for the engine change to take effect.')}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRelaunch}
+                  className="ml-3 shrink-0 px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  {t('Restart Now')}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleRelaunch}
-                className="ml-3 shrink-0 px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              >
-                {t('Restart Now')}
-              </button>
+              <p className="text-xs text-blue-600/80 dark:text-blue-400/80">
+                {t('The selected engine only applies to new conversations and new tasks. Existing conversations cannot switch engines.')}
+              </p>
             </div>
           )}
         </div>

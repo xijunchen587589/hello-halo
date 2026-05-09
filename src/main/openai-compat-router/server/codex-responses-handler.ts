@@ -192,11 +192,20 @@ function responsesContentToAnthropicBlocks(content: unknown, role: 'user' | 'ass
 
 function responsesCallItemToAnthropicToolUse(item: any): AnthropicToolUseBlock {
   let input: Record<string, unknown> = {}
-  const raw = item.arguments ?? item.input ?? '{}'
-  try {
-    input = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw
-  } catch {
-    input = { text: String(raw || '') }
+  if (item.type === 'custom_tool_call') {
+    // FREEFORM custom-tool calls expose the raw freeform body in `input` — it
+    // is NOT JSON. We surface freeform tools to upstream Anthropic providers
+    // as JSON tools with a `{ input: string }` schema (see
+    // responsesToolsToAnthropicTools below), so forward the raw body under
+    // the same key here to keep history replay consistent.
+    input = { input: String(item.input ?? item.arguments ?? '') }
+  } else {
+    const raw = item.arguments ?? item.input ?? '{}'
+    try {
+      input = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw
+    } catch {
+      input = { text: String(raw || '') }
+    }
   }
 
   return {
@@ -221,18 +230,83 @@ function normalizeResponsesOutput(output: unknown): string {
 
 function responsesToolsToAnthropicTools(tools: unknown[] | undefined): AnthropicRequest['tools'] {
   if (!Array.isArray(tools)) return undefined
-  const converted = tools
-    .filter((tool: any) => tool?.type === 'function' || tool?.type === 'custom')
-    .map((tool: any) => {
+  const converted: NonNullable<AnthropicRequest['tools']> = []
+  for (const tool of tools as any[]) {
+    if (!tool || typeof tool !== 'object') continue
+    const type = String(tool.type || '')
+    if (type === 'function') {
       const fn = tool.function || tool
-      return {
+      converted.push({
         name: String(fn.name || tool.name || 'tool'),
         description: fn.description || tool.description,
         input_schema: fn.parameters || tool.parameters || { type: 'object', properties: {} },
         strict: fn.strict || tool.strict,
+      })
+      continue
+    }
+    if (type === 'custom') {
+      const fn = tool.function || tool
+      const explicitParams = fn.parameters || tool.parameters
+      // Two shapes arrive as `type: "custom"`:
+      //   1. JSON-schema function tools that simply use the custom marker
+      //      (have `parameters`). Pass the schema through untouched.
+      //   2. FREEFORM grammar tools (e.g. codex's `apply_patch`), which
+      //      carry `format: { type, syntax, definition }` and NO JSON
+      //      schema — the model is meant to emit raw text matching the
+      //      grammar. Anthropic tool-use has no FREEFORM/grammar surface,
+      //      so we degrade these to a single-string-arg JSON tool whose
+      //      shape mirrors codex's own `create_apply_patch_json_tool`
+      //      (input: string, required). The grammar definition is woven
+      //      into the description so the model still has a contract, and
+      //      the receiving codex handler accepts both Function and Custom
+      //      payloads (apply_patch.rs:304-309), so the JSON envelope round-
+      //      trips back into the FREEFORM tool's parser cleanly.
+      if (explicitParams) {
+        converted.push({
+          name: String(fn.name || tool.name || 'tool'),
+          description: fn.description || tool.description,
+          input_schema: explicitParams,
+          strict: fn.strict || tool.strict,
+        })
+        continue
       }
-    })
+      converted.push({
+        name: String(fn.name || tool.name || 'tool'),
+        description: freeformToolDescription(
+          String(fn.description || tool.description || ''),
+          tool.format,
+        ),
+        input_schema: {
+          type: 'object',
+          properties: {
+            input: {
+              type: 'string',
+              description: 'The entire freeform tool body as a single string.',
+            },
+          },
+          required: ['input'],
+          additionalProperties: false,
+        },
+        strict: fn.strict || tool.strict,
+      })
+    }
+  }
   return converted.length ? converted : undefined
+}
+
+function freeformToolDescription(originalDescription: string, format: unknown): string {
+  const segments: string[] = []
+  if (originalDescription) segments.push(originalDescription)
+  segments.push(
+    'This tool was originally a FREEFORM grammar tool; it has been wrapped for JSON tool-call transport. Place the entire freeform body in the `input` field as a single string. Do not add fields, escape text, or wrap with code fences.',
+  )
+  if (format && typeof format === 'object') {
+    const f = format as { syntax?: unknown; definition?: unknown; type?: unknown }
+    const syntax = typeof f.syntax === 'string' ? f.syntax : (typeof f.type === 'string' ? f.type : 'grammar')
+    const definition = typeof f.definition === 'string' ? f.definition : ''
+    if (definition) segments.push(`Grammar (${syntax}):\n${definition}`)
+  }
+  return segments.join('\n\n')
 }
 
 function responsesToolChoiceToAnthropic(toolChoice: unknown): AnthropicRequest['tool_choice'] {
@@ -466,6 +540,16 @@ function streamAnthropicEventToCodex(
         type: 'response.output_item.added',
         output_index: textItem.index,
         item: {
+          // `id` MUST be present and equal to the `item_id` later carried
+          // on `response.output_text.delta` / `response.output_item.done`.
+          // Codex CLI's parser correlates these three events by `item.id`;
+          // when omitted, the parser auto-generates a synthetic id for
+          // `output_item.added`, fails to match the deltas' `item_id`,
+          // and ends up creating TWO message items for the same text —
+          // which Halo's stream-processor renders as a doubled bubble
+          // (the duplicate-text bug). Keep this field in sync with the
+          // tool_use branch above and the lazy-create / done branches below.
+          id: textItem.id,
           type: 'message',
           role: 'assistant',
           content: textItem.text ? [{ type: 'output_text', text: textItem.text }] : [],
@@ -487,7 +571,9 @@ function streamAnthropicEventToCodex(
         writeCodexSse(res, 'response.output_item.added', {
           type: 'response.output_item.added',
           output_index: nextTextItem.index,
-          item: { type: 'message', role: 'assistant', content: [], phase: 'final_answer' },
+          // Same id-correlation contract as the content_block_start text
+          // branch: id MUST equal the deltas' item_id.
+          item: { id: nextTextItem.id, type: 'message', role: 'assistant', content: [], phase: 'final_answer' },
         })
       }
       writeCodexSse(res, 'response.output_text.delta', { type: 'response.output_text.delta', item_id: nextTextItem.id, delta: delta.text || '' })
@@ -533,6 +619,11 @@ function streamAnthropicEventToCodex(
         type: 'response.output_item.done',
         output_index: state.textItem.index,
         item: {
+          // Closes the id-correlation chain started by output_item.added.
+          // Without this, Codex CLI's parser cannot match `done` to the
+          // streamed deltas and creates a separate ghost item — see the
+          // detailed comment on the content_block_start text branch.
+          id: state.textItem.id,
           type: 'message',
           role: 'assistant',
           content: [{ type: 'output_text', text: state.textItem.text }],

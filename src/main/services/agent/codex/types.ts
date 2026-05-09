@@ -1,54 +1,20 @@
 /**
  * Shared types for the Codex engine adapter.
+ *
+ * The protocol-level types (thread events / items / notifications) live in
+ * `./types/codex-protocol.ts` and `./types/jsonrpc.ts`. This file holds only
+ * the small Halo-facing facade types (SdkModule shape, MCP server tool defs).
  */
+
+import type { EngineCapabilities } from '../capabilities'
 
 export interface CodexSdkModule {
   tool: (...args: any[]) => any
   createSdkMcpServer: (options: any) => any
   createSession: (options: Record<string, any>) => Promise<any>
   query: (params: any) => AsyncIterable<any>
-}
-
-export interface CodexModuleRuntime {
-  Codex: new (options?: any) => any
-}
-
-export interface CodexUsage {
-  input_tokens?: number
-  cached_input_tokens?: number
-  output_tokens?: number
-  reasoning_output_tokens?: number
-}
-
-export interface CodexThreadEvent {
-  type: string
-  thread_id?: string
-  usage?: CodexUsage
-  error?: { message?: string } | string
-  message?: string
-  item?: CodexThreadItem
-}
-
-export interface CodexThreadItem {
-  id?: string
-  type: string
-  text?: string
-  command?: string
-  aggregated_output?: string
-  exit_code?: number
-  status?: string
-  changes?: Array<{ path: string; kind: string }>
-  server?: string
-  tool?: string
-  arguments?: unknown
-  result?: {
-    content?: Array<Record<string, unknown>>
-    structured_content?: unknown
-  }
-  error?: { message?: string } | string
-  query?: string
-  items?: Array<{ text: string; completed: boolean }>
-  message?: string
+  /** Engine capability descriptor consumed by the IPC capabilities channel. */
+  capabilities: EngineCapabilities
 }
 
 export interface SdkMcpToolDefinition {
