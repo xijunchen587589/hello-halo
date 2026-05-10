@@ -2,14 +2,24 @@ package com.halo.mobile;
 
 import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
 import android.webkit.WebView;
 import androidx.core.view.WindowCompat;
-import androidx.core.view.WindowInsetsCompat;
-import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+
+    /**
+     * Bridge / WebView readiness retry budget for safe-area injection.
+     * 10 attempts × 200 ms = up to 2 s. If the WebView is not ready by then
+     * we give up — the JS-side fallbacks (Capacitor SystemBars on Android 16+,
+     * or the renderer's visualViewport listener) will still set the variable
+     * later when the page actually mounts.
+     */
+    private static final int SAFE_AREA_RETRY_MAX = 10;
+    private static final long SAFE_AREA_RETRY_DELAY_MS = 200L;
+
+    /** Default status bar height assumption (24dp) when all measurements fail. */
+    private static final int DEFAULT_STATUS_BAR_DP = 24;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -29,29 +39,32 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void injectSafeAreaInsets() {
-        // Use a retrying handler since the WebView may not be ready immediately
         getWindow().getDecorView().post(new Runnable() {
+            private int attempts = 0;
+
             @Override
             public void run() {
                 if (bridge == null || bridge.getWebView() == null) {
-                    // WebView not ready yet — retry after a short delay
-                    getWindow().getDecorView().postDelayed(this, 200);
+                    if (++attempts >= SAFE_AREA_RETRY_MAX) {
+                        // Give up. Renderer-side fallbacks (visualViewport listener,
+                        // Capacitor SystemBars on Android 16+) will still recover.
+                        android.util.Log.w("Halo", "Safe-area injection skipped: WebView not ready after "
+                                + SAFE_AREA_RETRY_MAX + " attempts");
+                        return;
+                    }
+                    getWindow().getDecorView().postDelayed(this, SAFE_AREA_RETRY_DELAY_MS);
                     return;
                 }
 
                 int statusBarHeightPx = getStatusBarHeight();
-                if (statusBarHeightPx <= 0) {
-                    // Fallback: 48px is a reasonable default for ~24dp @ 2x density
-                    statusBarHeightPx = 48;
-                }
-
                 float density = getResources().getDisplayMetrics().density;
                 int statusBarDp = Math.round(statusBarHeightPx / density);
 
                 WebView webView = bridge.getWebView();
-                String script = "try {" +
-                        "document.documentElement.style.setProperty('--safe-area-inset-top', '" + statusBarDp + "px');" +
-                        "} catch(e) { console.error('safe-area-inset-top injection failed:', e); }";
+                String script = "try {"
+                        + "document.documentElement.style.setProperty('--safe-area-inset-top', '"
+                        + statusBarDp + "px');"
+                        + "} catch(e) { console.warn('safe-area-inset-top injection failed:', e); }";
                 webView.evaluateJavascript(script, null);
             }
         });
@@ -70,11 +83,12 @@ public class MainActivity extends BridgeActivity {
         // Method 2: Get from Android resource system (works on all API levels)
         int resourceId = getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (resourceId > 0) {
-            return getResources().getDimensionPixelSize(resourceId);
+            int px = getResources().getDimensionPixelSize(resourceId);
+            if (px > 0) return px;
         }
 
         // Method 3: Fallback - compute from display metrics (~24dp)
         float density = getResources().getDisplayMetrics().density;
-        return Math.round(24 * density);
+        return Math.round(DEFAULT_STATUS_BAR_DP * density);
     }
 }

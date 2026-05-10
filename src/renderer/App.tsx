@@ -28,7 +28,7 @@ import { UpdateNotification } from './components/updater/UpdateNotification'
 import { NotificationToast } from './components/notification/NotificationToast'
 import { useNotificationStore } from './stores/notification.store'
 import { api } from './api'
-import { StatusBar } from '@capacitor/status-bar';
+import { syncStatusBarStyle } from './api/safe-area'
 import { isCapacitor, isElectron } from './api/transport'
 import { useTelemetry } from './hooks/useTelemetry'
 import type { WsConnectionState } from './api/transport'
@@ -217,22 +217,22 @@ export default function App() {
     const theme = config?.appearance?.theme || 'dark'
     applyTheme(theme)
 
+    // Resolve effective dark/light for the status bar.
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    const isDark = theme === 'dark' || (theme === 'system' && systemPrefersDark)
+
+    // Sync status bar style with theme (Capacitor mobile only). No-op elsewhere.
+    void syncStatusBarStyle(isDark)
+
     // Listen for system theme changes when using 'system' mode
     if (theme === 'system') {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-      const handleChange = () => applyTheme('system')
+      const handleChange = () => {
+        applyTheme('system')
+        void syncStatusBarStyle(mediaQuery.matches)
+      }
       mediaQuery.addEventListener('change', handleChange)
       return () => mediaQuery.removeEventListener('change', handleChange)
-    }
-
-    // Sync status bar style with theme (Capacitor mobile only)
-    if (api.isCapacitorMode()) {
-      try {
-        const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        StatusBar.setStyle({ style: isDark ? 'DARK' : 'LIGHT' });
-      } catch {
-        // ignore
-      }
     }
   }, [config?.appearance?.theme])
 
