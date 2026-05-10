@@ -28,6 +28,7 @@ import { UpdateNotification } from './components/updater/UpdateNotification'
 import { NotificationToast } from './components/notification/NotificationToast'
 import { useNotificationStore } from './stores/notification.store'
 import { api } from './api'
+import { StatusBar } from '@capacitor/status-bar';
 import { isCapacitor, isElectron } from './api/transport'
 import { useTelemetry } from './hooks/useTelemetry'
 import type { WsConnectionState } from './api/transport'
@@ -222,6 +223,16 @@ export default function App() {
       const handleChange = () => applyTheme('system')
       mediaQuery.addEventListener('change', handleChange)
       return () => mediaQuery.removeEventListener('change', handleChange)
+    }
+
+    // Sync status bar style with theme (Capacitor mobile only)
+    if (api.isCapacitorMode()) {
+      try {
+        const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        StatusBar.setStyle({ style: isDark ? 'DARK' : 'LIGHT' });
+      } catch {
+        // ignore
+      }
     }
   }, [config?.appearance?.theme])
 
