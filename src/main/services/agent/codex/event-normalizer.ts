@@ -11,12 +11,27 @@
  *   1. system.init                        — once per session, before first turn
  *   2. assistant.message_start            — wraps all content blocks
  *   3. content_block_start/_delta/_stop   — text / thinking / tool_use blocks
+ *   3b. AGGREGATE assistant message       — emitted at each block boundary,
+ *                                            carrying the just-completed block's
+ *                                            final form. Required so consumers
+ *                                            that key off top-level
+ *                                            `type: 'assistant'` (apps/runtime
+ *                                            execute.ts; app-chat.ts
+ *                                            lastAssistantText; session-store
+ *                                            JSONL replay) see Codex turns the
+ *                                            same way they see Claude turns.
+ *                                            The aggregate for a tool_use is
+ *                                            emitted BEFORE its tool_result so
+ *                                            id-based linking during JSONL
+ *                                            replay works.
  *   4. user.tool_result                   — interleaved with tool_use
  *   5. assistant.message_delta + _stop    — carries stop_reason + usage
  *   6. result                             — terminal marker
  *
  * Without (2) and (5) the CC stream-processor cannot extract per-turn usage
  * or lock final content. Without `result` the consumer never advances.
+ * Without (3b) the engine produces a stream_event-only protocol that diverges
+ * from Claude SDK and forces every consumer to learn engine-specific paths.
  *
  * Notification → CC mapping (canonical, see ARCH plan appendix A):
  *
@@ -78,6 +93,12 @@ interface BlockState {
   /** Original tool name surfaced to CC layer. */
   toolName: string
   toolId: string
+  /**
+   * Final tool input surfaced to CC layer. Captured at startToolBlock so the
+   * aggregate `tool_use` envelope (emitted right before user.tool_result) can
+   * carry the same `input` structure the stream_event delta carried.
+   */
+  toolInput: Record<string, unknown>
   /** Original Codex item type — for diagnostics. */
   fromKind: string
 }
@@ -407,6 +428,7 @@ export class CodexEventNormalizer {
       }
       this.finalText = tracked.state.textSoFar
       messages.push(...this.stopBlock(tracked.state))
+      messages.push(...this.aggregateBlock('text', tracked.state))
       this.items.delete(itemId)
       return messages
     }
@@ -425,6 +447,7 @@ export class CodexEventNormalizer {
         tracked.state.textSoFar = itemText
       }
       messages.push(...this.stopBlock(tracked.state))
+      messages.push(...this.aggregateBlock(tracked.blockKind, tracked.state))
       this.items.delete(itemId)
       return messages
     }
@@ -452,7 +475,10 @@ export class CodexEventNormalizer {
         tracked2.state.textSoFar = text
         this.finalText = text
       }
-      if (tracked2) messages.push(...this.stopBlock(tracked2.state))
+      if (tracked2) {
+        messages.push(...this.stopBlock(tracked2.state))
+        messages.push(...this.aggregateBlock('text', tracked2.state))
+      }
       this.items.delete(itemId)
       return messages
     }
@@ -468,7 +494,10 @@ export class CodexEventNormalizer {
         }))
         tracked2.state.textSoFar = text
       }
-      if (tracked2) messages.push(...this.stopBlock(tracked2.state))
+      if (tracked2) {
+        messages.push(...this.stopBlock(tracked2.state))
+        messages.push(...this.aggregateBlock('thinking', tracked2.state))
+      }
       this.items.delete(itemId)
       return messages
     }
@@ -548,8 +577,11 @@ export class CodexEventNormalizer {
     if (params?.usage) this.lastUsage = params.usage
     const messages: any[] = []
     // Close any blocks the server forgot to mark completed (defensive).
+    // Emit the per-block aggregate alongside the stream stop so consumers
+    // that key off `type: 'assistant'` still see the leftover content.
     for (const [, tracked] of Array.from(this.items.entries())) {
       messages.push(...this.stopBlock(tracked.state))
+      messages.push(...this.aggregateBlock(tracked.blockKind, tracked.state))
     }
     this.items.clear()
     messages.push(...this.closeMessage(this.hasToolUseInTurn ? 'tool_use' : 'end_turn'))
@@ -639,6 +671,7 @@ export class CodexEventNormalizer {
       output: '',
       toolName: '',
       toolId: itemId,
+      toolInput: {},
       fromKind: 'agent_message',
     }
     this.items.set(itemId, { blockKind: 'text', state })
@@ -659,6 +692,7 @@ export class CodexEventNormalizer {
       output: '',
       toolName: '',
       toolId: itemId,
+      toolInput: {},
       fromKind: 'reasoning',
     }
     this.items.set(itemId, { blockKind: 'thinking', state })
@@ -685,6 +719,7 @@ export class CodexEventNormalizer {
       output: '',
       toolName,
       toolId: itemId,
+      toolInput: input,
       fromKind,
     }
     this.items.set(itemId, { blockKind: 'tool', state })
@@ -704,10 +739,61 @@ export class CodexEventNormalizer {
     ]
   }
 
+  /**
+   * Build the aggregate `type: 'assistant'` envelope for a single completed
+   * block. Returns an empty array for empty text/thinking blocks (no payload
+   * worth surfacing).
+   *
+   * Why per-block aggregate (vs one aggregate at message close):
+   *   - tool_use must arrive BEFORE its tool_result for id-based linking in
+   *     `apps/runtime/session-store.convertEventsToMessages` (toolUseMap is
+   *     populated lazily as assistant messages arrive). Codex emits
+   *     `userWithToolResult` immediately on item.completed; emitting the
+   *     aggregate at message close would put tool_use AFTER tool_result and
+   *     drop the linkage on JSONL replay.
+   *   - Per-block matches Claude SDK's per-response granularity for mixed
+   *     text/tool turns.
+   *
+   * Why the aggregate at all (vs trusting stream_events):
+   *   - execute.ts (automation runtime) consumes only top-level
+   *     `type: 'assistant'` for finalText / report_to_user detection.
+   *   - app-chat.ts captures lastAssistantText off raw `type: 'assistant'`
+   *     to bypass stream-processor's known lastTextContent corruption TODO.
+   *   - session-store JSONL replay reconstructs message bubbles from
+   *     `type: 'assistant'` (the stream_event branch is legacy/optional).
+   *
+   * Without this layer the Codex normalizer satisfies stream-processor's UI
+   * needs but silently breaks every consumer that follows the Claude SDK
+   * top-level message contract.
+   */
+  private aggregateBlock(blockKind: BlockKind, state: BlockState): any[] {
+    if (blockKind === 'text') {
+      if (!state.textSoFar) return []
+      return assistantWithBlocks([{ type: 'text', text: state.textSoFar }])
+    }
+    if (blockKind === 'thinking' || blockKind === 'thinking-summary') {
+      if (!state.textSoFar) return []
+      return assistantWithBlocks([{ type: 'thinking', thinking: state.textSoFar }])
+    }
+    if (blockKind === 'tool') {
+      return assistantWithBlocks([{
+        type: 'tool_use',
+        id: state.toolId,
+        name: state.toolName,
+        input: state.toolInput,
+      }])
+    }
+    return []
+  }
+
   private completeToolBlock(itemId: string, item: ThreadItem, state: BlockState): any[] {
     const messages: any[] = []
     const isError = isItemErrored(item)
     const output = extractToolOutput(item, state)
+    // The aggregate `tool_use` envelope MUST precede the user.tool_result so
+    // session-store JSONL replay can link the result to its tool by id (see
+    // `aggregateBlock` for the full rationale).
+    messages.push(...this.aggregateBlock('tool', state))
     messages.push(userWithToolResult(itemId, output, isError))
     this.items.delete(itemId)
     return messages

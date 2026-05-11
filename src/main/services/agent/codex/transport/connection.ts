@@ -20,6 +20,10 @@ import type { Readable, Writable } from 'stream'
 export interface CodexConnectionOptions {
   /** Absolute path to the `codex` binary. */
   binaryPath: string
+  /** True when binaryPath points at @openai/codex's Node.js shim. */
+  isJsShim?: boolean
+  /** Extra directories prepended to PATH for the child process. */
+  pathDirs?: string[]
   /** Environment variables for the child. Halo always sets CODEX_HOME here. */
   env: NodeJS.ProcessEnv
   /** Working directory of the child. */
@@ -41,11 +45,23 @@ export interface CodexConnection {
   readonly pid: number | null
 }
 
+export interface ResolvedCodexBinary {
+  /** Executable or JS shim path passed to the connection. */
+  binaryPath: string
+  /** Whether binaryPath is the @openai/codex JS shim. */
+  isJsShim: boolean
+  /** Directories that must be available on PATH for Codex helper tools. */
+  pathDirs: string[]
+}
+
 /**
  * Resolve the bundled `codex` binary path inside this Electron build. Codex
  * publishes its CLI as `@openai/codex` (which depends on a platform-specific
  * subpackage `@openai/codex-{platform}-{arch}` that contains the actual
- * native binary). The `bin/codex.js` shim does the platform dispatch.
+ * native binary). In production we resolve the native binary directly instead
+ * of executing `bin/codex.js` through Electron-as-Node: the shim is ESM and
+ * Electron's Node entrypoint can parse it as CommonJS when launched from the
+ * app bundle, causing an immediate SyntaxError before app-server starts.
  *
  * We deliberately reuse `@openai/codex-sdk`'s installation as the carrier
  * for the binary even though we no longer use its TypeScript surface. This
@@ -53,14 +69,60 @@ export interface CodexConnection {
  * bundled by @openai/codex-sdk) — zero install changes, zero new
  * supply-chain audit.
  */
-export function resolveBundledCodexBinary(): string | null {
-  const candidates = [
-    path.join(process.cwd(), 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
-    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
-    path.join(process.resourcesPath || '', 'app.asar', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
+export function resolveBundledCodexBinary(): ResolvedCodexBinary | null {
+  for (const root of getCodexPackageRoots()) {
+    const native = resolveNativeCodexBinary(root)
+    if (native) return native
+  }
+
+  for (const root of getCodexPackageRoots()) {
+    const shim = path.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+    if (existsSync(shim)) {
+      return { binaryPath: shim, isJsShim: true, pathDirs: [] }
+    }
+  }
+  return null
+}
+
+function getCodexPackageRoots(): string[] {
+  const roots = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked') : '',
+    process.resourcesPath ? path.join(process.resourcesPath, 'app.asar') : '',
+    process.cwd(),
   ]
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate
+  return [...new Set(roots.filter(Boolean))]
+}
+
+function resolveNativeCodexBinary(root: string): ResolvedCodexBinary | null {
+  const target = getCodexNativeTarget()
+  if (!target) return null
+
+  const packageRoot = path.join(root, 'node_modules', '@openai', target.packageName)
+  const archRoot = path.join(packageRoot, 'vendor', target.targetTriple)
+  const binaryPath = path.join(archRoot, 'codex', target.binaryName)
+  if (!existsSync(binaryPath)) return null
+
+  const pathDir = path.join(archRoot, 'path')
+  return {
+    binaryPath,
+    isJsShim: false,
+    pathDirs: existsSync(pathDir) ? [pathDir] : [],
+  }
+}
+
+function getCodexNativeTarget(): { packageName: string; targetTriple: string; binaryName: string } | null {
+  const binaryName = process.platform === 'win32' ? 'codex.exe' : 'codex'
+  if (process.platform === 'darwin') {
+    if (process.arch === 'arm64') return { packageName: 'codex-darwin-arm64', targetTriple: 'aarch64-apple-darwin', binaryName }
+    if (process.arch === 'x64') return { packageName: 'codex-darwin-x64', targetTriple: 'x86_64-apple-darwin', binaryName }
+  }
+  if (process.platform === 'linux') {
+    if (process.arch === 'arm64') return { packageName: 'codex-linux-arm64', targetTriple: 'aarch64-unknown-linux-musl', binaryName }
+    if (process.arch === 'x64') return { packageName: 'codex-linux-x64', targetTriple: 'x86_64-unknown-linux-musl', binaryName }
+  }
+  if (process.platform === 'win32') {
+    if (process.arch === 'arm64') return { packageName: 'codex-win32-arm64', targetTriple: 'aarch64-pc-windows-msvc', binaryName }
+    if (process.arch === 'x64') return { packageName: 'codex-win32-x64', targetTriple: 'x86_64-pc-windows-msvc', binaryName }
   }
   return null
 }
@@ -109,11 +171,8 @@ class ChildProcessConnection implements CodexConnection {
     const { binaryPath, env, cwd } = this.options
     const args = this.options.args ?? ['app-server']
 
-    // The codex distribution ships a Node.js shim at bin/codex.js that
-    // dispatches to the platform-native binary. We invoke it under Node so
-    // we don't need to special-case Linux vs macOS vs Windows.
     const nodePath = process.execPath
-    const isJsShim = binaryPath.endsWith('.js')
+    const isJsShim = this.options.isJsShim ?? binaryPath.endsWith('.js')
 
     const command = isJsShim ? nodePath : binaryPath
     const finalArgs = isJsShim ? [binaryPath, ...args] : args
@@ -122,6 +181,9 @@ class ChildProcessConnection implements CodexConnection {
     // ELECTRON_RUN_AS_NODE so Electron behaves like a vanilla Node process
     // (no GUI, no Dock icon).
     const childEnv: NodeJS.ProcessEnv = { ...env }
+    if (this.options.pathDirs?.length) {
+      childEnv.PATH = prependPathDirs(this.options.pathDirs, childEnv.PATH)
+    }
     if (isJsShim && nodePath === process.execPath) {
       childEnv.ELECTRON_RUN_AS_NODE = '1'
     }
@@ -234,4 +296,10 @@ class ChildProcessConnection implements CodexConnection {
       }
     }
   }
+}
+
+function prependPathDirs(dirs: string[], existingPath: string | undefined): string {
+  const delimiter = process.platform === 'win32' ? ';' : ':'
+  const parts = [...dirs.filter(Boolean), ...(existingPath || '').split(delimiter).filter(Boolean)]
+  return [...new Set(parts)].join(delimiter)
 }

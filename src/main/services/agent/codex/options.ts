@@ -27,6 +27,7 @@ import { getCleanUserEnv } from '../sdk-config'
 import { ensureOpenAICompatRouter, encodeBackendConfig } from '../../../openai-compat-router'
 import type { ApiCredentials } from '../types'
 import type { AskForApproval, SandboxMode, ThreadStartParams } from './types/codex-protocol'
+import { prepareCodexMcpServers, type CodexSdkMcpBridge } from './mcp-bridge'
 
 export interface CodexResolvedOptions {
   /** Process env passed to the app-server child. */
@@ -41,6 +42,8 @@ export interface CodexResolvedOptions {
   threadParams: ThreadStartParams
   /** MCP servers (used by the event normalizer to populate system.init.tools). */
   mcpServers: Record<string, any>
+  /** Local bridge for SDK-backed MCP servers. Owned by CodexAppServerSession. */
+  mcpBridge?: CodexSdkMcpBridge
 }
 
 export async function resolveCodexOptions(sdkOptions: Record<string, any>): Promise<CodexResolvedOptions> {
@@ -54,24 +57,31 @@ export async function resolveCodexOptions(sdkOptions: Record<string, any>): Prom
   // `model_providers.<id>.env_key` from the OS environment of the
   // app-server child — NOT from the JSON config — so the key must land
   // in `env`, not in `config.env`.
-  const { config, processEnvAdditions } = await buildThreadConfig(sdkOptions, credentials)
-  const env = await buildCodexEnv(sdkOptions, credentials, processEnvAdditions)
+  const preparedMcp = await prepareCodexMcpServers(sdkOptions.mcpServers)
+  try {
+    const { config, processEnvAdditions } = await buildThreadConfig(sdkOptions, credentials, preparedMcp.mcpServers)
+    const env = await buildCodexEnv(sdkOptions, credentials, processEnvAdditions)
 
-  const threadParams: ThreadStartParams = {
-    model,
-    cwd,
-    sandbox: resolveSandboxMode(sdkOptions),
-    approvalPolicy: resolveApprovalPolicy(sdkOptions),
-    config,
-  }
+    const threadParams: ThreadStartParams = {
+      model,
+      cwd,
+      sandbox: resolveSandboxMode(sdkOptions),
+      approvalPolicy: resolveApprovalPolicy(sdkOptions),
+      config,
+    }
 
-  return {
-    env,
-    cwd,
-    model,
-    displayModel: credentials.displayModel || credentials.model || model,
-    threadParams,
-    mcpServers: sdkOptions.mcpServers || {},
+    return {
+      env,
+      cwd,
+      model,
+      displayModel: credentials.displayModel || credentials.model || model,
+      threadParams,
+      mcpServers: pickInjectedMcpServers(sdkOptions.mcpServers || {}, preparedMcp.injectedServerNames),
+      mcpBridge: preparedMcp.bridge,
+    }
+  } catch (err) {
+    await preparedMcp.bridge?.close().catch(() => {})
+    throw err
   }
 }
 
@@ -164,6 +174,7 @@ interface BuiltThreadConfig {
 async function buildThreadConfig(
   sdkOptions: Record<string, any>,
   credentials: ApiCredentials,
+  codexMcpServers: Record<string, unknown>,
 ): Promise<BuiltThreadConfig> {
   const config: Record<string, unknown> = {
     model_reasoning_effort: sdkOptions.maxThinkingTokens ? 'high' : 'medium',
@@ -187,6 +198,10 @@ async function buildThreadConfig(
     features: {
       multi_agent_v2: true,
     },
+  }
+
+  if (Object.keys(codexMcpServers).length > 0) {
+    config.mcp_servers = codexMcpServers
   }
 
   const processEnvAdditions: Record<string, string> = {}
@@ -272,4 +287,9 @@ function resolveApprovalPolicy(sdkOptions: Record<string, any>): AskForApproval 
 
 function hasMcpServer(mcpServers: Record<string, any> | undefined, name: string): boolean {
   return !!mcpServers && Object.prototype.hasOwnProperty.call(mcpServers, name)
+}
+
+function pickInjectedMcpServers(mcpServers: Record<string, any>, injectedNames: string[]): Record<string, any> {
+  const injected = new Set(injectedNames)
+  return Object.fromEntries(Object.entries(mcpServers).filter(([name]) => injected.has(name)))
 }

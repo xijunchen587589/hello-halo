@@ -83,13 +83,28 @@ describe('CodexEventNormalizer (app-server protocol)', () => {
       { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"command":"pwd"}' } },
       { type: 'content_block_stop', index: 0 },
     ])
-    expect(completed).toEqual([{
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'cmd', content: '/tmp\n', is_error: false }],
+    // ItemCompleted yields:
+    //   1. Aggregate `assistant` envelope with the tool_use block (Claude SDK
+    //      protocol parity — must precede tool_result for id-based linking
+    //      during JSONL replay). See `aggregateBlock` rationale.
+    //   2. `user` envelope with the tool_result.
+    expect(completed).toEqual([
+      {
+        type: 'assistant',
+        message: {
+          id: expect.stringMatching(/^codex-msg-/),
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'cmd', name: 'Bash', input: { command: 'pwd' } }],
+        },
       },
-    }])
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'cmd', content: '/tmp\n', is_error: false }],
+        },
+      },
+    ])
   })
 
   it('synthesizes TodoWrite from a Codex plan item (Markdown checkbox text → 2-state list)', () => {
@@ -331,6 +346,103 @@ describe('CodexEventNormalizer (app-server protocol)', () => {
     const turnStart = n.handle(ServerNotifications.TurnStarted, { threadId: 't', turnId: 'r1' })
     const initFrame = turnStart.find((m: any) => m?.type === 'system' && m?.subtype === 'init')
     expect(initFrame).toBeDefined()
+  })
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Aggregate `type: 'assistant'` envelopes (Claude SDK protocol parity)
+  // ──────────────────────────────────────────────────────────────────────
+  //
+  // Halo's automation runtime (apps/runtime/execute.ts), app-chat
+  // lastAssistantText capture, and session-store JSONL replay all key off
+  // top-level `type: 'assistant'` messages. The Codex normalizer must
+  // surface those alongside its stream_events so engine selection is
+  // invisible to consumers. See event-normalizer.ts → aggregateBlock().
+
+  it('emits an aggregate `type:"assistant"` with the final text after a text block stops', () => {
+    const n = createNormalizer()
+    n.handle(ServerNotifications.TurnStarted, { threadId: 't', turnId: 'r1' })
+    n.handle(ServerNotifications.ItemStarted, {
+      threadId: 't', turnId: 'r1', itemId: 'msg-1',
+      item: { id: 'msg-1', type: 'agentMessage' },
+    })
+    n.handle(ServerNotifications.AgentMessageDelta, { threadId: 't', turnId: 'r1', itemId: 'msg-1', delta: 'Hello world' })
+    const itemDone = n.handle(ServerNotifications.ItemCompleted, {
+      threadId: 't', turnId: 'r1', itemId: 'msg-1',
+      item: { id: 'msg-1', type: 'agentMessage', text: 'Hello world' },
+    })
+    const aggregate = itemDone.find((m) => m?.type === 'assistant')
+    expect(aggregate).toBeDefined()
+    expect(aggregate.message.role).toBe('assistant')
+    expect(aggregate.message.content).toEqual([{ type: 'text', text: 'Hello world' }])
+  })
+
+  it('emits an aggregate `type:"assistant"` with the thinking block after reasoning stops', () => {
+    const n = createNormalizer()
+    n.handle(ServerNotifications.TurnStarted, { threadId: 't', turnId: 'r1' })
+    n.handle(ServerNotifications.ItemStarted, {
+      threadId: 't', turnId: 'r1', itemId: 'r-1',
+      item: { id: 'r-1', type: 'reasoning' },
+    })
+    n.handle(ServerNotifications.ReasoningTextDelta, { threadId: 't', turnId: 'r1', itemId: 'r-1', delta: 'Pondering' })
+    const itemDone = n.handle(ServerNotifications.ItemCompleted, {
+      threadId: 't', turnId: 'r1', itemId: 'r-1',
+      item: { id: 'r-1', type: 'reasoning', content: ['Pondering'] },
+    })
+    const aggregate = itemDone.find((m) => m?.type === 'assistant')
+    expect(aggregate).toBeDefined()
+    expect(aggregate.message.content).toEqual([{ type: 'thinking', thinking: 'Pondering' }])
+  })
+
+  it('emits an aggregate `tool_use` envelope BEFORE the user.tool_result so JSONL replay can link them by id', () => {
+    // Order matters: session-store.convertEventsToMessages builds toolUseMap
+    // lazily as `assistant` messages arrive. If the user.tool_result is seen
+    // before the corresponding tool_use, the link is silently dropped.
+    const n = createNormalizer()
+    n.handle(ServerNotifications.TurnStarted, { threadId: 't', turnId: 'r1' })
+    n.handle(ServerNotifications.ItemStarted, {
+      threadId: 't', turnId: 'r1', itemId: 'cmd',
+      item: { id: 'cmd', type: 'commandExecution', command: 'ls' },
+    })
+    const itemDone = n.handle(ServerNotifications.ItemCompleted, {
+      threadId: 't', turnId: 'r1', itemId: 'cmd',
+      item: { id: 'cmd', type: 'commandExecution', command: 'ls', aggregatedOutput: 'a\nb\n', status: 'completed' },
+    })
+    const assistantIdx = itemDone.findIndex((m) => m?.type === 'assistant')
+    const userIdx = itemDone.findIndex((m) => m?.type === 'user')
+    expect(assistantIdx).toBeGreaterThanOrEqual(0)
+    expect(userIdx).toBeGreaterThanOrEqual(0)
+    expect(assistantIdx).toBeLessThan(userIdx)
+
+    const aggregate = itemDone[assistantIdx]
+    expect(aggregate.message.content).toEqual([{
+      type: 'tool_use',
+      id: 'cmd',
+      name: 'Bash',
+      input: { command: 'ls' },
+    }])
+
+    const toolResult = itemDone[userIdx]
+    expect(toolResult.message.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'cmd',
+      is_error: false,
+    })
+  })
+
+  it('does not emit an empty aggregate for a text block that streamed no content', () => {
+    // Defensive: a placeholder text block with no deltas and no item.text
+    // should not surface a degenerate `assistant` envelope.
+    const n = createNormalizer()
+    n.handle(ServerNotifications.TurnStarted, { threadId: 't', turnId: 'r1' })
+    n.handle(ServerNotifications.ItemStarted, {
+      threadId: 't', turnId: 'r1', itemId: 'msg-empty',
+      item: { id: 'msg-empty', type: 'agentMessage' },
+    })
+    const itemDone = n.handle(ServerNotifications.ItemCompleted, {
+      threadId: 't', turnId: 'r1', itemId: 'msg-empty',
+      item: { id: 'msg-empty', type: 'agentMessage', text: '' },
+    })
+    expect(itemDone.find((m) => m?.type === 'assistant')).toBeUndefined()
   })
 
   it('REGRESSION: handle() emits zero messages until a turn-scoped notification arrives', () => {

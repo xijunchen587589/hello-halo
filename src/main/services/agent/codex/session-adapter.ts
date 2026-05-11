@@ -161,15 +161,17 @@ export class CodexAppServerSession {
   }
 
   private async doStart(): Promise<void> {
-    const binary = resolveBundledCodexBinary()
-    if (!binary) {
+    const resolvedBinary = resolveBundledCodexBinary()
+    if (!resolvedBinary) {
       throw new Error(
-        '[Codex] Could not find the codex binary. Make sure @openai/codex is installed.',
+        '[Codex] Could not find the codex binary. Make sure @openai/codex and its platform package are installed.',
       )
     }
 
     const connection = createCodexConnection({
-      binaryPath: binary,
+      binaryPath: resolvedBinary.binaryPath,
+      isJsShim: resolvedBinary.isJsShim,
+      pathDirs: resolvedBinary.pathDirs,
       env: this.options.env,
       cwd: this.options.cwd,
       onStderr: (line) => {
@@ -377,6 +379,8 @@ export class CodexAppServerSession {
     try { await this.connection?.stop() } catch { /* best-effort */ }
     this.connection = null
 
+    try { await this.options.mcpBridge?.close() } catch { /* best-effort */ }
+
     // Wake any pending stream() consumer so they observe end-of-stream.
     this.wakeNotificationWaiters()
   }
@@ -460,6 +464,7 @@ export class CodexAppServerSession {
       this.pushNotification(this.normalizer.createResult(true, err?.message || 'Codex app-server exited'))
     }
     this.closed = true
+    void this.options.mcpBridge?.close().catch(() => {})
     for (const cb of this.exitListeners) {
       try { cb(err) } catch { /* best-effort */ }
     }

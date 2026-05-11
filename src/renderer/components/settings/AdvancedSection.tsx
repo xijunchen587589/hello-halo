@@ -111,6 +111,7 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
     }
     return flags
   })
+  const [annotationsEnabled, setAnnotationsEnabled] = useState(config?.annotations?.enabled ?? true)
   const [developerMode, setDeveloperModeState] = useState(config?.agent?.developerMode ?? false)
   const [capsPanelOpen, setCapsPanelOpen] = useState(false)
 
@@ -214,6 +215,15 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
     }
   }
 
+  const handleAnnotationsToggle = async (enabled: boolean) => {
+    setAnnotationsEnabled(enabled)
+    try {
+      await api.patchConfig({ annotations: { enabled } })
+    } catch (error) {
+      console.error("[AdvancedSection] Failed to update annotations:", error)
+      setAnnotationsEnabled(config?.annotations?.enabled ?? true)
+    }
+  }
   const handleDeveloperModeChange = async (enabled: boolean) => {
     setDeveloperModeState(enabled)
     try {
@@ -414,6 +424,28 @@ export function AdvancedSection({ config, setConfig }: AdvancedSectionProps) {
           />
         </div>
 
+        {/* Annotation Settings */}
+        <div className="flex items-center justify-between pt-4 border-t border-border">
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <p className="font-medium">{t(u6279u6ce8u529fu80fd)}</p>
+              <span
+                className="inline-flex items-center justify-center w-4 h-4 text-xs rounded-full bg-muted text-muted-foreground cursor-help"
+                title={t(u663eu793au6216u9690u85cfu804au5929u6d88u606fu7684u6279u6ce8u5185u5bb9)}
+              >
+                ?
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t(u663eu793au6216u9690u85cfu804au5929u6d88u606fu7684u6279u6ce8u5185u5bb9)}
+            </p>
+          </div>
+          <Switch
+            checked={annotationsEnabled}
+            onCheckedChange={handleAnnotationsToggle}
+            size="sm"
+          />
+        </div>
         {/* Developer Mode */}
         <div className="flex items-start justify-between pt-4 border-t border-border">
           <div className="flex-1 min-w-0">
