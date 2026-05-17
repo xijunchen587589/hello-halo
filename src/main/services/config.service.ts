@@ -468,6 +468,11 @@ interface HaloConfig {
   remoteAccess: {
     enabled: boolean
     port: number
+    /**
+     * Persisted access PIN/password. Restored on next start so paired devices
+     * keep working after a restart. Generated on first enable when absent.
+     */
+    password?: string
   }
   onboarding: {
     completed: boolean

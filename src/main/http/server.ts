@@ -10,7 +10,7 @@ import { BrowserWindow } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { createConnection, createServer as createNetServer } from 'net'
 
-import { authMiddleware, generateAccessToken, getAccessToken, clearAccessToken, validateToken } from './auth'
+import { authMiddleware, generateAccessToken, getAccessToken, clearAccessToken, restoreAccessToken, validateToken } from './auth'
 import { initWebSocket, shutdownWebSocket, getClientCount } from './websocket'
 import { registerApiRoutes } from './routes'
 import { getMainWindow as getMainWindowFromService } from '../services/window.service'
@@ -75,9 +75,18 @@ function cleanupServerOnError(): void {
 
 /**
  * Start the HTTP server
+ *
+ * @param port            Preferred port. Falls back to the next available one
+ *                        if it is occupied.
+ * @param existingToken   Previously persisted access token. When provided and
+ *                        non-empty, the server restores it instead of
+ *                        generating a fresh one. Callers (remote.service)
+ *                        are responsible for persisting newly generated
+ *                        tokens to config.
  */
 export async function startHttpServer(
-  port: number = DEFAULT_PORT
+  port: number = DEFAULT_PORT,
+  existingToken?: string
 ): Promise<{ port: number; token: string }> {
   const listenPort = await findAvailablePort(port)
 
@@ -272,8 +281,16 @@ export async function startHttpServer(
     })
   }
 
-  // Generate access token
-  const token = generateAccessToken()
+  // Restore previously persisted token when available; otherwise generate a
+  // fresh PIN. Persistence of newly generated tokens is owned by the caller
+  // (remote.service.ts) to keep this layer free of config concerns.
+  let token: string
+  if (existingToken && existingToken.length >= 4) {
+    restoreAccessToken(existingToken)
+    token = existingToken
+  } else {
+    token = generateAccessToken()
+  }
 
   // Start listening
   return new Promise((resolve, reject) => {
@@ -290,7 +307,7 @@ export async function startHttpServer(
       if (error.code === 'EADDRINUSE') {
         const nextPort = listenPort + 1
         console.log(`[HTTP] Port ${listenPort} still in use, trying ${nextPort}`)
-        startHttpServer(nextPort).then(resolve).catch(reject)
+        startHttpServer(nextPort, existingToken).then(resolve).catch(reject)
       } else {
         reject(error)
       }
