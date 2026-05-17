@@ -9,6 +9,7 @@ import {
   convertAnthropicToolChoiceToOpenAIChat,
   convertAnthropicThinkingToChatReasoningEffort
 } from '../tools'
+import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
 
 export interface ConversionResult {
   request: OpenAIChatRequest
@@ -20,10 +21,18 @@ export interface ConversionResult {
  * Convert Anthropic request to OpenAI Chat Completions request
  */
 export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest): ConversionResult {
+  // Strip image blocks for non-vision models. The OpenAI Chat spec encodes
+  // images as `{type:'image_url', ...}`, but strict non-vision providers
+  // reject this variant entirely. Image content can leak in via tool results
+  // (Read on image, screenshots, MCP image returns) or mid-conv model
+  // switches — the renderer UI input gate alone is not sufficient.
+  const stripImages = !supportsVisionById(anthropicRequest.model)
+
   // Convert messages
   const { messages, hasImages } = convertAnthropicMessagesToOpenAIChat(
     anthropicRequest.messages,
-    anthropicRequest.system
+    anthropicRequest.system,
+    { stripImages }
   )
 
   // Convert tools - just filter invalid ones, don't reject all
@@ -61,6 +70,12 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
         ;(msg as unknown as Record<string, unknown>).reasoning_content = ''
       }
     }
+  }
+
+  if (stripImages && hasImages) {
+    console.log(
+      `[openai-compat] Stripped image content for non-vision model: ${anthropicRequest.model}`
+    )
   }
 
   return {

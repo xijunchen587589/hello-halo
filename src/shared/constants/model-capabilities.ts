@@ -79,3 +79,19 @@ export function supportsVision(model: ModelOption): boolean {
   if (model.supportsVision !== undefined) return model.supportsVision
   return inferVisionSupport(model.id)
 }
+
+/**
+ * Check vision support by model ID alone.
+ *
+ * Used by the openai-compat router where only the request body's `model`
+ * string is available (no `ModelOption` reference). Skips the explicit
+ * `ModelOption.supportsVision` override — for full UI-facing checks use
+ * {@link supportsVision} with the resolved ModelOption.
+ *
+ * Behavior matches {@link supportsVision} step 2-3 (keyword/blacklist
+ * inference, default true for unknown IDs).
+ */
+export function supportsVisionById(modelId: string | undefined | null): boolean {
+  if (!modelId) return true
+  return inferVisionSupport(modelId)
+}

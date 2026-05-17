@@ -6,117 +6,124 @@
  * API credential resolution, and renderer communication.
  */
 
-import { app } from 'electron'
-import { join, dirname } from 'path'
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readlinkSync } from 'fs'
+import { join, dirname, basename } from 'path'
+import { existsSync, mkdirSync } from 'fs'
 import { getConfig, getTempSpacePath } from '../config.service'
 import { getSpace } from '../space.service'
 import { getAISourceManager } from '../ai-sources'
 import { getAppManager } from '../../apps/manager'
 import type { McpSpec } from '../../apps/spec/schema'
-import type { BackendRequestConfig } from '../../../shared/types/ai-sources'
-import type { ApiCredentials } from './types'
+import type { BackendRequestConfig, AISource } from '../../../shared/types/ai-sources'
+import { modelCapabilitiesService } from '../model-capabilities.service'
+import type { ApiCredentials, ResolvedModelCapabilities } from './types'
 
 // ============================================
 // Headless Electron Path Management
 // ============================================
 
-// Cached path to headless Electron binary (outside .app bundle to prevent Dock icon on macOS)
+// Cached path to a Node-capable Electron binary that won't register a Dock icon on macOS.
 let headlessElectronPath: string | null = null
 
 /**
- * Get the path to the headless Electron binary.
+ * Get the path to a Node-capable Electron binary that won't create a Dock
+ * icon when spawned with ELECTRON_RUN_AS_NODE=1.
  *
- * On macOS, when spawning Electron as a child process with ELECTRON_RUN_AS_NODE=1,
- * macOS still shows a Dock icon because it detects the .app bundle structure
- * before Electron checks the environment variable.
+ * Why: Every chat conversation / MCP test / Codex run spawns Claude Code CLI
+ * as a child process. The CLI is JS, so we reuse Electron's bundled Node by
+ * spawning the Electron binary with ELECTRON_RUN_AS_NODE=1. On macOS,
+ * spawning the *main* app binary registers a new GUI process with
+ * LaunchServices (Dock icon, Cmd+Tab entry) before Electron has a chance to
+ * read the env var. Result: each conversation leaves a persistent extra Dock
+ * icon (issue #105).
  *
- * Solution: Create a symlink to the Electron binary outside the .app bundle.
- * When the symlink is not inside a .app bundle, macOS doesn't register it
- * as a GUI application and no Dock icon appears.
+ * How: Spawn the Electron *Helper* binary instead. Every packaged Electron
+ * app ships 4 Helper.app bundles under Frameworks/ (Helper, Helper (GPU),
+ * Helper (Plugin), Helper (Renderer)), each with `LSUIElement=true` in its
+ * Info.plist — the documented macOS "agent app" flag that suppresses Dock /
+ * Cmd+Tab registration. Helper binaries link the same Electron Framework as
+ * the main binary, so they fully support ELECTRON_RUN_AS_NODE. This is a
+ * common pattern in Electron-based editors for spawning child Node hosts
+ * without polluting the Dock.
  *
- * Why symlink instead of copy?
- * - The Electron binary depends on Electron Framework.framework via @rpath
- * - Copying just the binary breaks the framework loading
- * - Symlinks preserve the framework resolution because the real binary is still in .app
+ * Replaces a previous workaround that symlinked the main binary to a path
+ * outside the .app bundle; that relied on LaunchServices not resolving
+ * symlinks for activation policy, which is undocumented behavior and failed
+ * on some macOS configurations.
  *
- * This is a novel solution discovered while building Halo - most Electron apps
- * that spawn child processes suffer from this Dock icon flashing issue.
+ * Bundle layout the resolver expects:
+ *   <App>.app/Contents/
+ *     MacOS/<App>                           ← process.execPath (main binary)
+ *     Frameworks/
+ *       <App> Helper.app/
+ *         Contents/Info.plist               ← LSUIElement=true
+ *         Contents/MacOS/<App> Helper       ← what we spawn
+ *
+ * Works uniformly for:
+ *   - Packaged macOS app: <App> = product name (e.g. "Halo")
+ *   - Dev mode (npm run dev): <App> = "Electron" (node_modules/electron/dist/Electron.app)
+ *
+ * Falls back to process.execPath when:
+ *   - Not on macOS (no LSUIElement concept relevant to spawn semantics)
+ *   - execPath isn't inside a .app bundle (running raw binary; no Dock concern)
+ *   - Helper bundle is missing (broken install / antivirus quarantine);
+ *     logged loudly so support can diagnose
  */
 export function getHeadlessElectronPath(): string {
-  // Return cached path if already set up
   if (headlessElectronPath && existsSync(headlessElectronPath)) {
     return headlessElectronPath
   }
 
-  const electronPath = process.execPath
+  const execPath = process.execPath
 
-  // On non-macOS platforms or if not inside .app bundle, use original path
-  if (process.platform !== 'darwin' || !electronPath.includes('.app/')) {
-    headlessElectronPath = electronPath
-    console.log('[Agent] Using original Electron path (not macOS or not .app bundle):', headlessElectronPath)
+  // Non-macOS platforms don't have the LaunchServices Dock-registration
+  // problem; spawn the main binary directly.
+  if (process.platform !== 'darwin') {
+    headlessElectronPath = execPath
     return headlessElectronPath
   }
 
-  // macOS: Create symlink to Electron binary outside .app bundle to prevent Dock icon
-  try {
-    // Use app's userData path for the symlink (persistent across sessions)
-    const userDataPath = app.getPath('userData')
-    const headlessDir = join(userDataPath, 'headless-electron')
-    const headlessSymlinkPath = join(headlessDir, 'electron-node')
+  // Derive Helper path from execPath. execPath looks like
+  // `<App>.app/Contents/MacOS/<App>`; the Helper sits at
+  // `<App>.app/Contents/Frameworks/<App> Helper.app/Contents/MacOS/<App> Helper`.
+  const macosDir = dirname(execPath)
+  const contentsDir = dirname(macosDir)
+  const binaryName = basename(execPath)
 
-    // Create directory if needed
-    if (!existsSync(headlessDir)) {
-      mkdirSync(headlessDir, { recursive: true })
-    }
-
-    // Check if symlink exists and points to correct target
-    let needsSymlink = true
-
-    if (existsSync(headlessSymlinkPath)) {
-      try {
-        const stat = lstatSync(headlessSymlinkPath)
-        if (stat.isSymbolicLink()) {
-          const currentTarget = readlinkSync(headlessSymlinkPath)
-          if (currentTarget === electronPath) {
-            needsSymlink = false
-          } else {
-            // Symlink exists but points to wrong target, remove it
-            console.log('[Agent] Symlink target changed, recreating...')
-            unlinkSync(headlessSymlinkPath)
-          }
-        } else {
-          // Not a symlink (maybe old copy), remove it
-          console.log('[Agent] Removing old non-symlink file...')
-          unlinkSync(headlessSymlinkPath)
-        }
-      } catch {
-        // If we can't read it, try to remove and recreate
-        try {
-          unlinkSync(headlessSymlinkPath)
-        } catch { /* ignore */ }
-      }
-    }
-
-    if (needsSymlink) {
-      console.log('[Agent] Creating symlink for headless Electron mode...')
-      console.log('[Agent] Target:', electronPath)
-      console.log('[Agent] Symlink:', headlessSymlinkPath)
-
-      symlinkSync(electronPath, headlessSymlinkPath)
-
-      console.log('[Agent] Symlink created successfully')
-    }
-
-    headlessElectronPath = headlessSymlinkPath
-    console.log('[Agent] Using headless Electron symlink:', headlessElectronPath)
-    return headlessElectronPath
-  } catch (error) {
-    // Fallback to original path if symlink fails
-    console.error('[Agent] Failed to set up headless Electron symlink, falling back to original:', error)
-    headlessElectronPath = electronPath
+  if (basename(macosDir) !== 'MacOS' || basename(contentsDir) !== 'Contents') {
+    // Not a standard .app bundle layout — no Dock-icon concern, no Helper to
+    // resolve. Use execPath as-is.
+    headlessElectronPath = execPath
+    console.log('[Agent] execPath not inside .app/Contents/MacOS; using as-is:', execPath)
     return headlessElectronPath
   }
+
+  const helperPath = join(
+    contentsDir,
+    'Frameworks',
+    `${binaryName} Helper.app`,
+    'Contents',
+    'MacOS',
+    `${binaryName} Helper`
+  )
+
+  if (!existsSync(helperPath)) {
+    // Should never happen with a properly packaged Electron app. Defend
+    // against broken installs (partial download, antivirus quarantine,
+    // tampered bundle) by falling back to the main binary, but log loudly
+    // so support can grep for it. Users in this state will see Dock icons
+    // accumulate, but the app remains functional.
+    console.error(
+      '[Agent] Electron Helper not found; falling back to main binary. ' +
+      'Conversations will leave extra Dock icons. ' +
+      `Expected Helper at: ${helperPath}`
+    )
+    headlessElectronPath = execPath
+    return headlessElectronPath
+  }
+
+  headlessElectronPath = helperPath
+  console.log('[Agent] Using Electron Helper for headless Node:', helperPath)
+  return headlessElectronPath
 }
 
 // ============================================
@@ -152,6 +159,41 @@ export function getWorkingDir(spaceId: string): string {
 // ============================================
 // API Credentials
 // ============================================
+
+/**
+ * Resolve effective model capabilities for a source + model combination.
+ *
+ * Centralizes the merge of (built-in preset → per-source modelOverrides) so
+ * every credential surface — getApiCredentials, getApiCredentialsForSource,
+ * and any future per-call overrides — produces identical numbers for the
+ * same (source, modelId) pair.
+ *
+ * @param source  AISource whose `modelOverrides` should be applied. Pass
+ *                null/undefined when the source isn't known yet — the
+ *                preset chain still resolves correctly without overrides.
+ * @param modelId **Wire model id**, e.g. `claude-opus-4-6`, `deepseek-chat`,
+ *                `Pro/zai-org/GLM-4.7`. NEVER pass a displayModel / friendly
+ *                name here: the preset pattern table and the modelOverrides
+ *                map are both keyed by the wire id. Passing a friendly name
+ *                silently falls through to defaults and re-introduces the
+ *                "user override has no effect" class of bug fixed by
+ *                issue #112.
+ *
+ * @returns Resolved capabilities. Falls back to `modelCapabilitiesService`
+ *          defaults when no preset and no override match — caller decides
+ *          whether to inject env vars based on these values.
+ */
+function resolveCapabilitiesFromSource(
+  source: AISource | null | undefined,
+  modelId: string
+): ResolvedModelCapabilities {
+  const overrides = source?.modelOverrides
+  const resolved = modelCapabilitiesService.resolve(modelId, overrides)
+  return {
+    maxOutputTokens: resolved.maxOutputTokens,
+    contextWindow: resolved.contextWindow,
+  }
+}
 
 /**
  * Get API credentials based on current aiSources configuration (v2)
@@ -215,6 +257,14 @@ export async function getApiCredentials(config: ReturnType<typeof getConfig>): P
   const modelId = backendConfig.model || 'claude-opus-4-5-20251101'
   const modelOption = currentSource?.availableModels?.find(m => m.id === modelId)
   const displayModel = modelOption?.name || modelId
+  // Capabilities MUST resolve against the wire model id. Both the preset
+  // patterns in model-capabilities.json (e.g. "claude-opus-", "deepseek-chat")
+  // and the user's per-model overrides (keyed in ModelConfigPanel by the
+  // selected model id) live on the wire id, not the human-friendly name.
+  // Passing displayModel here would silently fall back to defaults whenever
+  // the source labels a model with a friendly name — re-introducing the
+  // original "32K cap not honored" symptom on every custom source.
+  const capabilities = resolveCapabilitiesFromSource(currentSource, modelId)
 
   return {
     baseUrl: backendConfig.url,
@@ -226,7 +276,8 @@ export async function getApiCredentials(config: ReturnType<typeof getConfig>): P
     apiType: backendConfig.apiType,
     forceStream: backendConfig.forceStream,
     filterContent: backendConfig.filterContent,
-    adapterId: backendConfig.adapterId
+    adapterId: backendConfig.adapterId,
+    capabilities,
   }
 }
 
@@ -279,6 +330,12 @@ export async function getApiCredentialsForSource(
   const effectiveModelId = backendConfig.model || source.model
   const modelOption = source.availableModels?.find((m: any) => m.id === effectiveModelId)
   const displayModel = modelOption?.name || effectiveModelId
+  // Per-app overrides still belong to the same source — resolve capabilities
+  // from that source's modelOverrides so apps inherit user-configured limits.
+  // Always use the wire model id here (see getApiCredentials for full
+  // rationale): preset pattern matching and the modelOverrides keys both
+  // live on the wire id, not the friendly displayModel.
+  const capabilities = resolveCapabilitiesFromSource(source, effectiveModelId)
 
   console.log(`[AgentService] Using per-app model override: source=${source.name}, model=${displayModel}`)
 
@@ -292,7 +349,8 @@ export async function getApiCredentialsForSource(
     apiType: backendConfig.apiType,
     forceStream: backendConfig.forceStream,
     filterContent: backendConfig.filterContent,
-    adapterId: backendConfig.adapterId
+    adapterId: backendConfig.adapterId,
+    capabilities,
   }
 }
 

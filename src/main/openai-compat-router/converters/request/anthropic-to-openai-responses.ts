@@ -9,6 +9,7 @@ import {
   convertAnthropicToolChoiceToResponses,
   convertAnthropicThinkingToResponsesReasoning
 } from '../tools'
+import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
 
 export interface ConversionResult {
   request: OpenAIResponsesRequest
@@ -20,19 +21,33 @@ export interface ConversionResult {
  * Convert Anthropic request to OpenAI Responses API request
  */
 export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicRequest): ConversionResult {
+  // Mirror the Chat-Completions path: drop image content when the target
+  // model has no vision capability so the Responses API does not reject
+  // `input_image` parts. Symmetric handling keeps both paths consistent.
+  const stripImages = !supportsVisionById(anthropicRequest.model)
+
+  // Detect images on the original input so we can log/report accurately
+  // even after stripping.
+  const originalHadImages = (anthropicRequest.messages ?? []).some((m) => {
+    if (!m || !Array.isArray(m.content)) return false
+    return m.content.some((b) => {
+      if (b.type === 'image') return true
+      if (b.type === 'tool_result' && Array.isArray(b.content)) {
+        return b.content.some((inner) => inner.type === 'image')
+      }
+      return false
+    })
+  })
+
   // Convert messages to input items
   const inputItems = convertAnthropicMessagesToResponsesInput(
     anthropicRequest.messages,
-    anthropicRequest.system
+    anthropicRequest.system,
+    { stripImages }
   )
 
-  // Check for images in the input
-  const hasImages = inputItems.some((item) => {
-    if ('content' in item && Array.isArray(item.content)) {
-      return item.content.some((part: any) => part.type === 'input_image')
-    }
-    return false
-  })
+  // Report on the original input shape — independent of post-strip state.
+  const hasImages = originalHadImages
 
   // Convert tools
   const tools = convertAnthropicToolsToResponses(anthropicRequest.tools)
@@ -56,6 +71,12 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
   const reasoning = convertAnthropicThinkingToResponsesReasoning(anthropicRequest.thinking)
   if (reasoning) {
     request.reasoning = reasoning
+  }
+
+  if (stripImages && hasImages) {
+    console.log(
+      `[openai-compat] Stripped image content for non-vision model: ${anthropicRequest.model}`
+    )
   }
 
   return {

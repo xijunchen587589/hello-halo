@@ -44,6 +44,37 @@ export interface ConvertedOpenAIChatMessages {
 }
 
 /**
+ * Options for {@link convertAnthropicMessagesToOpenAIChat} and
+ * {@link convertAnthropicMessagesToResponsesInput}.
+ */
+export interface MessagesConvertOptions {
+  /**
+   * When true, image content blocks are dropped from user messages and from
+   * `tool_result.content` arrays before serialization. Used when the target
+   * model has no vision capability, where a strict non-vision provider would
+   * otherwise reject the `image_url` variant.
+   *
+   * `hasImages` in the result still reflects whether the *original* input
+   * contained images, so callers can log/notify accurately.
+   *
+   * Default: false (preserve images, current behavior).
+   */
+  stripImages?: boolean
+}
+
+/**
+ * Drop image blocks from a tool_result.content array. Used when the target
+ * model has no vision capability — image blocks inside tool results (e.g.
+ * MCP screenshot tools, Read on image files) would otherwise be stringified
+ * as JSON and either rejected or confuse the model.
+ */
+function stripImagesFromToolResultContent(
+  content: AnthropicContentBlock[]
+): AnthropicContentBlock[] {
+  return content.filter((b) => b.type !== 'image')
+}
+
+/**
  * Convert Anthropic system prompt to OpenAI Chat system message
  */
 export function convertAnthropicSystemToOpenAIChat(
@@ -78,10 +109,12 @@ export function convertAnthropicSystemToOpenAIChat(
  */
 export function convertAnthropicMessagesToOpenAIChat(
   messages: AnthropicMessage[] | undefined,
-  system: string | AnthropicSystemBlock[] | undefined
+  system: string | AnthropicSystemBlock[] | undefined,
+  options?: MessagesConvertOptions
 ): ConvertedOpenAIChatMessages {
   const result: OpenAIChatMessage[] = []
   let hasImages = false
+  const stripImages = options?.stripImages === true
 
   // Add system message if present
   const systemMessage = convertAnthropicSystemToOpenAIChat(system)
@@ -117,9 +150,21 @@ export function convertAnthropicMessagesToOpenAIChat(
       // Extract tool_result blocks -> convert to tool messages
       const toolResults = extractToolResultBlocks(blocks)
       for (const toolResult of toolResults) {
-        const content = typeof toolResult.content === 'string'
-          ? toolResult.content
-          : JSON.stringify(toolResult.content)
+        // Detect images in tool_result.content array before any stripping
+        // so `hasImages` reflects the original input regardless of stripImages.
+        let toolResultContent = toolResult.content
+        if (Array.isArray(toolResultContent)) {
+          if (toolResultContent.some((b) => b.type === 'image')) {
+            hasImages = true
+            if (stripImages) {
+              toolResultContent = stripImagesFromToolResultContent(toolResultContent)
+            }
+          }
+        }
+
+        const content = typeof toolResultContent === 'string'
+          ? toolResultContent
+          : JSON.stringify(toolResultContent)
 
         const toolMessage: OpenAIChatToolMessage = {
           role: 'tool',
@@ -141,6 +186,9 @@ export function convertAnthropicMessagesToOpenAIChat(
         for (const block of contentBlocks) {
           if (block.type === 'image') {
             hasImages = true
+            // Skip image conversion for non-vision targets; the provider's
+            // schema does not recognize `image_url` and would reject the request.
+            if (stripImages) continue
           }
           const converted = anthropicBlockToOpenAIChatPart(block)
           if (converted) {
@@ -227,9 +275,11 @@ export function convertAnthropicSystemToResponsesInput(
  */
 export function convertAnthropicMessagesToResponsesInput(
   messages: AnthropicMessage[] | undefined,
-  system: string | AnthropicSystemBlock[] | undefined
+  system: string | AnthropicSystemBlock[] | undefined,
+  options?: MessagesConvertOptions
 ): OpenAIResponsesInputItem[] {
   const result: OpenAIResponsesInputItem[] = []
+  const stripImages = options?.stripImages === true
 
   // Add system message if present
   const systemMessage = convertAnthropicSystemToResponsesInput(system)
@@ -267,20 +317,26 @@ export function convertAnthropicMessagesToResponsesInput(
     const blocks = msg.content as AnthropicContentBlock[]
 
     if (msg.role === 'user') {
-      // Process tool_result blocks -> function_call_output items
+      // Process tool_result blocks -> function_call_output items.
+      // When stripping images, drop image blocks from tool_result.content
+      // arrays before they're stringified into the function_call_output.
       const toolResults = extractToolResultBlocks(blocks)
       for (const toolResult of toolResults) {
-        result.push(anthropicToolResultToResponsesFunctionCallOutput(toolResult))
+        const sanitized = stripImages && Array.isArray(toolResult.content)
+          ? { ...toolResult, content: stripImagesFromToolResultContent(toolResult.content) }
+          : toolResult
+        result.push(anthropicToolResultToResponsesFunctionCallOutput(sanitized))
       }
 
       // Convert other content blocks
       const contentParts: OpenAIResponsesInputContentPart[] = []
       for (const block of blocks) {
-        if (block.type !== 'tool_result') {
-          const converted = anthropicBlockToResponsesInputPart(block, 'user')
-          if (converted) {
-            contentParts.push(converted)
-          }
+        if (block.type === 'tool_result') continue
+        // Skip image blocks for non-vision targets; preserves text/thinking parts.
+        if (stripImages && block.type === 'image') continue
+        const converted = anthropicBlockToResponsesInputPart(block, 'user')
+        if (converted) {
+          contentParts.push(converted)
         }
       }
 

@@ -10,6 +10,22 @@
 // ============================================
 
 /**
+ * Resolved per-model capability values consumed by the agent runtime.
+ *
+ * These come from `modelCapabilitiesService.resolve(modelId, source.modelOverrides)`,
+ * which merges built-in presets with the per-source user overrides edited in
+ * Settings > Provider > Model Config. Carrying them on the credential keeps
+ * resolution in a single place (helpers.ts) so every SDK call site uses the
+ * same effective numbers.
+ */
+export interface ResolvedModelCapabilities {
+  /** Effective max output tokens for the model (preset merged with user override) */
+  maxOutputTokens: number
+  /** Effective context window for the model (preset merged with user override) */
+  contextWindow: number
+}
+
+/**
  * API credentials for agent requests
  * Unified structure for custom API and OAuth sources
  */
@@ -29,6 +45,13 @@ export interface ApiCredentials {
   filterContent?: boolean
   /** Provider adapter ID for request/response transformations */
   adapterId?: string
+  /**
+   * Resolved capabilities for the chosen model (preset + user override merged).
+   * Optional because legacy callers and api-validator construct credentials
+   * before capabilities are known; the SDK config layer falls back to safe
+   * defaults when this is missing.
+   */
+  capabilities?: ResolvedModelCapabilities
 }
 
 // ============================================

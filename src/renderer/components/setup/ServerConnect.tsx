@@ -451,21 +451,25 @@ export function ServerConnect({ onServerAdded, onBack }: ServerConnectProps) {
               </label>
               <input
                 type="text"
-                inputMode="numeric"
                 value={accessCode}
                 onChange={(e) => {
-                  // Allow only digits, max 6 chars
-                  const val = e.target.value.replace(/\D/g, '').slice(0, 6)
+                  // Server accepts alphanumeric tokens 4-32 chars (auto PIN or custom password).
+                  // Strip everything else and cap at 32 to match server-side validation.
+                  const val = e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32)
                   setAccessCode(val)
                   setError(null)
                 }}
                 onKeyDown={(e) => handleKeyDown(e, handleAuth)}
-                placeholder="000000"
+                placeholder={t('PIN or password')}
                 autoFocus
-                className="w-full px-4 py-3 rounded-lg bg-card border border-border text-foreground text-center text-2xl tracking-[0.5em] font-mono placeholder:text-muted-foreground/30 placeholder:tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="off"
+                className="w-full px-4 py-3 rounded-lg bg-card border border-border text-foreground text-center text-lg font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
               />
               <p className="text-xs text-muted-foreground mt-1.5">
-                {t('Enter the 6-digit code shown on your desktop Halo')}
+                {t('Enter the PIN or password shown on your desktop Halo')}
               </p>
             </div>
 

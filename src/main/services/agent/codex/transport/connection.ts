@@ -16,6 +16,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { existsSync } from 'fs'
 import path from 'path'
 import type { Readable, Writable } from 'stream'
+import { getHeadlessElectronPath } from '../../helpers'
 
 export interface CodexConnectionOptions {
   /** Absolute path to the `codex` binary. */
@@ -171,20 +172,25 @@ class ChildProcessConnection implements CodexConnection {
     const { binaryPath, env, cwd } = this.options
     const args = this.options.args ?? ['app-server']
 
-    const nodePath = process.execPath
     const isJsShim = this.options.isJsShim ?? binaryPath.endsWith('.js')
+
+    // For the JS shim path, run the shim through Electron's Helper binary
+    // (with ELECTRON_RUN_AS_NODE) instead of process.execPath. The main
+    // app binary triggers a macOS Dock icon per child process; the Helper
+    // bundle has LSUIElement=true and avoids that. See helpers.ts for the
+    // full rationale and fallback behavior.
+    const nodePath = isJsShim ? getHeadlessElectronPath() : process.execPath
 
     const command = isJsShim ? nodePath : binaryPath
     const finalArgs = isJsShim ? [binaryPath, ...args] : args
 
-    // On macOS, when launching Node from inside the .app bundle, set
-    // ELECTRON_RUN_AS_NODE so Electron behaves like a vanilla Node process
-    // (no GUI, no Dock icon).
     const childEnv: NodeJS.ProcessEnv = { ...env }
     if (this.options.pathDirs?.length) {
       childEnv.PATH = prependPathDirs(this.options.pathDirs, childEnv.PATH)
     }
-    if (isJsShim && nodePath === process.execPath) {
+    if (isJsShim) {
+      // Required so the Electron binary behaves like vanilla Node and runs
+      // the shim's main module instead of initializing Chromium.
       childEnv.ELECTRON_RUN_AS_NODE = '1'
     }
 

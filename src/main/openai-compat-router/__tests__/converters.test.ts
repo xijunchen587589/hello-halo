@@ -440,6 +440,208 @@ describe('Request Converters', () => {
       expect(functionCall.name).toBe('search')
     })
   })
+
+  // ========================================================================
+  // Non-vision model image stripping (issue #109)
+  //
+  // OpenAI Chat encodes images as `{type:'image_url',...}`, but strict
+  // non-vision providers reject the variant entirely. The renderer UI
+  // gates direct user input, but images still leak in via tool products
+  // (Read on image files, browser screenshots, MCP image returns) and
+  // mid-conversation model switches. The converter must drop image blocks
+  // for non-vision models as a hard backstop while preserving `hasImages`
+  // for accurate telemetry/UX.
+  // ========================================================================
+  describe('non-vision model image stripping', () => {
+    const PNG_SOURCE = {
+      type: 'base64' as const,
+      media_type: 'image/png',
+      data: 'abc123'
+    }
+
+    it('drops image blocks from user content for non-vision models', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-chat',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What is in the screenshot?' },
+              { type: 'image', source: PNG_SOURCE }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      // hasImages reports the ORIGINAL input shape — unaffected by stripping.
+      expect(result.hasImages).toBe(true)
+
+      const content = result.request.messages[0].content as any[]
+      expect(content).toHaveLength(1)
+      expect(content[0].type).toBe('text')
+      expect(content.some((p: any) => p.type === 'image_url')).toBe(false)
+    })
+
+    it('drops image blocks nested in tool_result.content arrays', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-reasoner',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'call_screenshot',
+                content: [
+                  { type: 'text', text: 'Page rendered' },
+                  { type: 'image', source: PNG_SOURCE }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      expect(result.hasImages).toBe(true)
+      const toolMsg = result.request.messages[0] as any
+      expect(toolMsg.role).toBe('tool')
+      // Serialized content must not carry the image block.
+      expect(toolMsg.content).not.toContain('"image"')
+      expect(toolMsg.content).toContain('Page rendered')
+    })
+
+    it('preserves images for vision-capable models (unchanged behavior)', () => {
+      const request: AnthropicRequest = {
+        model: 'claude-3-5-sonnet',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Describe' },
+              { type: 'image', source: PNG_SOURCE }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      expect(result.hasImages).toBe(true)
+      const content = result.request.messages[0].content as any[]
+      expect(content).toHaveLength(2)
+      expect(content[1].type).toBe('image_url')
+    })
+
+    it('preserves images when vision keyword overrides the blacklist (deepseek-vl)', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-vl-7b-chat',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image', source: PNG_SOURCE }]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const content = result.request.messages[0].content as any[]
+      expect(content[0].type).toBe('image_url')
+    })
+
+    it('defaults to preserving images for unknown model IDs', () => {
+      const request: AnthropicRequest = {
+        model: 'some-novel-future-model',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image', source: PNG_SOURCE }]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      const content = result.request.messages[0].content as any[]
+      expect(content[0].type).toBe('image_url')
+    })
+
+    it('is a no-op for text-only conversations with non-vision models', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-chat',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: 'hello' }]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      expect(result.hasImages).toBe(false)
+      expect(result.request.messages[0]).toEqual({ role: 'user', content: 'hello' })
+    })
+
+    it('symmetric stripping on the Responses API path', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-chat',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What is this?' },
+              { type: 'image', source: PNG_SOURCE }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIResponses(request)
+
+      expect(result.hasImages).toBe(true)
+      const userMsg = (result.request.input as any[]).find((i) => i.role === 'user')
+      expect(userMsg).toBeDefined()
+      expect(userMsg.content.some((p: any) => p.type === 'input_image')).toBe(false)
+      expect(userMsg.content.some((p: any) => p.type === 'input_text')).toBe(true)
+    })
+
+    it('Responses path drops images nested in tool_result.content', () => {
+      const request: AnthropicRequest = {
+        model: 'deepseek-chat',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'call_x',
+                content: [
+                  { type: 'text', text: 'ok' },
+                  { type: 'image', source: PNG_SOURCE }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      const result = convertAnthropicToOpenAIResponses(request)
+
+      expect(result.hasImages).toBe(true)
+      const fco = (result.request.input as any[]).find((i) => i.type === 'function_call_output')
+      expect(fco).toBeDefined()
+      expect(fco.output).not.toContain('"image"')
+      expect(fco.output).toContain('ok')
+    })
+  })
 })
 
 describe('Response Converters', () => {

@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { app } from 'electron'
 import { resolveClaudeConfigDir, getConfig } from '../config.service'
 import { ensureOpenAICompatRouter, encodeBackendConfig } from '../../openai-compat-router'
-import type { ApiCredentials } from './types'
+import type { ApiCredentials, ResolvedModelCapabilities } from './types'
 import { inferOpenAIWireApi, credentialsToBackendConfig } from './helpers'
 import { buildSystemPrompt, buildSystemPromptWithAIBrowser, DEFAULT_ALLOWED_TOOLS } from './system-prompt'
 import { AI_BROWSER_SYSTEM_PROMPT } from '../ai-browser'
@@ -50,6 +50,12 @@ export interface ResolvedSdkCredentials {
   sdkModel: string
   /** User's actual configured model name (for display) */
   displayModel: string
+  /**
+   * Effective per-model capability numbers (preset + user override merged).
+   * Carried through to buildSdkEnv so CLI subprocess env reflects what the
+   * user actually configured in Settings > Provider > Model Config.
+   */
+  capabilities?: ResolvedModelCapabilities
 }
 
 /**
@@ -64,6 +70,80 @@ export interface SdkEnvParams {
   customConfigDir?: string
   /** Enable Agent Teams (multi-agent collaboration) */
   enableTeams?: boolean
+  /**
+   * Resolved per-model capability numbers (preset + user override merged).
+   * When present, drives CLAUDE_CODE_MAX_OUTPUT_TOKENS and
+   * CLAUDE_CODE_AUTO_COMPACT_WINDOW env injection so the CC subprocess
+   * honors what the user configured in Settings > Provider > Model Config.
+   * When absent, no env override is injected (callers like api-validator
+   * that don't have a resolved model can omit this safely).
+   */
+  capabilities?: ResolvedModelCapabilities
+}
+
+// ============================================
+// CC SDK Runtime Limit Resolution
+// ============================================
+
+/**
+ * Clamp ranges for CC SDK env-var injection.
+ *
+ * Rationale (see services/compact/autoCompact.ts in the bundled CLI):
+ *   - effectiveContextWindow = contextWindow - min(maxOutputTokens, 20_000)
+ *   - autoCompactThreshold   = effectiveContextWindow - 13_000
+ *
+ * If `maxOutputTokens` drops below MAX_OUTPUT_TOKENS_FOR_SUMMARY (20_000),
+ * the compact-summary call itself gets truncated mid-generation — that's
+ * why the lower bound here is 20_000, not zero.
+ *
+ * If `contextWindow` drops near or below 33_000, the auto-compact threshold
+ * crosses zero and compaction fires immediately on every turn. 40_000 is
+ * the smallest value that keeps a usable window after both buffers.
+ *
+ * Upper bounds are intentionally generous: CC itself caps maxOutputTokens at
+ * the model's own upperLimit (services/api/claude.ts:getMaxOutputTokensForModel),
+ * and CC only ever SHRINKS the context window via Math.min with the env value
+ * — passing a higher number than the model supports is a no-op. So we don't
+ * try to second-guess the model registry here.
+ */
+const MAX_OUTPUT_TOKENS_MIN = 20_000   // matches MAX_OUTPUT_TOKENS_FOR_SUMMARY in CC
+const MAX_OUTPUT_TOKENS_MAX = 1_000_000
+const CONTEXT_WINDOW_MIN = 40_000      // headroom for output (20K) + compact buffer (13K) + slack (7K)
+const CONTEXT_WINDOW_MAX = 2_000_000   // future-proof for >1M models
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+/**
+ * Translate resolved model capabilities into the actual env-var pair that
+ * controls the CC subprocess. Returns `undefined` for an env var when the
+ * input is missing or non-finite — caller then skips injection so CC falls
+ * back to its own internal defaults.
+ *
+ * Exported for unit testing; not part of the public agent surface.
+ */
+export function resolveSdkRuntimeLimits(
+  capabilities: ResolvedModelCapabilities | undefined
+): { maxOutputTokens?: number; autoCompactWindow?: number } {
+  if (!capabilities) return {}
+  const out: { maxOutputTokens?: number; autoCompactWindow?: number } = {}
+  if (Number.isFinite(capabilities.maxOutputTokens) && capabilities.maxOutputTokens > 0) {
+    out.maxOutputTokens = clampInt(
+      capabilities.maxOutputTokens,
+      MAX_OUTPUT_TOKENS_MIN,
+      MAX_OUTPUT_TOKENS_MAX
+    )
+  }
+  if (Number.isFinite(capabilities.contextWindow) && capabilities.contextWindow > 0) {
+    out.autoCompactWindow = clampInt(
+      capabilities.contextWindow,
+      CONTEXT_WINDOW_MIN,
+      CONTEXT_WINDOW_MAX
+    )
+  }
+  return out
 }
 
 /**
@@ -191,7 +271,8 @@ export async function resolveCredentialsForSdk(
     anthropicBaseUrl,
     anthropicApiKey,
     sdkModel,
-    displayModel
+    displayModel,
+    capabilities: credentials.capabilities,
   }
 }
 
@@ -215,7 +296,8 @@ async function resolveAnthropicPassthrough(
     anthropicBaseUrl: router.baseUrl,
     anthropicApiKey,
     sdkModel: credentials.model || 'claude-opus-4-5-20251101',
-    displayModel: credentials.displayModel || credentials.model
+    displayModel: credentials.displayModel || credentials.model,
+    capabilities: credentials.capabilities,
   }
 }
 
@@ -356,6 +438,35 @@ export function buildSdkEnv(params: SdkEnvParams): Record<string, string | numbe
     // Only set when explicitly enabled via Settings > Advanced
     ...(params.enableTeams ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' } : {}),
 
+    // Per-model runtime limits resolved from preset + user override.
+    // - CLAUDE_CODE_MAX_OUTPUT_TOKENS: caps the `max_tokens` request parameter
+    //   for every Anthropic Messages call the CC subprocess makes. Default in
+    //   CC is 32_000; injecting the user-configured value fixes the long-
+    //   standing "response exceeded 32000 output token maximum" failures.
+    // - CLAUDE_CODE_AUTO_COMPACT_WINDOW: shrinks CC's effective context window
+    //   when the user's source/preset says the model supports less than CC's
+    //   internal getContextWindowForModel detection would assume. CC's logic
+    //   takes Math.min of this value with its own detection — so passing a
+    //   value LARGER than the model intrinsic is a no-op, only shrinks apply.
+    ...(() => {
+      const limits = resolveSdkRuntimeLimits(params.capabilities)
+      const injected: Record<string, string> = {}
+      if (limits.maxOutputTokens !== undefined) {
+        injected.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(limits.maxOutputTokens)
+      }
+      if (limits.autoCompactWindow !== undefined) {
+        injected.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(limits.autoCompactWindow)
+      }
+      if (Object.keys(injected).length > 0) {
+        console.log(
+          `[SDK Config] Model runtime limits injected: ` +
+          `maxOutputTokens=${limits.maxOutputTokens ?? 'default'}, ` +
+          `autoCompactWindow=${limits.autoCompactWindow ?? 'default'}`
+        )
+      }
+      return injected
+    })(),
+
     // Windows: pass through Git Bash path (set by git-bash.service during startup)
     // This was stripped by getCleanUserEnv() along with all CLAUDE_* vars
     ...(process.env.CLAUDE_CODE_GIT_BASH_PATH
@@ -483,6 +594,7 @@ export function buildBaseSdkOptions(params: BaseSdkOptionsParams): Record<string
     configDirMode: params.configDirMode,
     customConfigDir: params.customConfigDir,
     enableTeams: params.enableTeams,
+    capabilities: credentials.capabilities,
   })
 
   const cliPath = resolveClaudeCodeCliPath()
