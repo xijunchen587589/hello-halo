@@ -20,6 +20,21 @@ import {
 import { getConfig, saveConfig } from './config.service'
 import { setCustomAccessToken, generateAccessToken } from '../http/auth'
 
+/**
+ * Persist the access token to config so it survives restarts.
+ * Centralized here to keep config writes out of the HTTP/auth layer.
+ */
+function persistRemotePassword(token: string): void {
+  const config = getConfig()
+  saveConfig({
+    ...config,
+    remoteAccess: {
+      ...config.remoteAccess,
+      password: token
+    }
+  })
+}
+
 export interface RemoteAccessStatus {
   enabled: boolean
   server: {
@@ -124,16 +139,22 @@ export async function enableRemoteAccess(
     return getRemoteAccessStatus()
   }
 
-  const { port: actualPort, token } = await startHttpServer(port)
-
-  // Update config
+  // Reuse the persisted PIN so paired devices keep working across restarts.
   const config = getConfig()
+  const savedToken = config.remoteAccess.password
+  const effectivePort = port ?? config.remoteAccess.port
+
+  // actualPort may differ from effectivePort when the preferred port is taken
+  // (EADDRINUSE fallback); persist whichever we actually bound to.
+  const { port: actualPort, token } = await startHttpServer(effectivePort, savedToken)
+
   saveConfig({
     ...config,
     remoteAccess: {
       ...config.remoteAccess,
       enabled: true,
-      port: actualPort
+      port: actualPort,
+      password: token
     }
   })
 
@@ -269,6 +290,8 @@ export function setCustomPassword(password: string): { success: boolean; error?:
 
   const result = setCustomAccessToken(password)
   if (result) {
+    // Persist so the password survives restarts.
+    persistRemotePassword(password)
     console.log('[Remote] Custom password set successfully')
     // Notify status change
     if (statusCallback) {
@@ -289,7 +312,8 @@ export function regeneratePassword(): void {
     return
   }
 
-  generateAccessToken()
+  const newToken = generateAccessToken()
+  persistRemotePassword(newToken)
   console.log('[Remote] Password regenerated')
 
   // Notify status change

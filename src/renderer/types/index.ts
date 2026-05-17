@@ -178,6 +178,9 @@ export interface CliMigrateResult {
 export interface RemoteAccessConfig {
   enabled: boolean;
   port: number;
+  // Persisted access PIN/password. Restored on next start so paired devices
+  // keep working after a restart. Generated on first enable when absent.
+  password?: string;
 }
 
 // AI Sources types are now imported from shared module (see top of file)

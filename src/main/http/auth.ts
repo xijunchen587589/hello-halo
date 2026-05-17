@@ -20,6 +20,15 @@ export function generateAccessToken(): string {
 }
 
 /**
+ * Restore an access token from persisted config without generating a new one.
+ * Used at startup so paired devices keep working across restarts.
+ */
+export function restoreAccessToken(token: string): void {
+  accessToken = token
+  console.log('[Auth] Access token restored from config')
+}
+
+/**
  * Set a custom access token (user-defined password)
  * @param token The custom password to set (4-32 characters)
  * @returns true if set successfully, false if validation failed

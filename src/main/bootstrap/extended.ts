@@ -25,6 +25,8 @@
 
 import { registerOnboardingHandlers } from '../ipc/onboarding'
 import { registerRemoteHandlers } from '../ipc/remote'
+import { enableRemoteAccess } from '../services/remote.service'
+import { getConfig } from '../services/config.service'
 import { registerBrowserHandlers } from '../ipc/browser'
 import { cleanupAIBrowser } from '../services/ai-browser'
 import { registerOverlayHandlers, cleanupOverlayHandlers } from '../ipc/overlay'
@@ -181,6 +183,16 @@ export function initializeExtendedServices(): void {
 
   // Remote: Remote access feature, optional functionality
   registerRemoteHandlers()
+
+  // Auto-restore so paired devices keep working without manual re-enable.
+  // CF tunnel is intentionally not restored — its Quick Tunnel URL changes per
+  // run, which would break any previously shared link.
+  registerIdleTask('restore-remote-access', async () => {
+    const cfg = getConfig()
+    if (cfg.remoteAccess.enabled) {
+      await enableRemoteAccess(cfg.remoteAccess.port)
+    }
+  })
 
   // Browser: Embedded BrowserView for Content Canvas
   // Note: BrowserView is created lazily when Canvas is opened
