@@ -98,7 +98,70 @@ function detectPlatform() {
 }
 
 /**
- * Check if cloudflared exists and is valid for platform
+ * Validate binary format by reading file header magic bytes.
+ * Returns the detected platform kind or null if unrecognized.
+ */
+function detectBinaryPlatform(filePath) {
+  const fd = fs.openSync(filePath, 'r')
+  try {
+    const header = Buffer.alloc(16)
+    fs.readSync(fd, header, 0, 16, 0)
+
+    // ELF (Linux): 0x7F 'E' 'L' 'F'
+    if (header[0] === 0x7F && header[1] === 0x45 && header[2] === 0x4C && header[3] === 0x46) {
+      return 'linux'
+    }
+
+    // PE / Windows: 'M' 'Z'
+    if (header[0] === 0x4D && header[1] === 0x5A) {
+      return 'win'
+    }
+
+    // Mach-O 64-bit: 0xFEEDFACF (little-endian: CF FA ED FE)
+    if (header[0] === 0xCF && header[1] === 0xFA && header[2] === 0xED && header[3] === 0xFE) {
+      // CPU type at offset 4 (uint32 LE): 0x0100000C = arm64, 0x01000007 = x86_64
+      const cpuType = header.readUInt32LE(4)
+      if (cpuType === 0x0100000C) return 'mac-arm64'
+      if (cpuType === 0x01000007) return 'mac-x64'
+      return 'mac-unknown'
+    }
+
+    // Mach-O universal (fat binary): 0xCAFEBABE (big-endian)
+    if (header[0] === 0xCA && header[1] === 0xFE && header[2] === 0xBA && header[3] === 0xBE) {
+      return 'mac-universal'
+    }
+
+    return null
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+/**
+ * Validate a cloudflared binary: size threshold + magic bytes platform match.
+ * Returns { valid, size, detected, reason? }.
+ */
+function validateCloudflaredBinary(filePath, platform) {
+  const stats = fs.statSync(filePath)
+  const minSize = platform === 'win' ? 10 * 1024 * 1024 : 30 * 1024 * 1024
+  if (stats.size <= minSize) {
+    return { valid: false, size: stats.size, detected: null, reason: `too small (${(stats.size / 1024 / 1024).toFixed(1)} MB)` }
+  }
+
+  const detected = detectBinaryPlatform(filePath)
+  const acceptable = platform === 'mac-arm64' || platform === 'mac-x64'
+    ? [platform, 'mac-universal']
+    : [platform]
+
+  if (!detected || !acceptable.includes(detected)) {
+    return { valid: false, size: stats.size, detected, reason: `format mismatch (detected: ${detected || 'unknown'})` }
+  }
+
+  return { valid: true, size: stats.size, detected }
+}
+
+/**
+ * Check if cloudflared exists and is valid for platform.
  */
 function checkCloudflared(platform) {
   const filePath = path.join(PROJECT_ROOT, CLOUDFLARED_PATHS[platform])
@@ -106,10 +169,11 @@ function checkCloudflared(platform) {
     return { exists: false }
   }
 
-  // Basic size validation
-  const stats = fs.statSync(filePath)
-  const minSize = platform === 'win' ? 10 * 1024 * 1024 : 30 * 1024 * 1024
-  return { exists: true, valid: stats.size > minSize, size: stats.size }
+  const result = validateCloudflaredBinary(filePath, platform)
+  if (!result.valid) {
+    log.warn(`cloudflared for ${platform}: ${result.reason}, will re-download`)
+  }
+  return { exists: true, ...result }
 }
 
 /**
@@ -173,7 +237,23 @@ function downloadCloudflared(platform) {
     fs.chmodSync(outputPath, 0o755)
   }
 
+  // Post-download integrity verification
+  verifyCloudflared(platform, outputPath)
+
   log.success(`Downloaded cloudflared for ${platform}`)
+}
+
+/**
+ * Verify downloaded cloudflared binary integrity.
+ * Removes the file and throws on failure to avoid leaving bad binaries on disk.
+ */
+function verifyCloudflared(platform, filePath) {
+  const result = validateCloudflaredBinary(filePath, platform)
+  if (!result.valid) {
+    fs.unlinkSync(filePath)
+    throw new Error(`Downloaded cloudflared for ${platform}: ${result.reason}`)
+  }
+  log.info(`Verified: ${(result.size / 1024 / 1024).toFixed(1)} MB, format: ${result.detected}`)
 }
 
 /**
@@ -185,14 +265,21 @@ function getWatcherVersion() {
 }
 
 /**
- * Download a file with curl, retrying without proxy on failure
+ * Download a file with curl and verify download completeness.
  */
 function curlDownload(url, dest) {
+  const cmd = (extra = '') => `curl -fsSL ${extra} -o "${dest}" "${url}"`
+
   try {
-    execSync(`curl -fsSL -o "${dest}" "${url}"`, { stdio: 'pipe' })
+    execSync(cmd(), { stdio: 'pipe' })
   } catch {
     log.warn('Download failed, retrying without proxy...')
-    execSync(`curl -fsSL --noproxy '*' -o "${dest}" "${url}"`, { stdio: 'pipe' })
+    execSync(cmd("--noproxy '*'"), { stdio: 'pipe' })
+  }
+
+  if (!fs.existsSync(dest) || fs.statSync(dest).size === 0) {
+    if (fs.existsSync(dest)) fs.unlinkSync(dest)
+    throw new Error(`Download failed: ${path.basename(dest)}`)
   }
 }
 
