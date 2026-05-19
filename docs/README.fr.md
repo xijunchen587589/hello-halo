@@ -4,22 +4,22 @@
 
 # Halo
 
-### Votre station de travail IA, 24h/24
+### Votre Station de Travail IA — Pour les Equipes et les Individus
 
-Fixez des objectifs. Il s'occupe du reste. Écrire du code, automatiser, déployer — vous décidez, Halo exécute.
+Deploiement local. Automatisation 24h/24. Les Humains Numeriques IA travaillent pendant que vous prenez les decisions.
 
 [![GitHub Stars](https://img.shields.io/github/stars/openkursar/hello-halo?style=social)](https://github.com/openkursar/hello-halo/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Web-lightgrey.svg)](#installation)
 [![Downloads](https://img.shields.io/github/downloads/openkursar/hello-halo/total.svg)](https://github.com/openkursar/hello-halo/releases)
 
-[**Télécharger**](#installation) · [**Documentation**](#documentation) · [**Contribuer**](#contribuer)
+[**Telecharger**](#installation) · [**Documentation**](#documentation) · [**Contribuer**](#contribuer)
 
-**[English](../README.md)** | **[简体中文](./README.zh-CN.md)** | **[繁體中文](./README.zh-TW.md)** | **[Español](./README.es.md)** | **[Deutsch](./README.de.md)** | **[日本語](./README.ja.md)**
+**[English](../README.md)** | **[简体中文](./README.zh-CN.md)** | **[繁體中文](./README.zh-TW.md)** | **[Español](./README.es.md)** | **[Deutsch](./README.de.md)** | **Français** | **[日本語](./README.ja.md)**
 
 </div>
 
-<!-- TODO: Remplacer par un GIF de 30 secondes montrant : l'utilisateur saisit une phrase -> l'Agent ecrit du code automatiquement -> le fichier apparait dans l'Artifact Rail -> apercu du resultat -->
+<!-- TODO: Replace with a 30-second GIF showing: user types a sentence -> Agent automatically writes code -> files appear in Artifact Rail -> preview the result -->
 <div align="center">
 
 ![Space Home](./assets/space_home.jpg)
@@ -28,63 +28,74 @@ Fixez des objectifs. Il s'occupe du reste. Écrire du code, automatiser, déploy
 
 ---
 
-## Pourquoi choisir Halo ?
+## Pourquoi Halo ?
 
-Halo est construit sur [Claude Code](https://github.com/anthropics/claude-code), avec un ensemble complet de fonctionnalites produit, plus de 300 000 lignes de code cumulees, valide par des dizaines de milliers d'utilisateurs et fonctionnant de maniere stable en environnement professionnel. En plus de cela, Halo offre egalement :
+Halo est une station de travail IA propulsee par un Agent de pointe avec une architecture moteur modulaire — compatible avec [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), et plus encore. Avec une couche produit complete de plus de 300 000 lignes de code, validee par des dizaines de milliers d'utilisateurs et fonctionnant de maniere stable en environnement d'entreprise, Halo offre :
 
-| Ce que Halo apporte |
+| Ce que Halo offre |
 |:---:|
-| **Artifact Rail** — prévisualisez code, HTML et images en temps réel |
-| **Accès distant** — contrôlez depuis mobile / H5 / WeChat / Android à tout moment |
-| **AI AI Humains Numériques** fonctionnent 7x24, vous décidez seul |
-| **Télécharger et utiliser**, zéro configuration, accessible aux non-techniciens |
-| **AI Browser** — navigateur intégré contrôlé directement par l'IA |
+| **Votre Partenaire IA Quotidien** — programmation, design produit, operations, redaction, recherche — votre compagnon de travail au quotidien |
+| **100% Local, Zero Dependance Cloud** — les donnees ne quittent jamais votre machine, conforme aux exigences de conformite d'entreprise |
+| **Humains Numeriques IA** — travailleurs IA fonctionnant de maniere autonome 7j/24, gerant la surveillance, les rapports et les operations de routine |
+| **AI Browser** — navigateur integre directement controle par l'IA, automatise tout systeme base sur le web |
+| **Controle Natif WeCom / WeChat** — gerez les agents IA depuis la messagerie d'entreprise, zero cout de formation |
+| **Acces a Distance** — controlez depuis le telephone / H5 / WeChat / Android, les managers suivent la progression en deplacement |
+| **Telecharger et c'est Parti** — zero configuration, pas de backend requis, le SI deploie en quelques minutes |
 
-> Powered by [Claude Code](https://github.com/anthropics/claude-code) -- 100% compatible avec les capacites Agent, MCP et Skills de Claude Code.
+> 100% compatible avec les capacites Agent de Claude Code, MCP et Skills.
 
 ---
 
-## Votre IA, sans avoir besoin de la surveiller
+## Humains Numeriques IA — Votre Main-d'OEuvre IA Autonome
 
-La plupart des outils IA necessitent que vous restiez devant l'ecran, a dialoguer tour apres tour. Halo est different -- il peut travailler de maniere autonome, vous n'intervenez qu'aux moments cles pour prendre des decisions.
+Le RPA traditionnel suit des scripts rigides et echoue des que quelque chose change. Halo adopte une approche differente : **l'IA prend les decisions, les Halo Browser Skills executent les operations.** Le resultat est une automatisation qui comprend le contexte, s'adapte aux changements et execute avec precision.
 
-### Humains Numeriques -- Des collaborateurs IA autonomes 7x24
+### Agents Autonomes Fonctionnant 7j/24
 
-Creez un Humain Numerique, attribuez-lui une tache et une frequence d'execution, et il fonctionnera de maniere autonome selon le planning :
+Creez un Humain Numerique IA, attribuez-lui une tache et une frequence d'execution, et il fonctionne de maniere autonome selon le planning. Pas d'ecran a surveiller, pas de scripts a superviser.
 
-- Envoyer un resume des actualites tech chaque matin
-- Verifier l'etat des services en ligne toutes les heures, et vous notifier en cas d'anomalie
-- Executer des analyses concurrentielles a intervalles reguliers et generer des rapports comparatifs
-- Surveiller les mises a jour des dependances GitHub et les vulnerabilites de securite
-- Suivre les mentions de mots-cles sur les reseaux sociaux
+**Automatisation des Reseaux Sociaux et Plateformes de Contenu :**
 
-Installez-les en un clic depuis la **Boutique d'Humains Numeriques**, ou creez les votres en langage naturel.
+- Reponse automatique aux commentaires et DMs sur Xiaohongshu, Bilibili, Zhihu
+- Publication programmee de contenu sur Twitter / X, comptes officiels WeChat
+- Surveillance des mentions de marque et de l'activite concurrentielle, generation de resumes quotidiens
+- Suivi des tendances et redaction automatique de suggestions de contenu
 
-> Imaginez-le comme la combinaison d'un cron job et d'un Agent IA -- mais il suffit de parler normalement.
+**Automatisation Interne d'Entreprise :**
 
-Les Humains Numeriques disposent exactement des memes capacites Agent que le mode conversation -- le meme moteur Claude, la meme chaine d'outils MCP, le meme AI Browser, sauf qu'ils se declenchent automatiquement selon un planning, sans que vous ayez besoin d'etre devant votre ordinateur.
+- Patrouille des systemes internes OA / CRM / ERP, signalement des tickets en retard et des anomalies
+- Generation de rapports standup quotidiens a partir de l'activite Jira / GitLab / GitHub
+- Surveillance des pipelines CI/CD, notification des echecs de build, creation automatique de tickets d'incident
+- Execution de verifications de conformite planifiees sur les tableaux de bord internes
+- Collecte de donnees interdepartementales et elaboration de resumes executifs hebdomadaires
 
-**WeChat est votre console de controle.** Les Humains Numeriques supportent le controle bidirectionnel par dialogue via WeChat personnel / WeCom -- pas seulement pour recevoir des notifications, vous pouvez directement donner des instructions a l'Humain Numerique dans WeChat, verifier la progression et demander des rapports.
+Installez en un clic depuis le **Magasin d'Humains Numeriques IA**, deployez un **magasin prive** pour votre organisation, ou creez les votres en langage naturel.
+
+> Pensez-y comme cron + RPA + AI Agent en un seul outil — sauf que vous decrivez simplement ce que vous voulez en langage naturel.
+
+Les Humains Numeriques IA ont exactement les memes capacites Agent que le mode conversation — le meme moteur Claude, la chaine d'outils MCP et le AI Browser — ils se declenchent simplement automatiquement selon le planning sans que vous ayez besoin d'etre devant l'ordinateur.
+
+**WeChat / WeCom est votre panneau de controle.** Les Humains Numeriques IA supportent le controle conversationnel bidirectionnel via WeChat personnel / WeCom (WeChat Entreprise) — pas seulement recevoir des notifications, vous pouvez donner des instructions, verifier la progression et demander des rapports directement dans votre messagerie d'entreprise.
 
 ![AI Digital Human](./assets/ai-digital-human.png)
 
-### Browser Skill -- Rendre l'automatisation IA des sites web stable et fiable
+### Halo Browser Skill — L'IA Decide, les Scripts Executent
 
-L'automatisation classique du navigateur par IA laisse l'IA tattonner a chaque fois pour trouver ou cliquer et quoi remplir, ce qui echoue souvent.
+C'est ce qui differencie Halo des "agents de navigateur IA" qui naviguent au hasard en cliquant n'importe ou.
 
-Browser Skill adopte une approche differente : **les operations courantes de chaque site web sont pre-ecrites sous forme de scripts reutilisables**. L'IA n'a qu'a decider "quel script appeler maintenant", les details d'interaction avec le site sont deja geres par le script.
+Halo Browser Skill adopte l'approche RPA pour la fiabilite : **pre-ecriture de scripts reutilisables pour les operations courantes sur chaque plateforme**. L'IA decide uniquement *quoi* faire et *quand* — le script sait deja *comment*.
 
-Les scripts Skill s'executent directement dans un environnement de navigateur reel via `browser_run` de Halo -- avec acces au DOM de la page, aux cookies et aux API internes, comme si vous opériez depuis la console Chrome DevTools. Par exemple, voici le code principal d'un Skill de lecture des notifications Bilibili :
+Les scripts s'executent directement dans un vrai navigateur via le `browser_run` de Halo — avec un acces complet au DOM de la page, aux cookies et aux APIs internes, exactement comme la console Chrome DevTools. Cela fonctionne aussi bien pour les plateformes publiques que pour les systemes d'entreprise prives.
+
+**Exemple : Lecture des notifications Bilibili**
 
 ```js
 // .claude/skills/bili-get-messages/index.js
 async (params) => {
-  // Appel direct a l'API interne de Bilibili -- les cookies sont automatiquement inclus, pas d'authentification supplementaire
   const resp = await fetch('https://api.bilibili.com/x/msgfeed/reply?platform=web', {
-    credentials: 'include'
+    credentials: 'include'  // cookies automatically included, no extra auth
   }).then(r => r.json())
 
-  // Retourne des donnees structurees a l'IA, qui decide comment repondre
   return {
     success: true,
     notifications: resp.data.items.map(item => ({
@@ -96,43 +107,50 @@ async (params) => {
 }
 ```
 
-L'Humain Numerique n'a qu'a appeler : `browser_run({ file: "skills/bili-get-messages/index.js" })` -- une fois les donnees obtenues, l'IA decide par elle-meme lesquelles necessite une reponse et comment repondre.
+L'IA l'appelle avec : `browser_run({ file: ".claude/skills/bili-get-messages/index.js" })`
 
-Par exemple, le workflow d'un Humain Numerique Zhihu :
-1. L'IA decide : il est temps de verifier s'il y a de nouvelles invitations a repondre
-2. Appelle le Skill `zhihu-creator-invited` -> le script recupere automatiquement la liste des invitations et retourne des donnees structurees
-3. L'IA juge : cette question merite une reponse, et commence a rediger
-4. Appelle le Skill `zhihu-publish-answer` -> le script remplit automatiquement l'editeur et publie
+**Exemple : Workflow d'entreprise — un Humain Numerique pour les operations de contenu Xiaohongshu :**
+1. L'IA decide : il est temps de verifier les nouveaux commentaires sur les publications du jour
+2. Appelle le Skill `xhs-get-comments` → le script recupere la liste des commentaires via l'API de la plateforme
+3. L'IA evalue : ces 5 commentaires necessitent des reponses, redige des reponses personnalisees
+4. Appelle le Skill `xhs-reply-comment` → le script soumet chaque reponse
 
-L'IA prend les decisions, le Skill execute les operations. Stable, reproductible, sans erreur.
+**Exemple : Interne d'entreprise — un Humain Numerique de surveillance DevOps :**
+1. L'IA decide : il est temps de la verification horaire de l'infrastructure
+2. Appelle le Skill `check-grafana-alerts` → le script lit le tableau de bord d'alertes via l'API interne
+3. L'IA evalue : 2 alertes sont critiques, compose un resume d'incident
+4. Appelle le Skill `create-jira-ticket` → le script cree un ticket P1 avec le contexte complet
+5. Appelle le Skill `notify-oncall` → envoie l'alerte au groupe d'astreinte WeCom
 
-Des Skills prets a l'emploi sont deja disponibles pour Bilibili, Zhihu, WeChat, Xiaohongshu et d'autres plateformes, et la communaute peut contribuer les siens.
+**L'IA decide. Les Skills executent. Stable, repetable, auditable.**
 
-### Acces distant -- Votre telephone est votre telecommande IA
+Des Skills prets a l'emploi sont disponibles pour Xiaohongshu, Bilibili, Zhihu, Twitter / X, WeChat, et plus encore. Les equipes d'entreprise peuvent ecrire des Skills prives pour les systemes internes. La communaute peut contribuer et partager les siens.
 
-Une fois l'acces distant active, vous pouvez controler Halo sur votre bureau depuis un mobile / H5 / WeChat / client Android. En reunion, en deplacement, ou meme depuis un lit d'hopital (histoire vraie), consultez a tout moment la progression de l'IA et donnez de nouvelles instructions.
+### Acces a Distance — Gerez Votre Flotte IA Depuis N'importe Ou
+
+Une fois l'Acces a Distance active, votre telephone / H5 / WeChat / client Android peut controler Halo sur votre bureau. Pendant les reunions, les trajets ou en deplacement — verifiez les resultats des Humains Numeriques, approuvez les decisions et emettez de nouvelles instructions sans etre a votre bureau.
 
 ---
 
-## Demarrage rapide
+## Demarrage Rapide
 
-**Pret en 30 secondes :**
+**Commencez en 30 secondes :**
 
-1. [Telecharger et installer](#installation), lancer Halo
-2. Saisir votre cle API (Anthropic recommande)
-3. Commencer a dialoguer -- essayez `Cree une application de taches avec React` ou `Analyse la structure du code de ce projet`
+1. [Telechargez et installez](#installation), lancez Halo
+2. Entrez votre API Key (Anthropic recommande)
+3. Commencez a discuter — essayez `Build a todo app with React` ou `Help me analyze the code structure of this project`
 4. Regardez les fichiers apparaitre dans l'Artifact Rail, cliquez pour previsualiser, demandez des modifications
 
-> Modeles recommandes : serie Claude Sonnet / Opus
+> Modeles recommandes : Series Claude Sonnet / Opus
 
 ---
 
 ## Installation
 
-### Telecharger (recommande)
+### Telechargement (Recommande)
 
-| Plateforme | Telecharger | Configuration requise |
-|------|------|------|
+| Plateforme | Telechargement | Prerequis |
+|----------|----------|--------------|
 | **macOS** (Apple Silicon) | [.dmg](https://github.com/openkursar/hello-halo/releases/latest) | macOS 11+ |
 | **macOS** (Intel) | [.dmg](https://github.com/openkursar/hello-halo/releases/latest) | macOS 11+ |
 | **Windows** | [.exe](https://github.com/openkursar/hello-halo/releases/latest) | Windows 10+ |
@@ -140,9 +158,9 @@ Une fois l'acces distant active, vous pouvez controler Halo sur votre bureau dep
 | **Android** | [.apk](https://github.com/openkursar/hello-halo/releases/latest) | Android 8+ |
 | **iOS** | Compiler depuis les sources | iOS 15+ |
 
-**Telecharger, installer, lancer.** Pas besoin de Node.js, pas besoin de npm, pas besoin de terminal.
+**Telechargez, installez, lancez.** Pas besoin de Node.js, npm, ni de terminal. Le SI peut distribuer dans toute l'organisation sans dependances cote serveur.
 
-### Compiler depuis les sources
+### Compiler depuis les Sources
 
 ```bash
 git clone https://github.com/openkursar/hello-halo.git
@@ -154,26 +172,26 @@ npm run dev
 
 ---
 
-## Boutique d'Humains Numeriques
+## Magasin d'Humains Numeriques IA
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### Pour les utilisateurs -- Installation instantanee
+### Pour les Utilisateurs — Installez et Utilisez Instantanement
 
-Ouvrez la Boutique d'Humains Numeriques, choisissez-en un, remplissez quelques champs de configuration, et il commence a fonctionner automatiquement. Pas besoin d'ecrire du code, pas besoin d'ecrire de prompt.
+Ouvrez le Magasin d'Humains Numeriques IA, choisissez-en un, remplissez quelques champs de configuration, et il commence a fonctionner automatiquement. Pas de programmation necessaire, pas de prompts a ecrire.
 
 ![AI Store](./assets/shop.png)
 
 </td>
 <td width="50%" valign="top">
 
-### Pour les developpeurs -- Construire et publier
+### Pour les Developpeurs — Creez et Publiez
 
-Ecrivez un `spec.yaml` et soumettez une PR au [Digital Human Protocol (DHP)](https://github.com/openkursar/digital-human-protocol). Apres fusion, tous les utilisateurs Halo y ont immediatement acces.
+Ecrivez un `spec.yaml` et soumettez un PR au [AI Digital Human Protocol (DHP)](https://github.com/openkursar/digital-human-protocol). Une fois fusionne, il devient immediatement disponible pour tous les utilisateurs Halo.
 
-Vous pouvez aussi ecrire des Browser Skills (scripts `.js`) pour vos Humains Numeriques, leur permettant d'executer des operations precises sur des plateformes specifiques.
+Vous pouvez egalement ecrire des Halo Browser Skills (scripts `.js`) pour que les Humains Numeriques IA executent precisement des operations sur des plateformes specifiques.
 
 </td>
 </tr>
@@ -181,20 +199,20 @@ Vous pouvez aussi ecrire des Browser Skills (scripts `.js`) pour vos Humains Num
 
 ---
 
-## Captures d'ecran
+## Captures d'Ecran
 
 ![Chat Intro](./assets/chat_intro.jpg)
 
 ![Chat Todo](./assets/chat_todo.jpg)
 
-*Acces distant : controlez Halo depuis n'importe ou*
+*Acces a Distance : Controlez Halo depuis n'importe ou*
 
 ![Remote Settings](./assets/remote_setting.jpg)
 
 <p align="center">
-  <img src="./assets/mobile_remote_access.jpg" width="45%" alt="Acces distant mobile">
+  <img src="./assets/mobile_remote_access.jpg" width="45%" alt="Acces a Distance Mobile">
   &nbsp;&nbsp;
-  <img src="./assets/mobile_chat.jpg" width="45%" alt="Chat mobile">
+  <img src="./assets/mobile_chat.jpg" width="45%" alt="Chat Mobile">
 </p>
 
 *AI Browser*
@@ -209,7 +227,7 @@ https://github.com/user-attachments/assets/2d4d2f3e-d27c-44b0-8f1d-9059c8372003
 ┌──────────────────────────────────────────────────┐
 │                   Halo Desktop                    │
 │                                                   │
-│   React UI  ◄─IPC─►  Main Process  ◄──►  Claude  │
+│   React UI  <─IPC─>  Main Process  <──>  Claude  │
 │  (Renderer)          ┌───────────┐       Code SDK │
 │                      │ Digital   │      (Agent    │
 │                      │ Humans    │       Loop)    │
@@ -220,37 +238,39 @@ https://github.com/user-attachments/assets/2d4d2f3e-d27c-44b0-8f1d-9059c8372003
 └──────────────────────────────────────────────────┘
 ```
 
-- **100% local** -- Les donnees ne quittent jamais votre ordinateur (sauf pour les appels API)
-- **Aucun backend necessaire** -- Client de bureau pur, utilisez votre propre cle API
-- **Agent Loop** -- Execution d'outils, pas seulement generation de texte
+---
+
+## Plus de Fonctionnalites
+
+- **100% Local** — Vos donnees ne quittent jamais votre machine, conforme aux exigences de conformite d'entreprise
+- **Pas de Backend Requis** — Client de bureau pur, deploiement sur chaque poste de travail sans infrastructure serveur
+- **Agent Loop** — Execution d'outils, pas seulement generation de texte
+- **Systeme de Spaces** — Espaces de travail isoles, les projets n'interferent pas entre eux
+- **Skills** — Installez des packs de competences pour etendre les capacites de l'Agent
+- **AI Browser** — Navigateur CDP integre, l'IA controle directement les pages web
+- **Support Multi-Modele** — Anthropic, OpenAI, DeepSeek, et toute API compatible OpenAI (connectez-vous a votre passerelle LLM d'entreprise)
+- **Themes Sombre/Clair** — Suit la preference du systeme
+- **Multi-Langue** — Chinois, anglais, espagnol et plus
+
+[**Decouvrir toutes les fonctionnalites →**](https://hello-halo.cc/docs/features/spaces.html)
 
 ---
 
-## Autres fonctionnalites
-
-- **Systeme d'Espaces (Spaces)** -- Espaces de travail isoles, les projets n'interferent pas entre eux
-- **Skills (competences)** -- Installez des packs de competences pour etendre les capacites de l'Agent
-- **AI Browser** -- Navigateur CDP integre, l'IA controle directement les pages web
-- **Support multi-modeles** -- Anthropic, OpenAI, DeepSeek, et toute API compatible OpenAI
-- **Theme sombre/clair** -- Suit le systeme
-- **Multilingue** -- Chinois, anglais, espagnol, etc.
-
----
-
-## Feuille de route
+## Feuille de Route
 
 - [x] Claude Code SDK Agent Loop
-- [x] Gestion des Espaces et des conversations
-- [x] Apercu des artefacts (code, HTML, images, Markdown)
-- [x] Acces distant
+- [x] Gestion des Spaces et Conversations
+- [x] Apercu des Artifacts (Code, HTML, Images, Markdown)
+- [x] Acces a Distance
 - [x] AI Browser (CDP)
 - [x] Support MCP Server
 - [x] Systeme de Skills
-- [x] Humains Numeriques et Boutique d'Humains Numeriques
-- [ ] Compatibilite avec les plugins d'ecosystemes tiers
-- [ ] Experience d'edition de code amelioree
-- [ ] Git visuel + revue de code assistee par IA
-- [ ] Recherche de fichiers intelligente par IA
+- [x] Humains Numeriques IA et Magasin d'Humains Numeriques IA
+- [ ] Compatibilite avec les Plugins d'Ecosysteme Tiers
+- [ ] Experience d'Edition de Code Amelioree
+- [ ] Git Visuel + Revue de Code Assistee par IA
+- [ ] Recherche de Fichiers par IA
+- [ ] Enregistrement d'Humains Numeriques a Faible Cout — enregistrement et rejeu automatiques des workflows IA en tant qu'Humains Numeriques reutilisables
 
 ---
 
@@ -264,12 +284,12 @@ npm run prepare
 npm run dev
 ```
 
-- **Traductions** -- `src/renderer/i18n/`
-- **Rapports de bugs** -- [Issues](https://github.com/openkursar/hello-halo/issues)
-- **Suggestions de fonctionnalites** -- [Discussions](https://github.com/openkursar/hello-halo/discussions)
-- **Contributions de code** -- Les PR sont les bienvenues
+- **Traductions** — `src/renderer/i18n/`
+- **Signalement de Bugs** — [Issues](https://github.com/openkursar/hello-halo/issues)
+- **Suggestions de Fonctionnalites** — [Discussions](https://github.com/openkursar/hello-halo/discussions)
+- **Contributions de Code** — Les PRs sont les bienvenues
 
-Voir [CONTRIBUTING.md](../CONTRIBUTING.md) pour plus de details.
+Consultez [CONTRIBUTING.md](../CONTRIBUTING.md) pour les details.
 
 ---
 
@@ -279,37 +299,33 @@ Voir [CONTRIBUTING.md](../CONTRIBUTING.md) pour plus de details.
 - [GitHub Issues](https://github.com/openkursar/hello-halo/issues)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/49f1040c-b858-4d43-841b-206310d3c33f" width="200" alt="QR code du groupe WeChat">
+  <img src="https://github.com/user-attachments/assets/500aa749-50d9-4587-986d-338b1ed899f1" width="200" alt="QR Code WeChat Personnel">
 </p>
 <p align="center">
-  <em>Si le QR code a expire, ajoutez le WeChat : go2halo avec la mention "Halo"</em>
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/500aa749-50d9-4587-986d-338b1ed899f1" width="200" alt="QR code WeChat personnel">
+  <em>Pour tout retour ou discussion, ajoutez WeChat : go2halo avec la note "Halo"</em>
 </p>
 
 ---
 
-## L'histoire de Halo
+## L'Histoire de Halo
 
-En octobre 2025, une simple frustration : **Je voulais utiliser Claude Code, mais j'etais en reunion toute la journee.**
+En octobre 2025, une simple frustration : **Je voulais utiliser Claude Code, mais j'etais bloque en reunions toute la journee.**
 
-Pendant une reunion ennuyeuse, j'ai pense : *Et si je pouvais controler Claude Code sur mon ordinateur a la maison depuis mon telephone ?*
+Pendant une reunion ennuyeuse, j'ai pense : *Et si je pouvais controler Claude Code sur mon ordinateur personnel depuis mon telephone ?*
 
-Puis est venue une deuxieme question -- des collegues non techniques voulaient aussi l'utiliser, mais ils etaient bloques a l'installation. *"C'est quoi npm ?"*
+Puis est venu le deuxieme probleme — les collegues non-techniques voulaient aussi l'utiliser, mais restaient bloques a l'installation. *"C'est quoi npm ?"*
 
-Alors j'ai cree Halo : une interface visuelle, une installation en un clic, un acces distant. La premiere version a pris quelques heures. Toutes les fonctionnalites suivantes ont ete **100% construites par Halo lui-meme.**
+Alors j'ai construit Halo : une interface visuelle, installation en un clic, acces a distance. La premiere version a pris quelques heures. Tout le reste ? **100% construit par Halo lui-meme.**
 
-Aujourd'hui, nous croyons que la prochaine etape est la **station de travail IA** : l'IA n'a plus besoin d'etre surveillee pour travailler. Vous fixez les objectifs, les Humains Numeriques avancent de maniere autonome 7x24. Ecrire du code, lancer des tests, surveiller les deployments, generer des rapports -- fonctionnement continu, vous ne decidez qu'aux moments cles.
+Maintenant, nous croyons que la prochaine etape est la **Station de Travail IA** : l'IA n'a plus besoin de quelqu'un pour surveiller son travail. Vous fixez les objectifs, les Humains Numeriques IA avancent de maniere autonome 7j/24. Ecrire du code, executer des tests, surveiller les deploiements, generer des rapports — fonctionnant en continu, avec vous qui ne prenez des decisions qu'aux points de controle cles.
 
-C'est ce que Halo est en train de construire.
+C'est ce que Halo construit.
 
 ---
 
 ## Licence
 
-MIT -- [LICENSE](../LICENSE)
+MIT — [LICENSE](../LICENSE)
 
 ---
 
@@ -321,10 +337,35 @@ MIT -- [LICENSE](../LICENSE)
   <img src="https://contrib.rocks/image?repo=openkursar/hello-halo" />
 </a>
 
-**Mettez une etoile a ce depot** pour aider d'autres personnes a decouvrir Halo.
+**Mettez une etoile a ce depot** pour aider plus de gens a decouvrir Halo.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=openkursar/hello-halo&type=Date)](https://star-history.com/#openkursar/hello-halo&Date)
+</div>
 
-[⬆ Retour en haut](#halo)
+---
+
+## Partenaires & Sponsors
+
+### Partenaires d'Entreprise
+
+<!-- Add your company logo here — submit a PR or contact us at the link below -->
+
+| Votre entreprise utilise Halo ? | [Faites-le nous savoir](https://github.com/openkursar/hello-halo/issues/new?title=Add+our+company+as+partner) — nous serions ravis de vous mettre en avant ici. |
+|:---:|:---:|
+
+### Sponsors
+
+<a href="https://www.nnscholar.com/">
+  <img src="https://www.nnscholar.com/favicon.ico" height="40" alt="NNScholar">
+</a>
+
+<p align="center">
+  <a href="https://polar.sh/openkursar">Devenir sponsor</a>
+</p>
+
+---
+
+<div align="center">
+
+[Retour en haut](#halo)
 
 </div>

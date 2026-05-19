@@ -4,9 +4,9 @@
 
 # Halo
 
-### Your AI Workstation, 24/7
+### Your AI Workstation — For Teams and Individuals
 
-Set goals. It runs around the clock. Write code, automate, deploy — you make the calls, Halo does the work.
+Deploy locally. Automate around the clock. AI Digital Humans work while you make the calls.
 
 [![GitHub Stars](https://img.shields.io/github/stars/openkursar/hello-halo?style=social)](https://github.com/openkursar/hello-halo/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -30,61 +30,72 @@ Set goals. It runs around the clock. Write code, automate, deploy — you make t
 
 ## Why Halo?
 
-Halo is built on top of [Claude Code](https://github.com/anthropics/claude-code), with a complete product layer totaling over 300,000 lines of code, validated by tens of thousands of users, and running stably in enterprise environments. On top of that, Halo also delivers:
+Halo is an AI workstation powered by frontier Agent with a pluggable engine architecture — supporting [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), and more. With a complete product layer totaling over 300,000 lines of code, validated by tens of thousands of users, and running stably in enterprise environments, Halo delivers:
 
 | What Halo delivers |
 |:---:|
-| **Artifact Rail** — preview code, HTML, and images in real time |
-| **Remote Access** — control from phone / H5 / WeChat / Android anytime |
-| **AI Digital Humans** run automatically 7x24, you just make decisions |
-| **Download and go**, zero configuration, non-technical users welcome |
-| **AI Browser** — embedded browser directly controlled by AI |
+| **Your Daily AI Partner** — coding, product design, operations, writing, research — your everyday work companion |
+| **100% Local, Zero Cloud Dependency** — data never leaves your machine, meets enterprise compliance requirements |
+| **AI Digital Humans** — AI workers running autonomously 7x24, handling monitoring, reports, and routine operations |
+| **AI Browser** — embedded browser directly controlled by AI, automate any web-based system |
+| **WeCom / WeChat Native Control** — manage AI agents from enterprise IM, zero training cost |
+| **Remote Access** — control from phone / H5 / WeChat / Android, managers review progress on the go |
+| **Download and Go** — zero configuration, no backend required, IT deploys in minutes |
 
-> Powered by [Claude Code](https://github.com/anthropics/claude-code) — 100% compatible with Claude Code's Agent capabilities, MCP, and Skills.
+> 100% compatible with Claude Code's Agent capabilities, MCP, and Skills.
 
 ---
 
-## Your AI Doesn't Need You Watching
+## AI Digital Humans — Your Autonomous AI Workforce
 
-Most AI tools require you to sit in front of the screen, going back and forth in conversation. Halo is different — it can work on its own, and you only need to make decisions at key checkpoints.
+Traditional RPA follows rigid scripts and breaks when anything changes. Halo takes a different approach: **AI makes the decisions, Halo Browser Skills handle the operations.** The result is automation that understands context, adapts to changes, and executes with precision.
 
-### AI Digital Humans — AI Workers Running Autonomously 7x24
+### Autonomous Agents Running 7x24
 
-Create an AI Digital Human, give it a task and an execution frequency, and it will run autonomously on schedule:
+Create an AI Digital Human, give it a task and an execution frequency, and it runs autonomously on schedule. No screen to watch, no scripts to babysit.
 
-- Push a tech news digest every morning
-- Check online service status every hour and notify you of anomalies
-- Run competitive analysis on a schedule and generate comparison reports
-- Monitor GitHub dependency updates and security vulnerabilities
-- Track keyword mentions across social media
+**Social & Content Platform Automation:**
 
-Install with one click from the **AI Digital Human Store**, or create your own using natural language.
+- Auto-reply to comments and DMs on Xiaohongshu, Bilibili, Zhihu
+- Publish scheduled content across Twitter / X, WeChat Official Accounts
+- Monitor brand mentions and competitor activity, generate daily digests
+- Track trending topics and automatically draft content suggestions
 
-> Think of it as a cron job + AI Agent hybrid — except you just speak in plain language.
+**Enterprise Internal Automation:**
+
+- Patrol internal OA / CRM / ERP systems, flag overdue tickets and anomalies
+- Generate daily standup reports from Jira / GitLab / GitHub activity
+- Monitor CI/CD pipelines, notify on build failures, auto-create incident tickets
+- Run scheduled compliance checks on internal dashboards
+- Collect cross-department data and assemble weekly executive summaries
+
+Install with one click from the **AI Digital Human Store**, deploy a **private store** for your organization, or create your own using natural language.
+
+> Think of it as cron + RPA + AI Agent in one — except you just describe what you want in plain language.
 
 AI Digital Humans have the exact same Agent capabilities as conversation mode — the same Claude engine, MCP toolchain, and AI Browser — they just trigger automatically on schedule without needing you at the computer.
 
-**WeChat is your control panel.** AI Digital Humans support two-way conversational control via personal WeChat / WeCom (Enterprise WeChat) — not just receiving notifications, you can give instructions to AI Digital Humans, check progress, and request reports directly in WeChat.
+**WeChat / WeCom is your control panel.** AI Digital Humans support two-way conversational control via personal WeChat / WeCom (Enterprise WeChat) — not just receiving notifications, you can give instructions, check progress, and request reports directly in your enterprise IM.
 
 ![AI Digital Human](./docs/assets/ai-digital-human.png)
 
-### Browser Skill — Making AI-Driven Website Operations Stable and Reliable
+### Halo Browser Skill — AI Decides, Scripts Execute
 
-Typical AI browser automation has the AI fumble around figuring out what to click and fill every time, which frequently fails.
+This is what separates Halo from "AI browser agents" that fumble around clicking randomly.
 
-Browser Skill takes a different approach: **pre-write reusable scripts for common operations on each website**. The AI only needs to decide "which script to call now" — the script already handles the specifics of how to operate the website.
+Halo Browser Skill takes the RPA approach to reliability: **pre-write reusable scripts for common operations on each platform**. The AI only decides *what* to do and *when* — the script already knows *how*.
 
-Skill scripts run directly in a real browser environment via Halo's `browser_run` — with access to the page DOM, cookies, and internal APIs, just like operating in the Chrome DevTools console. For example, here is the core code of a Bilibili notification reading Skill:
+Scripts run directly in a real browser via Halo's `browser_run` — with full access to the page DOM, cookies, and internal APIs, just like the Chrome DevTools Console. This works for public platforms and private enterprise systems alike.
+
+**Example: Reading Bilibili notifications**
 
 ```js
 // .claude/skills/bili-get-messages/index.js
 async (params) => {
-  // Directly call Bilibili's internal API — cookies are automatically included, no extra authentication needed
   const resp = await fetch('https://api.bilibili.com/x/msgfeed/reply?platform=web', {
-    credentials: 'include'
+    credentials: 'include'  // cookies automatically included, no extra auth
   }).then(r => r.json())
 
-  // Return structured data to the AI, which decides how to respond
   return {
     success: true,
     notifications: resp.data.items.map(item => ({
@@ -96,21 +107,28 @@ async (params) => {
 }
 ```
 
-When an AI Digital Human calls it, all it takes is: `browser_run({ file: "skills/bili-get-messages/index.js" })` — after getting the data, the AI decides which items need replies and how to reply.
+AI calls it with: `browser_run({ file: ".claude/skills/bili-get-messages/index.js" })`
 
-For example, a Zhihu AI Digital Human's workflow:
-1. AI decides: time to check for new invited questions
-2. Calls `zhihu-creator-invited` Skill -> script automatically fetches the invitation list and returns structured data
-3. AI judges: this question is worth answering, starts writing
-4. Calls `zhihu-publish-answer` Skill -> script automatically fills the editor and publishes
+**Example: Enterprise workflow — a Xiaohongshu content operations Digital Human:**
+1. AI decides: time to check for new comments on today's posts
+2. Calls `xhs-get-comments` Skill → script fetches comment list via platform API
+3. AI judges: these 5 comments need replies, drafts personalized responses
+4. Calls `xhs-reply-comment` Skill → script submits each reply
 
-AI makes the decisions, Skills handle the operations. Stable, repeatable, reliable.
+**Example: Enterprise internal — a DevOps monitoring Digital Human:**
+1. AI decides: time for the hourly infra check
+2. Calls `check-grafana-alerts` Skill → script reads alert dashboard via internal API
+3. AI judges: 2 alerts are critical, composes an incident summary
+4. Calls `create-jira-ticket` Skill → script creates a P1 ticket with full context
+5. Calls `notify-oncall` Skill → pushes alert to WeCom on-call group
 
-There are already ready-made Skills for platforms like Bilibili, Zhihu, WeChat, Xiaohongshu, and more. The community can also contribute their own.
+**AI decides. Skills execute. Stable, repeatable, auditable.**
 
-### Remote Access — Your Phone Is Your AI Remote Control
+Ready-made Skills are available for Xiaohongshu, Bilibili, Zhihu, Twitter / X, WeChat, and more. Enterprise teams can write private Skills for internal systems. The community can contribute and share their own.
 
-Once Remote Access is enabled, your phone / H5 / WeChat / Android client can all control the Halo on your desktop. During meetings, commuting, or even from a hospital bed (true story), check AI's work progress anytime and issue new instructions.
+### Remote Access — Manage Your AI Fleet From Anywhere
+
+Once Remote Access is enabled, your phone / H5 / WeChat / Android client can control Halo on your desktop. During meetings, commuting, or on the road — check Digital Human outputs, approve decisions, and issue new instructions without being at your desk.
 
 ---
 
@@ -140,7 +158,7 @@ Once Remote Access is enabled, your phone / H5 / WeChat / Android client can all
 | **Android** | [.apk](https://github.com/openkursar/hello-halo/releases/latest) | Android 8+ |
 | **iOS** | Build from source | iOS 15+ |
 
-**Download, install, run.** No Node.js, no npm, no terminal needed.
+**Download, install, run.** No Node.js, no npm, no terminal needed. IT can distribute across the organization with zero server-side dependencies.
 
 ### Build from Source
 
@@ -173,7 +191,7 @@ Open the AI Digital Human Store, pick one, fill in a few configuration fields, a
 
 Write a `spec.yaml` and submit a PR to the [AI Digital Human Protocol (DHP)](https://github.com/openkursar/digital-human-protocol). Once merged, it becomes immediately available to all Halo users.
 
-You can also write Browser Skills (`.js` scripts) for AI Digital Humans to precisely execute operations on specific platforms.
+You can also write Halo Browser Skills (`.js` scripts) for AI Digital Humans to precisely execute operations on specific platforms.
 
 </td>
 </tr>
@@ -220,20 +238,21 @@ https://github.com/user-attachments/assets/2d4d2f3e-d27c-44b0-8f1d-9059c8372003
 └──────────────────────────────────────────────────┘
 ```
 
-- **100% Local** — Your data never leaves your machine (except API calls)
-- **No Backend Required** — Pure desktop client, use your own API Key
-- **Agent Loop** — Tool execution, not just text generation
-
 ---
 
 ## More Features
 
+- **100% Local** — Your data never leaves your machine, meets enterprise compliance requirements
+- **No Backend Required** — Pure desktop client, deploy to every workstation with zero server infrastructure
+- **Agent Loop** — Tool execution, not just text generation
 - **Space System** — Isolated workspaces, projects don't interfere with each other
 - **Skills** — Install skill packs to extend Agent capabilities
 - **AI Browser** — Embedded CDP browser, AI directly controls web pages
-- **Multi-Model Support** — Anthropic, OpenAI, DeepSeek, and any OpenAI-compatible API
+- **Multi-Model Support** — Anthropic, OpenAI, DeepSeek, and any OpenAI-compatible API (connect to your enterprise LLM gateway)
 - **Dark/Light Themes** — Follows system preference
 - **Multi-Language** — Chinese, English, Spanish, and more
+
+[**Explore all features →**](https://hello-halo.cc/docs/features/spaces.html)
 
 ---
 
@@ -251,6 +270,7 @@ https://github.com/user-attachments/assets/2d4d2f3e-d27c-44b0-8f1d-9059c8372003
 - [ ] Enhanced Code Editing Experience
 - [ ] Visual Git + AI-Assisted Code Review
 - [ ] AI-Powered File Search
+- [ ] Low-Cost Digital Human Recording — auto-record and replay AI workflows as reusable Digital Humans
 
 ---
 
@@ -279,14 +299,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - [GitHub Issues](https://github.com/openkursar/hello-halo/issues)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/49f1040c-b858-4d43-841b-206310d3c33f" width="200" alt="WeChat Group QR Code">
-</p>
-<p align="center">
-  <em>If the QR code has expired, add WeChat: go2halo with the note "Halo"</em>
-</p>
-
-<p align="center">
   <img src="https://github.com/user-attachments/assets/500aa749-50d9-4587-986d-338b1ed899f1" width="200" alt="Personal WeChat QR Code">
+</p>
+<p align="center">
+  <em>For any feedback or discussion, add WeChat: go2halo with the note "Halo"</em>
 </p>
 
 ---
@@ -323,7 +339,32 @@ MIT — [LICENSE](LICENSE)
 
 **Star this repo** to help more people discover Halo.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=openkursar/hello-halo&type=Date)](https://star-history.com/#openkursar/hello-halo&Date)
+</div>
+
+---
+
+## Partners & Sponsors
+
+### Enterprise Partners
+
+<!-- Add your company logo here — submit a PR or contact us at the link below -->
+
+| Your company uses Halo? | [Let us know](https://github.com/openkursar/hello-halo/issues/new?title=Add+our+company+as+partner) — we'd love to feature you here. |
+|:---:|:---:|
+
+### Sponsors
+
+<a href="https://www.nnscholar.com/">
+  <img src="https://www.nnscholar.com/favicon.ico" height="40" alt="NNScholar">
+</a>
+
+<p align="center">
+  <a href="https://polar.sh/openkursar">Become a sponsor</a>
+</p>
+
+---
+
+<div align="center">
 
 [Back to Top](#halo)
 

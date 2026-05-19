@@ -4,22 +4,22 @@
 
 # Halo
 
-### Deine KI-Workstation, 24/7
+### Deine KI-Arbeitsstation — Für Teams und Einzelpersonen
 
-Setze Ziele. Es läuft rund um die Uhr. Code schreiben, automatisieren, bereitstellen — du triffst Entscheidungen, Halo führt aus.
+Lokal bereitstellen. Rund um die Uhr automatisieren. KI-Digitalmenschen arbeiten, während du die Entscheidungen triffst.
 
 [![GitHub Stars](https://img.shields.io/github/stars/openkursar/hello-halo?style=social)](https://github.com/openkursar/hello-halo/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Web-lightgrey.svg)](#installation)
 [![Downloads](https://img.shields.io/github/downloads/openkursar/hello-halo/total.svg)](https://github.com/openkursar/hello-halo/releases)
 
-[**Download**](#installation) · [**Dokumentation**](#dokumentation) · [**Mitwirken**](#mitwirken)
+[**Herunterladen**](#installation) · [**Dokumentation**](#dokumentation) · [**Mitwirken**](#mitwirken)
 
-**[English](../README.md)** | **[简体中文](./README.zh-CN.md)** | **[繁體中文](./README.zh-TW.md)** | **[Español](./README.es.md)** | **[Français](./README.fr.md)** | **[日本語](./README.ja.md)**
+**[English](../README.md)** | **[简体中文](./README.zh-CN.md)** | **[繁體中文](./README.zh-TW.md)** | **[Español](./README.es.md)** | **Deutsch** | **[Français](./README.fr.md)** | **[日本語](./README.ja.md)**
 
 </div>
 
-<!-- TODO: Ersetzen durch ein 30-Sekunden-GIF: Benutzer gibt einen Satz ein -> Agent schreibt automatisch Code -> Datei erscheint im Artifact Rail -> Vorschau -->
+<!-- TODO: Replace with a 30-second GIF showing: user types a sentence -> Agent automatically writes code -> files appear in Artifact Rail -> preview the result -->
 <div align="center">
 
 ![Space Home](./assets/space_home.jpg)
@@ -30,61 +30,72 @@ Setze Ziele. Es läuft rund um die Uhr. Code schreiben, automatisieren, bereitst
 
 ## Warum Halo?
 
-Halo baut auf [Claude Code](https://github.com/anthropics/claude-code) auf und bietet eine vollstaendige Produkterfahrung mit insgesamt ueber 300.000 Zeilen Code, validiert durch zehntausende Nutzer und stabil im Unternehmenseinsatz. Darueber hinaus bietet Halo:
+Halo ist eine KI-Arbeitsstation, angetrieben von einem hochmodernen Agent mit einer steckbaren Engine-Architektur — kompatibel mit [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex) und mehr. Mit einer vollständigen Produktschicht von über 300.000 Codezeilen, validiert von Zehntausenden von Nutzern und stabil in Unternehmensumgebungen laufend, bietet Halo:
 
 | Was Halo bietet |
 |:---:|
-| **Artifact Rail** — zeigt Code, HTML und Bilder in Echtzeit |
-| **Fernzugriff** — Steuerung per Handy / H5 / WeChat / Android jederzeit |
-| **AI AI Digitale Menschen** laufen 7x24 automatisch, du triffst nur Entscheidungen |
-| **Herunterladen und loslegen**, keine Konfiguration nötig |
-| **AI Browser** — eingebetteter Browser, direkt von der KI gesteuert |
+| **Dein täglicher KI-Partner** — Programmierung, Produktdesign, Betrieb, Schreiben, Recherche — dein alltäglicher Arbeitsbegleiter |
+| **100% Lokal, Null Cloud-Abhängigkeit** — Daten verlassen niemals deinen Rechner, erfüllt Unternehmens-Compliance-Anforderungen |
+| **KI-Digitalmenschen** — KI-Arbeiter, die autonom 7x24 laufen und Monitoring, Berichte und Routineoperationen übernehmen |
+| **AI Browser** — Eingebetteter Browser, direkt von der KI gesteuert, automatisiert jedes webbasierte System |
+| **Native WeCom / WeChat Steuerung** — Verwalte KI-Agenten über den Unternehmens-IM, ohne Schulungsaufwand |
+| **Fernzugriff** — Steuerung vom Handy / H5 / WeChat / Android, Manager überprüfen den Fortschritt unterwegs |
+| **Herunterladen und Loslegen** — Keine Konfiguration, kein Backend erforderlich, IT-Bereitstellung in Minuten |
 
-> Powered by [Claude Code](https://github.com/anthropics/claude-code) -- 100% kompatibel mit den Agent-Faehigkeiten, MCP und Skills von Claude Code.
+> 100% kompatibel mit den Agent-Fähigkeiten von Claude Code, MCP und Skills.
 
 ---
 
-## Deine KI braucht keine Aufsicht
+## KI-Digitalmenschen — Deine Autonome KI-Belegschaft
 
-Die meisten KI-Tools erfordern, dass du vor dem Bildschirm sitzt und Runde fuer Runde Dialoge fuehrst. Halo ist anders -- es kann selbststaendig arbeiten, du musst nur an entscheidenden Punkten Entscheidungen treffen.
+Traditionelles RPA folgt starren Skripten und bricht zusammen, wenn sich etwas ändert. Halo geht einen anderen Weg: **Die KI trifft die Entscheidungen, Halo Browser Skills führen die Operationen aus.** Das Ergebnis ist Automatisierung, die den Kontext versteht, sich an Änderungen anpasst und präzise ausführt.
 
-### AI Digitale Menschen -- 7x24 autonom arbeitende KI-Mitarbeiter
+### Autonome Agenten im 7x24-Betrieb
 
-Erstelle einen Digitalen Menschen, gib ihm eine Aufgabe und eine Ausfuehrungsfrequenz, und er wird planmaessig selbststaendig arbeiten:
+Erstelle einen KI-Digitalmenschen, gib ihm eine Aufgabe und eine Ausführungsfrequenz, und er läuft autonom nach Zeitplan. Kein Bildschirm zu überwachen, keine Skripte zu beaufsichtigen.
 
-- Jeden Morgen eine Zusammenfassung der Tech-Nachrichten senden
-- Stuendlich den Status der Online-Dienste pruefen und dich bei Anomalien benachrichtigen
-- Regelmaessig Wettbewerbsanalysen durchfuehren und Vergleichsberichte erstellen
-- GitHub-Abhaengigkeiten auf Updates und Sicherheitsluecken ueberwachen
-- Erwaehungen von Schluesselbegriffen in sozialen Medien verfolgen
+**Automatisierung von Social Media und Content-Plattformen:**
 
-Im **Digital Human Store** mit einem Klick installieren oder mit natuerlicher Sprache eigene erstellen.
+- Automatische Antworten auf Kommentare und DMs auf Xiaohongshu, Bilibili, Zhihu
+- Geplante Veröffentlichung von Inhalten auf Twitter / X, offiziellen WeChat-Accounts
+- Überwachung von Markenerwähnungen und Wettbewerberaktivitäten, Erstellung täglicher Zusammenfassungen
+- Verfolgung von Trendthemen und automatische Erstellung von Content-Vorschlägen
 
-> Stell es dir als Kombination aus Cron-Job und KI-Agent vor -- aber du musst nur normale Sprache verwenden.
+**Interne Unternehmensautomatisierung:**
 
-AI Digitale Menschen verfuegen ueber exakt die gleichen Agent-Faehigkeiten wie der Konversationsmodus -- dieselbe Claude-Engine, MCP-Toolchain und den AI Browser, nur dass sie planmaessig automatisch ausgeloest werden, ohne dass du am Computer sitzen musst.
+- Überwachung interner OA / CRM / ERP-Systeme, Markierung überfälliger Tickets und Anomalien
+- Erstellung täglicher Standup-Berichte aus Jira / GitLab / GitHub-Aktivitäten
+- Überwachung von CI/CD-Pipelines, Benachrichtigung bei Build-Fehlern, automatische Erstellung von Incident-Tickets
+- Durchführung geplanter Compliance-Prüfungen auf internen Dashboards
+- Abteilungsübergreifende Datenerfassung und Erstellung wöchentlicher Management-Zusammenfassungen
 
-**WeChat ist deine Steuerzentrale.** AI Digitale Menschen unterstuetzen die bidirektionale Dialogsteuerung ueber persoenliches WeChat / WeCom -- nicht nur Benachrichtigungen empfangen, du kannst dem Digitalen Menschen direkt in WeChat Anweisungen geben, den Fortschritt abfragen und Berichte anfordern.
+Installiere mit einem Klick aus dem **KI-Digitalmensch-Store**, stelle einen **privaten Store** für deine Organisation bereit, oder erstelle eigene mit natürlicher Sprache.
+
+> Stell es dir vor wie cron + RPA + AI Agent in einem — nur dass du einfach beschreibst, was du willst, in natürlicher Sprache.
+
+KI-Digitalmenschen haben genau die gleichen Agent-Fähigkeiten wie der Konversationsmodus — den gleichen Claude-Engine, die MCP-Toolchain und den AI Browser — sie werden nur automatisch nach Zeitplan ausgelöst, ohne dass du am Computer sein musst.
+
+**WeChat / WeCom ist deine Steuerzentrale.** KI-Digitalmenschen unterstützen bidirektionale Konversationssteuerung über persönliches WeChat / WeCom (Enterprise WeChat) — nicht nur Benachrichtigungen empfangen, du kannst Anweisungen geben, den Fortschritt prüfen und Berichte direkt im Unternehmens-IM anfordern.
 
 ![AI Digital Human](./assets/ai-digital-human.png)
 
-### Browser Skill -- Zuverlaessige KI-gesteuerte Website-Bedienung
+### Halo Browser Skill — KI Entscheidet, Skripte Führen Aus
 
-Herkoemmliche KI-Browser-Automatisierung laesst die KI jedes Mal selbst herausfinden, wo sie klicken und was sie eingeben soll -- das geht oft schief.
+Das unterscheidet Halo von "KI-Browser-Agenten", die ziellos herumklicken.
 
-Browser Skill verfolgt einen anderen Ansatz: **Haeufig verwendete Aktionen fuer jede Website werden vorab als wiederverwendbare Skripte geschrieben**. Die KI muss nur entscheiden "welches Skript soll jetzt aufgerufen werden" -- wie die Website genau bedient wird, hat das Skript bereits erledigt.
+Halo Browser Skill nutzt den RPA-Ansatz für Zuverlässigkeit: **Vorgefertigte wiederverwendbare Skripte für gängige Operationen auf jeder Plattform**. Die KI entscheidet nur *was* zu tun ist und *wann* — das Skript weiß bereits *wie*.
 
-Skill-Skripte laufen ueber Halos `browser_run` direkt in einer echten Browser-Umgebung -- mit Zugriff auf Seiten-DOM, Cookies und interne APIs, genau wie in der Chrome DevTools-Konsole. Hier ein Beispiel fuer den Kerncode eines Bilibili-Benachrichtigungs-Skills:
+Skripte laufen direkt in einem echten Browser über Halos `browser_run` — mit vollem Zugriff auf das Seiten-DOM, Cookies und interne APIs, genau wie die Chrome DevTools Console. Das funktioniert sowohl für öffentliche Plattformen als auch für private Unternehmenssysteme.
+
+**Beispiel: Bilibili-Benachrichtigungen lesen**
 
 ```js
 // .claude/skills/bili-get-messages/index.js
 async (params) => {
-  // Bilibili-interne API direkt aufrufen -- Cookies werden automatisch mitgesendet, keine zusaetzliche Authentifizierung noetig
   const resp = await fetch('https://api.bilibili.com/x/msgfeed/reply?platform=web', {
-    credentials: 'include'
+    credentials: 'include'  // cookies automatically included, no extra auth
   }).then(r => r.json())
 
-  // Strukturierte Daten an die KI zurueckgeben, die KI entscheidet, wie sie antwortet
   return {
     success: true,
     notifications: resp.data.items.map(item => ({
@@ -96,34 +107,41 @@ async (params) => {
 }
 ```
 
-Der Digitale Mensch ruft es einfach so auf: `browser_run({ file: "skills/bili-get-messages/index.js" })` -- nach Erhalt der Daten entscheidet die KI selbst, welche beantwortet werden muessen und wie.
+Die KI ruft es auf mit: `browser_run({ file: ".claude/skills/bili-get-messages/index.js" })`
 
-Zum Beispiel der Workflow eines Zhihu-Digitalen-Menschen:
-1. KI entscheidet: Zeit zu pruefen, ob es neue Einladungen zum Antworten gibt
-2. Ruft `zhihu-creator-invited` Skill auf -> Skript holt automatisch die Einladungsliste und gibt strukturierte Daten zurueck
-3. KI urteilt: Diese Frage ist es wert, beantwortet zu werden, beginnt zu schreiben
-4. Ruft `zhihu-publish-answer` Skill auf -> Skript fuellt automatisch den Editor aus und veroeffentlicht
+**Beispiel: Unternehmens-Workflow — ein Xiaohongshu Content-Operations-Digitalmensch:**
+1. Die KI entscheidet: Zeit, neue Kommentare zu den heutigen Beiträgen zu prüfen
+2. Ruft den `xhs-get-comments` Skill auf → Skript holt die Kommentarliste über die Plattform-API
+3. Die KI bewertet: Diese 5 Kommentare brauchen Antworten, verfasst personalisierte Antworten
+4. Ruft den `xhs-reply-comment` Skill auf → Skript sendet jede Antwort
 
-Die KI trifft Entscheidungen, Skills fuehren Aktionen aus. Stabil, wiederholbar, zuverlaessig.
+**Beispiel: Unternehmensintern — ein DevOps-Monitoring-Digitalmensch:**
+1. Die KI entscheidet: Zeit für den stündlichen Infrastruktur-Check
+2. Ruft den `check-grafana-alerts` Skill auf → Skript liest das Alert-Dashboard über die interne API
+3. Die KI bewertet: 2 Alerts sind kritisch, erstellt eine Incident-Zusammenfassung
+4. Ruft den `create-jira-ticket` Skill auf → Skript erstellt ein P1-Ticket mit vollständigem Kontext
+5. Ruft den `notify-oncall` Skill auf → Sendet Alert an die WeCom-Bereitschaftsgruppe
 
-Derzeit gibt es fertige Skills fuer Plattformen wie Bilibili, Zhihu, WeChat, Xiaohongshu und weitere. Die Community kann auch eigene beitragen.
+**Die KI entscheidet. Skills führen aus. Stabil, wiederholbar, auditierbar.**
 
-### Fernzugriff -- Dein Handy als KI-Fernbedienung
+Fertige Skills sind verfügbar für Xiaohongshu, Bilibili, Zhihu, Twitter / X, WeChat und mehr. Unternehmensteams können private Skills für interne Systeme schreiben. Die Community kann eigene beitragen und teilen.
 
-Wenn der Fernzugriff aktiviert ist, kannst du Halo auf deinem Desktop per Handy / H5 / WeChat / Android-Client steuern. Im Meeting, beim Pendeln oder sogar im Krankenhausbett (wahre Geschichte) -- jederzeit den Arbeitsfortschritt der KI einsehen und neue Anweisungen geben.
+### Fernzugriff — Verwalte Deine KI-Flotte Von Überall
+
+Sobald der Fernzugriff aktiviert ist, kann dein Handy / H5 / WeChat / Android-Client Halo auf deinem Desktop steuern. Während Meetings, auf dem Weg zur Arbeit oder unterwegs — prüfe die Ergebnisse der Digitalmenschen, genehmige Entscheidungen und erteile neue Anweisungen, ohne an deinem Schreibtisch zu sein.
 
 ---
 
 ## Schnellstart
 
-**In 30 Sekunden loslegen:**
+**In 30 Sekunden starten:**
 
 1. [Herunterladen und installieren](#installation), Halo starten
-2. API Key eingeben (Anthropic empfohlen)
-3. Beginne zu chatten -- probiere `Schreibe eine Todo-App mit React` oder `Hilf mir, die Code-Struktur dieses Projekts zu analysieren`
-4. Beobachte, wie Dateien im Artifact Rail erscheinen, klicke zur Vorschau und fordere Aenderungen an
+2. Gib deinen API Key ein (Anthropic empfohlen)
+3. Beginne zu chatten — probiere `Build a todo app with React` oder `Help me analyze the code structure of this project`
+4. Beobachte, wie Dateien im Artifact Rail erscheinen, klicke zur Vorschau, fordere Änderungen an
 
-> Empfohlene Modelle: Claude Sonnet / Opus Serie
+> Empfohlene Modelle: Claude Sonnet / Opus Serien
 
 ---
 
@@ -132,17 +150,17 @@ Wenn der Fernzugriff aktiviert ist, kannst du Halo auf deinem Desktop per Handy 
 ### Download (Empfohlen)
 
 | Plattform | Download | Anforderungen |
-|------|------|------|
+|----------|----------|--------------|
 | **macOS** (Apple Silicon) | [.dmg](https://github.com/openkursar/hello-halo/releases/latest) | macOS 11+ |
 | **macOS** (Intel) | [.dmg](https://github.com/openkursar/hello-halo/releases/latest) | macOS 11+ |
 | **Windows** | [.exe](https://github.com/openkursar/hello-halo/releases/latest) | Windows 10+ |
 | **Linux** | [.AppImage](https://github.com/openkursar/hello-halo/releases/latest) | Ubuntu 20.04+ |
 | **Android** | [.apk](https://github.com/openkursar/hello-halo/releases/latest) | Android 8+ |
-| **iOS** | Aus Quellcode kompilieren | iOS 15+ |
+| **iOS** | Aus dem Quellcode kompilieren | iOS 15+ |
 
-**Herunterladen, installieren, ausfuehren.** Kein Node.js, kein npm, kein Terminal noetig.
+**Herunterladen, installieren, starten.** Kein Node.js, kein npm, kein Terminal nötig. Die IT kann es organisationsweit verteilen — ohne serverseitige Abhängigkeiten.
 
-### Aus Quellcode kompilieren
+### Aus dem Quellcode Kompilieren
 
 ```bash
 git clone https://github.com/openkursar/hello-halo.git
@@ -154,26 +172,26 @@ npm run dev
 
 ---
 
-## Digital Human Store
+## KI-Digitalmensch-Store
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### Fuer Nutzer -- Sofort einsatzbereit
+### Für Nutzer — Sofort Installieren und Verwenden
 
-Oeffne den Digital Human Store, waehle einen aus, fuelle ein paar Konfigurationsfelder aus, und er beginnt automatisch zu arbeiten. Kein Code schreiben, keine Prompts verfassen.
+Öffne den KI-Digitalmensch-Store, wähle einen aus, fülle ein paar Konfigurationsfelder aus, und er beginnt automatisch zu laufen. Keine Programmierung nötig, keine Prompts zu schreiben.
 
 ![AI Store](./assets/shop.png)
 
 </td>
 <td width="50%" valign="top">
 
-### Fuer Entwickler -- Erstellen und veroeffentlichen
+### Für Entwickler — Erstellen und Veröffentlichen
 
-Schreibe eine `spec.yaml` und reiche einen PR beim [Digital Human Protocol (DHP)](https://github.com/openkursar/digital-human-protocol) ein. Nach dem Merge ist er sofort fuer alle Halo-Nutzer verfuegbar.
+Schreibe eine `spec.yaml` und reiche einen PR beim [AI Digital Human Protocol (DHP)](https://github.com/openkursar/digital-human-protocol) ein. Nach dem Merge ist er sofort für alle Halo-Nutzer verfügbar.
 
-Du kannst auch Browser Skills (`.js`-Skripte) fuer AI Digitale Menschen schreiben, damit sie auf bestimmten Plattformen praezise Aktionen ausfuehren.
+Du kannst auch Halo Browser Skills (`.js`-Skripte) schreiben, damit KI-Digitalmenschen Operationen auf bestimmten Plattformen präzise ausführen können.
 
 </td>
 </tr>
@@ -187,7 +205,7 @@ Du kannst auch Browser Skills (`.js`-Skripte) fuer AI Digitale Menschen schreibe
 
 ![Chat Todo](./assets/chat_todo.jpg)
 
-*Fernzugriff: Halo von ueberall steuern*
+*Fernzugriff: Steuere Halo von überall*
 
 ![Remote Settings](./assets/remote_setting.jpg)
 
@@ -209,31 +227,32 @@ https://github.com/user-attachments/assets/2d4d2f3e-d27c-44b0-8f1d-9059c8372003
 ┌──────────────────────────────────────────────────┐
 │                   Halo Desktop                    │
 │                                                   │
-│   React UI  ◄─IPC─►  Main Process  ◄──►  Claude  │
+│   React UI  <─IPC─>  Main Process  <──>  Claude  │
 │  (Renderer)          ┌───────────┐       Code SDK │
 │                      │ Digital   │      (Agent    │
 │                      │ Humans    │       Loop)    │
 │                      │ Scheduler │                │
 │                      └───────────┘                │
 │                           │                       │
-│                     ~/.halo/ (lokal)              │
+│                     ~/.halo/ (local)              │
 └──────────────────────────────────────────────────┘
 ```
 
-- **100% lokal** -- Daten verlassen deinen Computer nicht (ausser API-Aufrufe)
-- **Kein Backend noetig** -- Reiner Desktop-Client, mit deinem eigenen API Key
-- **Agent Loop** -- Tool-Ausfuehrung, nicht nur Textgenerierung
-
 ---
 
-## Weitere Faehigkeiten
+## Weitere Funktionen
 
-- **Space-System** -- Isolierte Arbeitsbereiche, Projekte stoeren sich nicht gegenseitig
-- **Skills** -- Skill-Pakete installieren, um die Agent-Faehigkeiten zu erweitern
-- **AI Browser** -- Eingebetteter CDP-Browser, KI steuert Webseiten direkt
-- **Multi-Modell-Unterstuetzung** -- Anthropic, OpenAI, DeepSeek und jede OpenAI-kompatible API
-- **Dunkles/Helles Design** -- Folgt dem System
-- **Mehrsprachig** -- Chinesisch, Englisch, Spanisch und mehr
+- **100% Lokal** — Deine Daten verlassen niemals deinen Rechner, erfüllt Unternehmens-Compliance-Anforderungen
+- **Kein Backend Erforderlich** — Reiner Desktop-Client, Bereitstellung auf jeder Arbeitsstation ohne Server-Infrastruktur
+- **Agent Loop** — Werkzeugausführung, nicht nur Textgenerierung
+- **Space-System** — Isolierte Arbeitsbereiche, Projekte beeinflussen sich nicht gegenseitig
+- **Skills** — Installiere Skill-Pakete, um die Agent-Fähigkeiten zu erweitern
+- **AI Browser** — Eingebetteter CDP-Browser, KI steuert Webseiten direkt
+- **Multi-Modell-Unterstützung** — Anthropic, OpenAI, DeepSeek und jede OpenAI-kompatible API (Verbindung zu deinem Unternehmens-LLM-Gateway)
+- **Dunkles/Helles Design** — Folgt der Systemeinstellung
+- **Mehrsprachig** — Chinesisch, Englisch, Spanisch und mehr
+
+[**Alle Funktionen entdecken →**](https://hello-halo.cc/docs/features/spaces.html)
 
 ---
 
@@ -244,13 +263,14 @@ https://github.com/user-attachments/assets/2d4d2f3e-d27c-44b0-8f1d-9059c8372003
 - [x] Artifact-Vorschau (Code, HTML, Bilder, Markdown)
 - [x] Fernzugriff
 - [x] AI Browser (CDP)
-- [x] MCP-Server-Unterstuetzung
+- [x] MCP Server Unterstützung
 - [x] Skills-System
-- [x] AI Digitale Menschen und Digital Human Store
-- [ ] Kompatibilitaet mit Drittanbieter-Oekosystem-Plugins
-- [ ] Verbesserte Code-Editiererfahrung
-- [ ] Git-Visualisierung + KI-gestuetzte Code-Review
-- [ ] KI-gesteuerte Dateisuche
+- [x] KI-Digitalmenschen und KI-Digitalmensch-Store
+- [ ] Kompatibilität mit Drittanbieter-Ökosystem-Plugins
+- [ ] Verbesserte Code-Bearbeitungserfahrung
+- [ ] Visuelles Git + KI-gestützte Code-Reviews
+- [ ] KI-gestützte Dateisuche
+- [ ] Kostengünstige Digitalmensch-Aufzeichnung — KI-Workflows automatisch aufzeichnen und als wiederverwendbare Digitalmenschen abspielen
 
 ---
 
@@ -264,12 +284,12 @@ npm run prepare
 npm run dev
 ```
 
-- **Uebersetzungen** -- `src/renderer/i18n/`
-- **Bug-Reports** -- [Issues](https://github.com/openkursar/hello-halo/issues)
-- **Feature-Vorschlaege** -- [Discussions](https://github.com/openkursar/hello-halo/discussions)
-- **Code-Beitraege** -- PRs willkommen
+- **Übersetzungen** — `src/renderer/i18n/`
+- **Fehlermeldungen** — [Issues](https://github.com/openkursar/hello-halo/issues)
+- **Feature-Vorschläge** — [Discussions](https://github.com/openkursar/hello-halo/discussions)
+- **Code-Beiträge** — PRs sind willkommen
 
-Siehe [CONTRIBUTING.md](../CONTRIBUTING.md) fuer Details.
+Siehe [CONTRIBUTING.md](../CONTRIBUTING.md) für Details.
 
 ---
 
@@ -279,37 +299,33 @@ Siehe [CONTRIBUTING.md](../CONTRIBUTING.md) fuer Details.
 - [GitHub Issues](https://github.com/openkursar/hello-halo/issues)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/49f1040c-b858-4d43-841b-206310d3c33f" width="200" alt="WeChat-Gruppen-QR-Code">
+  <img src="https://github.com/user-attachments/assets/500aa749-50d9-4587-986d-338b1ed899f1" width="200" alt="Persönlicher WeChat QR-Code">
 </p>
 <p align="center">
-  <em>Falls der QR-Code abgelaufen ist, fuege WeChat hinzu: go2halo mit dem Vermerk "Halo"</em>
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/500aa749-50d9-4587-986d-338b1ed899f1" width="200" alt="Persoenlicher WeChat-QR-Code">
+  <em>Für Feedback oder Diskussionen, füge WeChat hinzu: go2halo mit dem Vermerk "Halo"</em>
 </p>
 
 ---
 
 ## Die Geschichte von Halo
 
-Im Oktober 2025 begann es mit einer einfachen Frustration: **Ich wollte Claude Code nutzen, aber ich steckte den ganzen Tag in Meetings.**
+Im Oktober 2025, eine einfache Frustration: **Ich wollte Claude Code nutzen, aber ich steckte den ganzen Tag in Meetings.**
 
-Waehrend langweiliger Meetings dachte ich: *Was, wenn ich Claude Code auf meinem Heimcomputer vom Handy aus steuern koennte?*
+Während eines langweiligen Meetings dachte ich: *Was, wenn ich Claude Code auf meinem Heimcomputer von meinem Handy aus steuern könnte?*
 
-Dann kam das zweite Problem -- nicht-technische Kollegen wollten es auch nutzen, blieben aber bei der Installation haengen. *"Was ist npm?"*
+Dann kam das zweite Problem — nicht-technische Kollegen wollten es auch nutzen, blieben aber bei der Installation hängen. *"Was ist npm?"*
 
-Also baute ich Halo: visuelle Oberflaeche, Ein-Klick-Installation, Fernzugriff. Die erste Version brauchte nur ein paar Stunden. Alles danach wurde **100% von Halo selbst gebaut.**
+Also baute ich Halo: eine visuelle Oberfläche, Ein-Klick-Installation, Fernzugriff. Die erste Version dauerte ein paar Stunden. Alles danach? **100% von Halo selbst gebaut.**
 
-Jetzt glauben wir, dass der naechste Schritt die **KI-Workstation** ist: Die KI braucht keinen Menschen mehr, der ihr zuschaut. Du setzt ein Ziel, und AI Digitale Menschen arbeiten 7x24 autonom daran. Code schreiben, Tests ausfuehren, Deployments ueberwachen, Berichte erstellen -- kontinuierlich im Betrieb, du entscheidest nur an kritischen Punkten.
+Jetzt glauben wir, dass der nächste Schritt die **KI-Arbeitsstation** ist: KI braucht niemanden mehr, der zuschaut, um die Arbeit zu erledigen. Du setzt die Ziele, KI-Digitalmenschen arbeiten autonom 7x24 voran. Code schreiben, Tests ausführen, Deployments überwachen, Berichte generieren — durchgehend laufend, wobei du nur an wichtigen Kontrollpunkten Entscheidungen triffst.
 
-Das ist es, woran Halo arbeitet.
+Das ist es, was Halo baut.
 
 ---
 
 ## Lizenz
 
-MIT -- [LICENSE](../LICENSE)
+MIT — [LICENSE](../LICENSE)
 
 ---
 
@@ -321,10 +337,35 @@ MIT -- [LICENSE](../LICENSE)
   <img src="https://contrib.rocks/image?repo=openkursar/hello-halo" />
 </a>
 
-**Gib diesem Repository einen Star**, um anderen zu helfen, Halo zu entdecken.
+**Gib diesem Repo einen Stern**, um mehr Menschen zu helfen, Halo zu entdecken.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=openkursar/hello-halo&type=Date)](https://star-history.com/#openkursar/hello-halo&Date)
+</div>
 
-[Zurueck nach oben](#halo)
+---
+
+## Partner & Sponsoren
+
+### Unternehmenspartner
+
+<!-- Add your company logo here — submit a PR or contact us at the link below -->
+
+| Dein Unternehmen nutzt Halo? | [Lass es uns wissen](https://github.com/openkursar/hello-halo/issues/new?title=Add+our+company+as+partner) — wir würden dich gerne hier vorstellen. |
+|:---:|:---:|
+
+### Sponsoren
+
+<a href="https://www.nnscholar.com/">
+  <img src="https://www.nnscholar.com/favicon.ico" height="40" alt="NNScholar">
+</a>
+
+<p align="center">
+  <a href="https://polar.sh/openkursar">Werde Sponsor</a>
+</p>
+
+---
+
+<div align="center">
+
+[Zurück nach oben](#halo)
 
 </div>
