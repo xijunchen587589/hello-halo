@@ -21,7 +21,8 @@ import {
 } from '../converters'
 import {
   streamOpenAIChatToAnthropic,
-  streamOpenAIResponsesToAnthropic
+  streamOpenAIResponsesToAnthropic,
+  streamAnthropicPassthrough
 } from '../stream'
 import { proxyFetch } from '../../services/proxy-fetch'
 import { getApiTypeFromUrl, isValidEndpointUrl, getEndpointUrlError, shouldForceStream } from './api-type'
@@ -383,30 +384,22 @@ async function handleAnthropicPassthrough(
       return
     }
 
-    // Streaming: pipe upstream body directly to client (zero parsing)
+    // Streaming: re-serialize through BaseStreamHandler repair pipeline.
+    // This enables all stream-level fixes (empty text block repair, tool JSON
+    // repair, etc.) for third-party Anthropic-compatible providers that may
+    // produce non-standard responses.
     if (anthropicRequest.stream && upstreamResp.body) {
-      // Forward all upstream headers first (request-id, x-ratelimit-*, retry-after, etc.)
       forwardResponseHeaders(upstreamResp, res)
-      // Override transport headers for SSE
       res.setHeader('Content-Type', 'text/event-stream')
       res.setHeader('Cache-Control', 'no-cache')
       res.setHeader('Connection', 'keep-alive')
 
-      // Pipe the ReadableStream directly — no parsing, no transformation
-      const reader = upstreamResp.body.getReader()
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          res.write(value)
-        }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') {
-          console.error('[RequestHandler] Anthropic stream pipe error:', err?.message)
-        }
-      } finally {
-        res.end()
-      }
+      await streamAnthropicPassthrough(
+        upstreamResp.body,
+        res,
+        anthropicRequest.model,
+        debug
+      )
       return
     }
 

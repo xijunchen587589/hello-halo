@@ -143,6 +143,16 @@ export class ImSessionRegistry {
   }
 
   /**
+   * Find a single session by app + channel + chatId.
+   * Returns a copy, or undefined if not registered.
+   */
+  findSession(appId: string, channel: string, chatId: string): ImSessionRecord | undefined {
+    const key = this.buildKey(appId, channel, chatId)
+    const session = this.sessions.get(key)
+    return session ? { ...session } : undefined
+  }
+
+  /**
    * Get all known sessions for a given app.
    * Used by the settings UI to display the session list.
    */

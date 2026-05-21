@@ -21,6 +21,7 @@ import { tmpdir } from 'os'
 import type { InboundMessage, ReplyHandle, ProgressEvent } from '../../../shared/types/inbound-message'
 import { getAppManager } from '../manager'
 import { sendAppChatMessage, buildImSessionKey, clearImSession } from './app-chat'
+import type { ImSessionContext } from './prompt-chat'
 import { getImSessionRegistry } from './im-session-registry'
 import { getActiveImChannelManager } from './im-channels'
 import { sendToRenderer } from '../../services/window.service'
@@ -592,6 +593,23 @@ export async function dispatchInboundMessage(
   const chatTypeNorm: 'direct' | 'group' = msg.chatType
   const imFileSend = resolveImFileSend(instanceId, msg.chatId, chatTypeNorm, exportGate)
 
+  // Build IM session context for system prompt injection.
+  // Resolves display name with priority: customName > chatName > fromName > chatId.
+  // customName is user-set in the UI; chatName comes from the IM platform (often
+  // unavailable for group chats in WeCom); fromName/chatId are fallbacks.
+  const registeredSession = registry?.findSession(app.id, msg.channel, msg.chatId)
+  const sessionDisplayName = registeredSession?.customName
+    || msg.chatName
+    || msg.fromName
+    || msg.chatId
+  const imSession: ImSessionContext = {
+    channel: msg.channel,
+    chatType: msg.chatType,
+    displayName: sessionDisplayName,
+    sessionId: `${instanceId}:${msg.chatId}`,
+    senderIdentity,
+  }
+
   console.log(
     `${LOG_TAG} Routing: channel=${msg.channel}, chatId=${msg.chatId}, ` +
     `chatType=${msg.chatType}, instanceId=${instanceId} → ` +
@@ -626,6 +644,7 @@ export async function dispatchInboundMessage(
       images: msg.images,
       imFileSend,
       senderIdentity,
+      imSession,
 
       // Forward progress events to streaming handle (if channel supports streaming)
       onProgress: reply.streaming

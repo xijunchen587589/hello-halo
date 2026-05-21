@@ -53,7 +53,7 @@ import {
   v2Sessions
 } from '../../services/agent/session-manager'
 import { stopGeneration } from '../../services/agent/control'
-import { buildAppChatSystemPrompt } from './prompt-chat'
+import { buildAppChatSystemPrompt, type ImSessionContext } from './prompt-chat'
 import { createFileSendMcpServer } from './im-channels/file-send-mcp'
 import { mergeConfigWithDefaults } from './config-defaults'
 import { createReportToolServer, type ReportToolContext } from './report-tool'
@@ -237,6 +237,12 @@ export interface AppChatRequest {
    * Not provided for group chats (which use per-message <msg-sender> tags).
    */
   senderIdentity?: { id: string; name: string }
+  /**
+   * IM session context for system prompt injection.
+   * Tells the AI where it is (group/direct, channel, session ID, display name).
+   * Absent for native Halo chat UI.
+   */
+  imSession?: ImSessionContext
 }
 
 // ============================================
@@ -289,7 +295,7 @@ const scopedContexts = new Map<string, BrowserContext>()
 export async function sendAppChatMessage(
   request: AppChatRequest
 ): Promise<void> {
-  const { appId, spaceId, message, images, thinkingEnabled, onReply, onProgress, imFileSend, senderIdentity } = request
+  const { appId, spaceId, message, images, thinkingEnabled, onReply, onProgress, imFileSend, senderIdentity, imSession } = request
   const conversationId = request.conversationId ?? getAppChatConversationId(appId)
 
   console.log(`[AppChat][${appId}] sendMessage: "${message.substring(0, 100)}"`)
@@ -341,7 +347,7 @@ export async function sendAppChatMessage(
     usesAIBrowser,
     workDir,
     modelInfo: resolvedCreds.displayModel,
-    senderIdentity,
+    imSession,
     ownerNames: permCtx?.ownerNames,
   })
 

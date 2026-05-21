@@ -29,6 +29,12 @@ export {
   streamOpenAIResponsesToAnthropic
 } from './openai-responses-stream'
 
+// Anthropic passthrough stream handler (re-serializes with repair pipeline)
+export {
+  AnthropicStreamHandler,
+  streamAnthropicPassthrough
+} from './anthropic-stream'
+
 // ============================================================================
 // Backward Compatibility Aliases
 // ============================================================================
