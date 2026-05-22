@@ -164,10 +164,78 @@ describe('AppManager', () => {
       expect(app.userConfig).toEqual({})
     })
 
-    it('should throw AppAlreadyInstalledError for duplicate spec+space', async () => {
-      const spec = createTestSpec({ name: 'unique-app' })
+    it('should throw AppAlreadyInstalledError for duplicate automation spec+space', async () => {
+      const spec = createTestSpec({ name: 'unique-app', type: 'automation' })
       await service.install(TEST_SPACE_ID, spec)
 
+      await expect(
+        service.install(TEST_SPACE_ID, spec)
+      ).rejects.toThrow(AppAlreadyInstalledError)
+    })
+
+    it('should overwrite an existing active skill instead of throwing', async () => {
+      // Skills are content-only (prompt + files) — re-installing should
+      // refresh the row in place rather than fail with a conflict error.
+      const original = {
+        spec_version: '1',
+        name: 'shared-skill',
+        version: '1.0.0',
+        description: 'first version',
+        type: 'skill',
+        skill_content: 'original content',
+      } as unknown as AppSpec
+      const updated = {
+        ...original,
+        version: '2.0.0',
+        description: 'second version',
+        skill_content: 'updated content',
+      } as unknown as AppSpec
+
+      const id1 = await service.install(TEST_SPACE_ID, original)
+      const id2 = await service.install(TEST_SPACE_ID, updated, { foo: 'bar' })
+
+      // Same DB row reused — overwrite is in place, not a fresh row.
+      expect(id2).toBe(id1)
+
+      const app = service.getApp(id1)!
+      expect(app.spec.version).toBe('2.0.0')
+      expect(app.spec.description).toBe('second version')
+      expect((app.spec as unknown as { skill_content: string }).skill_content).toBe('updated content')
+      expect(app.userConfig).toEqual({ foo: 'bar' })
+      expect(app.status).toBe('active')
+    })
+
+    it('should preserve previous userConfig when re-installing skill without new config', async () => {
+      const spec = {
+        spec_version: '1',
+        name: 'configured-skill',
+        version: '1.0.0',
+        description: 'a skill',
+        type: 'skill',
+        skill_content: 'v1',
+      } as unknown as AppSpec
+
+      const id1 = await service.install(TEST_SPACE_ID, spec, { keep: 'me' })
+      const id2 = await service.install(TEST_SPACE_ID, { ...spec, version: '1.1.0' } as AppSpec)
+
+      expect(id2).toBe(id1)
+      const app = service.getApp(id1)!
+      // Existing userConfig is preserved when the re-install omits one.
+      expect(app.userConfig).toEqual({ keep: 'me' })
+      expect(app.spec.version).toBe('1.1.0')
+    })
+
+    it('should still reject duplicate MCP spec+space (runtime state is not safe to overwrite)', async () => {
+      const spec = {
+        spec_version: '1',
+        name: 'shared-mcp',
+        version: '1.0.0',
+        description: 'an mcp',
+        type: 'mcp',
+        mcp_server: { type: 'stdio', command: 'echo', args: ['hi'] },
+      } as unknown as AppSpec
+
+      await service.install(TEST_SPACE_ID, spec)
       await expect(
         service.install(TEST_SPACE_ID, spec)
       ).rejects.toThrow(AppAlreadyInstalledError)

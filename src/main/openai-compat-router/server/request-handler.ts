@@ -365,16 +365,19 @@ async function handleAnthropicPassthrough(
     console.log(`[RequestHandler] Raw body forwarding: ${canUseRawBody ? 'yes' : 'no (modified)'}`)
   }
 
+  const anthUpstreamStartTs = Date.now()
   try {
     const upstreamResp = await fetchAnthropicUpstream(
       targetUrl, apiKey, fetchBody, timeoutMs, sdkHeaders, customHeaders
     )
     console.log(`[RequestHandler] Anthropic upstream response: ${upstreamResp.status}`)
+    console.log(`[RequestHandler] upstream_ok wire=anthropic status=${upstreamResp.status} duration_ms=${Date.now() - anthUpstreamStartTs} url=${targetUrl}`)
 
     // Handle errors — forward upstream response transparently (status + headers + body)
     if (!upstreamResp.ok) {
       const errorText = await upstreamResp.text().catch(() => '')
       console.error(`[RequestHandler] Anthropic error ${upstreamResp.status}: ${errorText.slice(0, 200)}`)
+      console.log(`[RequestHandler] upstream_error_detail wire=anthropic status=${upstreamResp.status} duration_ms=${Date.now() - anthUpstreamStartTs} content_type=${upstreamResp.headers.get('content-type') || ''} www_authenticate=${upstreamResp.headers.get('www-authenticate') || ''} url=${targetUrl} body_head="${errorText.slice(0, 500).replace(/"/g, "'")}"`)
 
       res.status(upstreamResp.status)
       forwardResponseHeaders(upstreamResp, res)
@@ -489,15 +492,18 @@ async function handleOpenAIConversion(
         console.log(`[RequestHandler] Applied provider adapter: ${adapter.name}`)
       }
 
+      const oaiUpstreamStartTs = Date.now()
       // Make upstream request - URL is used directly, no modification
       let upstreamResp = await fetchUpstream(backendUrl, apiKey, openaiRequest, timeoutMs, undefined, requestHeaders)
       console.log(`[RequestHandler] Upstream response: ${upstreamResp.status}`)
+      console.log(`[RequestHandler] upstream_ok wire=openai api_type=${apiType} status=${upstreamResp.status} duration_ms=${Date.now() - oaiUpstreamStartTs} url=${backendUrl}`)
 
       // Handle errors - use upstream error type if available, else map from status
       if (!upstreamResp.ok) {
         const errorText = await upstreamResp.text().catch(() => '')
         const { type: errorType, message: errorMessage } = getUpstreamError(upstreamResp.status, errorText)
         console.error(`[RequestHandler] Provider error ${upstreamResp.status}: ${errorText.slice(0, 200)}`)
+        console.log(`[RequestHandler] upstream_error_detail wire=openai api_type=${apiType} status=${upstreamResp.status} duration_ms=${Date.now() - oaiUpstreamStartTs} content_type=${upstreamResp.headers.get('content-type') || ''} www_authenticate=${upstreamResp.headers.get('www-authenticate') || ''} url=${backendUrl} body_head="${errorText.slice(0, 500).replace(/"/g, "'")}"`)
 
         // Check if upstream requires stream=true, retry if needed
         const errorLower = errorText?.toLowerCase() || ''
@@ -516,12 +522,15 @@ async function handleOpenAIConversion(
           // Re-apply provider adapter to retry request (reuse same headers and context)
           applyProviderAdapter(backendUrl, retryRequest as Record<string, unknown>, requestHeaders, adapterId, adapterContext)
 
+          const oaiRetryStartTs = Date.now()
           upstreamResp = await fetchUpstream(backendUrl, apiKey, retryRequest, timeoutMs, undefined, requestHeaders)
+          console.log(`[RequestHandler] upstream_ok wire=openai api_type=${apiType} retry=true status=${upstreamResp.status} duration_ms=${Date.now() - oaiRetryStartTs} url=${backendUrl}`)
 
           if (!upstreamResp.ok) {
             const retryErrorText = await upstreamResp.text().catch(() => '')
             const { type: retryErrorType, message: retryErrorMessage } = getUpstreamError(upstreamResp.status, retryErrorText)
             console.error(`[RequestHandler] Provider error ${upstreamResp.status}: ${retryErrorText.slice(0, 200)}`)
+            console.log(`[RequestHandler] upstream_error_detail wire=openai api_type=${apiType} retry=true status=${upstreamResp.status} duration_ms=${Date.now() - oaiRetryStartTs} content_type=${upstreamResp.headers.get('content-type') || ''} www_authenticate=${upstreamResp.headers.get('www-authenticate') || ''} url=${backendUrl} body_head="${retryErrorText.slice(0, 500).replace(/"/g, "'")}"`)
             return sendError(res, retryErrorType, retryErrorMessage)
           }
         } else {

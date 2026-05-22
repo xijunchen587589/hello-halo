@@ -24,6 +24,35 @@ import type { AppSpec } from '../../shared/apps/spec-types'
 import type { ScheduleValue } from '../types'
 
 // ============================================
+// Typed error for App install/import failures
+// ============================================
+
+/**
+ * Thrown by installApp / importApp when the backend returns a structured
+ * failure. The `code` mirrors the backend's `AppErrorCode` (controller
+ * level) — UI can dispatch on it to render localized messages without
+ * regex-matching the error text.
+ *
+ * Known codes today:
+ *  - 'ALREADY_INSTALLED'  — same-name app exists in the target scope
+ *  - 'VALIDATION_FAILED'  — spec schema validation failed
+ *  - 'INVALID_YAML'       — YAML parse error
+ *  - 'NOT_INITIALIZED'    — manager not ready yet
+ *
+ * `code` is undefined for unknown / unexpected failures; UI should fall
+ * back to displaying `.message`.
+ */
+export class AppApiError extends Error {
+  readonly code?: string
+
+  constructor(message: string, code?: string) {
+    super(message)
+    this.name = 'AppApiError'
+    this.code = code
+  }
+}
+
+// ============================================
 // State Interface
 // ============================================
 
@@ -161,7 +190,7 @@ export const useAppsStore = create<AppsState>((set, get) => ({
       await get().loadApps()
       return appId
     }
-    throw new Error(res.error || 'Installation failed')
+    throw new AppApiError(res.error || 'Installation failed', res.code)
   },
 
   uninstallApp: async (appId) => {
@@ -531,18 +560,17 @@ export const useAppsStore = create<AppsState>((set, get) => ({
   },
 
   importApp: async (spaceId, yamlContent) => {
-    try {
-      const res = await api.appImportSpec({ spaceId, yamlContent })
-      if (res.success && (res.data as { appId?: string })?.appId) {
-        const appId = (res.data as { appId: string }).appId
-        await get().loadApps()
-        return appId
-      }
-      return null
-    } catch (err) {
-      console.error('[AppsStore] importApp error:', err)
-      return null
+    // Errors are surfaced to the caller via AppApiError so the UI can
+    // render a friendly, localized message (e.g. for ALREADY_INSTALLED).
+    // Previously this swallowed failures into a generic null, which left
+    // users with no indication of why the import was rejected.
+    const res = await api.appImportSpec({ spaceId, yamlContent })
+    if (res.success && (res.data as { appId?: string })?.appId) {
+      const appId = (res.data as { appId: string }).appId
+      await get().loadApps()
+      return appId
     }
+    throw new AppApiError(res.error || 'Import failed', res.code)
   },
 
   grantPermission: async (appId, permission) => {

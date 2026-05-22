@@ -132,6 +132,35 @@ This keeps the interface clean:
 **Decision**: Add `updateLastRun(appId, outcome, errorMessage?)` as a dedicated method
 for runtime to record execution results. This is cleaner than overloading `updateStatus`.
 
+### 2.11a Install Conflict — Skill vs Automation/MCP
+
+**Decision**: `install()` overwrites an existing **active** skill of the same
+`(specId, spaceId)` in place, but still rejects same-name `automation` /
+`mcp` installs with `AppAlreadyInstalledError`.
+
+**Rationale**: Skills are content-only artifacts — a prompt plus optional
+files on disk — with no runtime state. Treating a re-install as an
+overwrite matches how skill authors actually iterate: drop the same name
+again with new content and expect the disk + DB to reflect the latest
+version. Forcing an explicit uninstall first creates friction with zero
+safety benefit.
+
+Automation apps (and MCP apps) carry state the user does not want to
+lose silently:
+
+- `userConfig` values entered through the UI
+- Runtime memory and run history
+- Per-subscription `userOverrides` (schedule, frequency)
+- Active sessions, pending escalations
+
+Overwriting those silently would discard work the user did, so the
+conflict gate still throws and the caller (UI / IPC / MCP tool) must
+surface a clear message asking the user to uninstall or rename first.
+
+**Uninstalled records** continue to follow the existing "soft-deleted →
+reinstall on next install" path for both skills and apps — that branch
+predates this decision and is unchanged.
+
 ### 2.11 Built-in Apps (VSCode-style bundled digital humans)
 
 **Decision**: Bundle "built-in" digital humans with the build itself, install

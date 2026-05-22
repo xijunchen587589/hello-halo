@@ -189,6 +189,8 @@ export function registerConfigHandlers(): void {
     try {
       const manager = getAISourceManager()
       const result = manager.setCurrentModel(modelId)
+      const src = manager.getCurrentSourceConfig()
+      console.log(`[Config] model_changed source=${src?.id || ''} provider=${src?.provider || ''} model=${modelId}`)
       emitConfigChange(['aiSources.model'])
       return { success: true, data: result }
     } catch (error: unknown) {

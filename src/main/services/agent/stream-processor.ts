@@ -1097,6 +1097,14 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
     drainTimedOut: wasAborted && drainStartTime !== null && !receivedResult,
   }
 
+  const turnDurationMs = Date.now() - t0
+  if (isInterrupted || hasErrorThought || wasAborted) {
+    const errorSummary = String((errorThought?.content as unknown) ?? '').slice(0, 300).replace(/"/g, "'")
+    console.log(`[Agent] turn_error conv=${conversationId} duration_ms=${turnDurationMs} aborted=${wasAborted} interrupted=${isInterrupted} hasErrorThought=${hasErrorThought} maxTurns=${hadMaxTurnsReached} content_len=${finalContent.length} error="${errorSummary}"`)
+  } else {
+    console.log(`[Agent] turn_end conv=${conversationId} duration_ms=${turnDurationMs} content_len=${finalContent.length} tokens_in=${tokenUsage?.inputTokens ?? 0} tokens_out=${tokenUsage?.outputTokens ?? 0} cache_read=${tokenUsage?.cacheReadTokens ?? 0} cache_creation=${tokenUsage?.cacheCreationTokens ?? 0}`)
+  }
+
   // Notify caller for storage handling (optional — consumer-based callers
   // handle persistence externally, legacy callers like app-chat.ts use this)
   if (callbacks.onComplete) {

@@ -96,6 +96,15 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
+    server: {
+      // Explicit IPv4 bind. Node 17+ on macOS may resolve `localhost` to ::1,
+      // making Vite single-stack IPv6 while Electron's Chromium connects via
+      // IPv4 → ERR_CONNECTION_REFUSED → blank window. Pinning to 127.0.0.1
+      // matches Electron's resolution and stays loopback-only.
+      host: '127.0.0.1',
+      port: 5173,
+      strictPort: true
+    },
     build: {
       rollupOptions: {
         input: {

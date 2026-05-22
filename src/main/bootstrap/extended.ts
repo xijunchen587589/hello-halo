@@ -171,6 +171,8 @@ export function initializeExtendedServices(): void {
   const start = performance.now()
   console.log('[Bootstrap] Extended services starting...')
 
+  console.log(`[Startup] proxy env_http=${process.env.HTTP_PROXY || ''} env_https=${process.env.HTTPS_PROXY || ''} env_no_proxy=${process.env.NO_PROXY || ''} app_proxy=${getConfig().network?.proxy || ''}`)
+
   // Get main window for services that still need it directly
   const mainWindow = getMainWindow()
 

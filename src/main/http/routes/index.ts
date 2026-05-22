@@ -34,6 +34,7 @@ import {
 import { getTempSpacePath, getSpacesDir, getConfig as getServiceConfig, saveConfig } from '../../services/config.service'
 import { getSpace, getAllSpacePaths } from '../../services/space.service'
 import { getAppManager } from '../../apps/manager'
+import { AppAlreadyInstalledError } from '../../apps/manager/errors'
 import { getAppRuntime, getImChannelManager, sendAppChatMessage, stopAppChat, isAppChatGenerating, loadAppChatMessages, loadImChatMessages, getAppChatSessionState, getAppChatConversationId, clearAppChat, clearImSession, restartAppChat, dispatchInboundMessage } from '../../apps/runtime'
 import { buildDefaultAssistantSpec } from '../../apps/runtime/im-channels/wecom-bot-default-spec'
 import type { AppListFilter, UninstallOptions, InstalledApp } from '../../apps/manager'
@@ -1270,6 +1271,10 @@ export function registerApiRoutes(app: Express): void {
       console.log('[HTTP] POST /api/apps/install: appId=%s, space=%s', appId, resolvedSpaceId ?? 'global')
       res.json({ success: true, data: { appId } })
     } catch (error) {
+      if (error instanceof AppAlreadyInstalledError) {
+        res.status(409).json({ success: false, error: (error as Error).message, code: 'ALREADY_INSTALLED' })
+        return
+      }
       res.json({ success: false, error: (error as Error).message })
     }
   })
@@ -1745,6 +1750,7 @@ export function registerApiRoutes(app: Express): void {
     NOT_FOUND: 404,
     INVALID_YAML: 400,
     VALIDATION_FAILED: 422,
+    ALREADY_INSTALLED: 409,
   }
 
   // GET /api/apps/:appId/export-spec — export app spec as YAML
@@ -1759,7 +1765,7 @@ export function registerApiRoutes(app: Express): void {
       const result = appController.exportSpec(appId)
       if (!result.success) {
         const status = result.code ? appErrorStatus[result.code] : 400
-        res.status(status).json({ success: false, error: result.error })
+        res.status(status).json({ success: false, error: result.error, code: result.code })
         return
       }
 
@@ -1791,7 +1797,7 @@ export function registerApiRoutes(app: Express): void {
       const result = await appController.importSpec({ spaceId, yamlContent, userConfig })
       if (!result.success) {
         const status = result.code ? appErrorStatus[result.code] : 400
-        res.status(status).json({ success: false, error: result.error })
+        res.status(status).json({ success: false, error: result.error, code: result.code })
         return
       }
 

@@ -96,6 +96,7 @@ export async function sendMessage(
     // Get API credentials and resolve for SDK use
     const credentials = await getApiCredentials(config)
     console.log(`[Agent] sendMessage using: ${credentials.provider}, model: ${credentials.model}, prompt: ${config.agent?.promptProfile ?? 'halo'}`)
+    console.log(`[Agent] turn_start conv=${conversationId} model=${credentials.model} ts=${Date.now()}`)
 
     const resolvedCredentials = await resolveCredentialsForSdk(credentials)
 

@@ -38,6 +38,12 @@ interface ApiResponse<T = unknown> {
   success: boolean
   data?: T
   error?: string
+  /**
+   * Stable failure discriminator (e.g. 'ALREADY_INSTALLED'). Present on
+   * known error modes so UI can render localized messages without parsing
+   * the raw error text. Absent for unknown/unexpected failures.
+   */
+  code?: string
 }
 
 /**
