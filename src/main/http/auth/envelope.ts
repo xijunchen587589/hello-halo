@@ -14,7 +14,8 @@
 import { hkdfSync, randomBytes, timingSafeEqual } from 'crypto'
 import { hostname, platform, networkInterfaces } from 'os'
 import { app } from 'electron'
-import { sm3, sm4 } from 'sm-crypto'
+import smCrypto from 'sm-crypto'
+const { sm3, sm4 } = smCrypto
 
 import { isCredentialAtRestSafe } from '../../services/security-policy'
 
