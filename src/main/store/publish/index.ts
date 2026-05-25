@@ -11,6 +11,7 @@ import { getRegistries } from '../registry.service'
 import { dispatch as dispatchGithubPr } from './dispatchers/github-pr'
 import { dispatch as dispatchHttpRegistry } from './dispatchers/http-registry'
 import { dispatch as dispatchLocalDhpkg } from './dispatchers/local-dhpkg'
+import { enrichSpecForPublish } from './spec-enrich'
 import type { PublishResult, PublishContext } from './types'
 import type { AppSpec, SkillSpec } from '../../apps/spec'
 
@@ -47,7 +48,20 @@ export async function publish(appId: string): Promise<PublishResult> {
     }
   }
 
-  const spec = app.spec
+  // Enrich publish-only metadata (e.g. derive store.slug from name) so any
+  // spec the local runtime accepts is also accepted by registries. Kept out
+  // of the create-time schema so locally-running apps aren't forced to
+  // populate distribution fields they don't use.
+  let spec: AppSpec
+  try {
+    spec = enrichSpecForPublish(app.spec)
+  } catch (e) {
+    return {
+      status: 'error',
+      target: 'local-dhpkg',
+      details: (e as Error).message,
+    }
+  }
   const files = collectFiles(spec)
 
   const registries = getRegistries()

@@ -42,7 +42,10 @@ const RegistryEntrySchema = z.object({
   author: z.string().trim().min(1),
   description: z.string().trim().min(1),
   type: z.enum(APP_TYPE_VALUES),
-  format: z.literal('bundle'),
+  // DHP v2 only defines the "bundle" packaging today. Accept missing for
+  // backward-compat with registries that haven't shipped the format field
+  // yet; reject any other literal so unknown packaging slips don't sneak in.
+  format: z.literal('bundle').optional().default('bundle'),
   path: z.string().trim().min(1),
   download_url: z.string().url().optional(),
   size_bytes: z.number().int().nonnegative().optional(),
@@ -183,8 +186,9 @@ export class HaloAdapter implements RegistryAdapter {
   }
 
   async fetchSpec(source: RegistrySource, entry: RegistryEntry): Promise<AppSpec> {
+    const baseUrl = source.url.replace(/\/+$/, '')
     const specPath = `${entry.path}/spec.yaml`
-    const specUrl = entry.download_url || `${source.url.replace(/\/+$/, '')}/${specPath}`
+    const specUrl = entry.download_url || `${baseUrl}/${specPath}`
 
     const response = await fetchWithTimeout(specUrl, {
       headers: { 'User-Agent': 'Halo-Store/1.0' },
@@ -195,7 +199,35 @@ export class HaloAdapter implements RegistryAdapter {
     }
 
     const text = await response.text()
-    const raw = parseYaml(text)
+    const raw = parseYaml(text) as Record<string, unknown> | null
+    if (!raw || typeof raw !== 'object') {
+      throw new Error(`spec.yaml for "${entry.slug}" did not parse to an object`)
+    }
+
+    // Wire-format projection: when the registry stores a skill spec it lists
+    // `skill_files` as a string[] of file NAMES (the actual contents travel as
+    // separate multipart uploads under <path>/files/<name>). The local
+    // SkillSpec uses Record<name, content>. Materialize the contents here so
+    // the rest of the install pipeline sees the canonical local shape.
+    if (raw.type === 'skill' && Array.isArray(raw.skill_files)) {
+      const fileNames = (raw.skill_files as unknown[]).filter(
+        (v): v is string => typeof v === 'string' && v.length > 0
+      )
+      const filesBase = `${baseUrl}/${entry.path}/files`
+      const materialized: Record<string, string> = {}
+      await Promise.all(fileNames.map(async (name) => {
+        const url = `${filesBase}/${name}`
+        const fileRes = await fetchWithTimeout(url, {
+          headers: { 'User-Agent': 'Halo-Store/1.0' },
+        })
+        if (!fileRes.ok) {
+          throw new Error(`Failed to fetch ${name} for "${entry.slug}": HTTP ${fileRes.status}`)
+        }
+        materialized[name] = await fileRes.text()
+      }))
+      raw.skill_files = materialized
+    }
+
     const parsedSpec = AppSpecSchema.parse(raw)
 
     if (parsedSpec.type !== entry.type) {

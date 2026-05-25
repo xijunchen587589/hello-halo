@@ -189,8 +189,18 @@ export function registerStoreHandlers(): void {
   ipcMain.handle('store:publish', async (_event, input: { appId: string }) => {
     try {
       const result = await publish(input.appId)
-      console.log(`[StoreIPC] store:publish: appId=${input.appId} status=${result.status}`)
-      return { success: result.status !== 'error', data: result }
+      // Always include details so production logs let us trace failures end-to-end.
+      console.log(
+        `[StoreIPC] store:publish: appId=${input.appId} status=${result.status} target=${result.target}` +
+        (result.details ? ` details=${JSON.stringify(result.details)}` : '')
+      )
+      return {
+        success: result.status !== 'error',
+        data: result,
+        // Surface details as `error` too so renderer-side `res.error` shows it
+        // without callers having to inspect `res.data.details`.
+        error: result.status === 'error' ? result.details : undefined,
+      }
     } catch (error: unknown) {
       const err = error as Error
       console.error('[StoreIPC] store:publish error:', err.message)

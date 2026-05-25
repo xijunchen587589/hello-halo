@@ -1,17 +1,22 @@
 /**
  * Publish dispatcher for a private HTTP registry.
  *
- * Wire protocol:
+ * Wire protocol (matches DHP v2 registry server in digital-human-protocol):
  *   POST <registry-url>/apps
  *     Content-Type: multipart/form-data
  *     Authorization: Bearer <token>
- *     Fields: slug (text), version (text), dhpkg (file)
- *   Response 200: { slug, version, verdict: 'approved'|'rejected'|'needs_review', comment }
+ *     File parts:
+ *       spec     — the spec.yaml content (required)
+ *       <name>   — any auxiliary file; the part name IS the relative path
+ *                  inside the bundle (e.g. "SKILL.md", "references/guide.md")
+ *   Response 200 OK    : { slug, version, verdict, report, path, checksum, size_bytes }
+ *   Response 422       : { slug, version, verdict, report } (review hard-failed)
+ *   Response 4xx text  : http.Error message body
  *
  * Token is read from `registryOverrides.<id>.publish.token` in product.json.
  */
 
-import { pack } from '../../dhpkg'
+import { stringify as yamlStringify } from 'yaml'
 import type { AppSpec } from '../../../apps/spec'
 import type { PublishContext, PublishResult } from '../types'
 
@@ -44,17 +49,45 @@ export async function dispatch(
     }
   }
 
-  const buf = await pack(spec, files)
+  // The wire-format spec lists skill files by name only — the file contents
+  // travel as separate multipart parts (added below). The client-side
+  // SkillSpec keeps them as a `Record<path, content>` map for local editing
+  // convenience, so we project that map to a string[] before serialization.
+  const specForWire = projectSpecForWire(spec)
+  const yaml = yamlStringify(specForWire)
   const endpoint = `${url.replace(/\/+$/, '')}/apps`
-  console.log(`[publish/http-registry] POST ${endpoint} (bytes=${buf.byteLength})`)
 
   const form = new FormData()
-  form.append('slug', spec.store?.slug ?? spec.name)
-  form.append('version', spec.version ?? '0.0.0')
+  // 'spec' is the required part name the server reads via r.FormFile("spec").
   form.append(
-    'dhpkg',
-    new Blob([new Uint8Array(buf)], { type: 'application/octet-stream' }),
-    `${(spec.store?.slug ?? spec.name).replace(/[^a-z0-9-]/gi, '-')}.dhpkg`,
+    'spec',
+    new Blob([yaml], { type: 'application/x-yaml' }),
+    'spec.yaml',
+  )
+
+  // Auxiliary files: the form-field NAME is the file's relative path inside
+  // the bundle. The server iterates r.MultipartForm.File and uses fh.Filename
+  // as the storage key under apps/<slug>/<version>/files/<name>.
+  let auxBytes = 0
+  for (const [rawPath, value] of Object.entries(files)) {
+    const normalized = rawPath.replace(/^\/+/, '').replace(/\\/g, '/')
+    if (!normalized || normalized === 'spec.yaml') continue
+    const bytes = typeof value === 'string'
+      ? new TextEncoder().encode(value)
+      : value instanceof Buffer
+        ? new Uint8Array(value)
+        : value
+    auxBytes += bytes.byteLength
+    form.append(
+      normalized,
+      new Blob([bytes], { type: 'application/octet-stream' }),
+      normalized,
+    )
+  }
+
+  console.log(
+    `[publish/http-registry] POST ${endpoint} ` +
+    `(spec=${yaml.length}B, ${Object.keys(files).length} files / ${auxBytes}B aux)`
   )
 
   let response: Response
@@ -72,18 +105,43 @@ export async function dispatch(
     }
   }
 
-  let body: { slug?: string; version?: string; verdict?: string; comment?: string } = {}
+  // Server responses are not always JSON. http.Error sends text/plain.
+  let body: {
+    slug?: string
+    version?: string
+    verdict?: string
+    comment?: string
+    report?: { overall?: string; rules?: Array<{ id: string; severity: string; message: string }> }
+  } = {}
+  let rawBody = ''
+  const contentType = response.headers.get('content-type') ?? ''
   try {
-    body = await response.json() as typeof body
-  } catch {
-    body = {}
+    if (contentType.includes('application/json')) {
+      body = await response.json() as typeof body
+    } else {
+      rawBody = await response.text()
+    }
+  } catch (err) {
+    rawBody = `(failed to read response body: ${err instanceof Error ? err.message : String(err)})`
   }
 
   if (!response.ok) {
+    // Surface as much of the actual failure as possible.
+    const ruleSummary = body.report?.rules
+      ?.filter(r => r.severity === 'fail' || r.severity === 'error')
+      .map(r => `  - [${r.severity}] ${r.id}: ${r.message}`)
+      .join('\n')
+    const detailParts = [
+      `Registry returned HTTP ${response.status}${response.statusText ? ' ' + response.statusText : ''}`,
+    ]
+    if (body.verdict) detailParts.push(`verdict=${body.verdict}`)
+    if (body.comment) detailParts.push(body.comment)
+    if (rawBody) detailParts.push(rawBody.trim())
+    if (ruleSummary) detailParts.push('Review findings:\n' + ruleSummary)
     return {
       status: 'error',
       target: 'http-registry',
-      details: `Registry returned HTTP ${response.status}: ${body.comment ?? response.statusText}`,
+      details: detailParts.join(' — '),
     }
   }
 
@@ -102,4 +160,24 @@ export async function dispatch(
     details: message,
     verdict,
   }
+}
+
+/**
+ * Strip inline file contents from the spec so the wire-format spec.yaml
+ * only carries metadata. For skill specs, `skill_files` is a content-bearing
+ * map locally but the registry expects a name-only list ([]string in Go).
+ *
+ * Keep this transformation here (not in the SkillSpec type) — local editing
+ * needs the map form, only the publish wire format needs the list form.
+ */
+function projectSpecForWire(spec: AppSpec): AppSpec {
+  if (spec.type !== 'skill') return spec
+  const skillFiles = (spec as { skill_files?: unknown }).skill_files
+  if (!skillFiles || Array.isArray(skillFiles) || typeof skillFiles !== 'object') {
+    return spec
+  }
+  return {
+    ...spec,
+    skill_files: Object.keys(skillFiles as Record<string, unknown>),
+  } as AppSpec
 }

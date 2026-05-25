@@ -40,7 +40,7 @@ describe('publish/http-registry', () => {
     expect(res.details).toMatch(/not configured/i)
   })
 
-  it('posts a multipart .dhpkg and surfaces the verdict on success', async () => {
+  it('posts spec.yaml + file parts in the DHP v2 multipart format and surfaces the verdict on success', async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({ slug: 'tester/publish-test', version: '0.1.0', verdict: 'approved', comment: 'looks good' }),
@@ -63,6 +63,34 @@ describe('publish/http-registry', () => {
       expect(calledUrl).toBe('http://example.test/apps')
       expect((init as RequestInit).method).toBe('POST')
       expect((init as RequestInit).headers).toEqual(expect.objectContaining({ Authorization: 'Bearer secret' }))
+
+      // Regression guard: the server's handlePublish does r.FormFile("spec"),
+      // so the dispatcher MUST send a part literally named "spec" (the YAML
+      // serialization of the spec), plus each auxiliary file under its own
+      // relative-path form field name. The previous protocol sent slug+version
+      // text fields and a single "dhpkg" zip — that produced a silent HTTP 400
+      // "missing 'spec' file part" in production.
+      const body = (init as RequestInit).body as FormData
+      expect(body).toBeInstanceOf(FormData)
+      const specPart = body.get('spec')
+      expect(specPart).toBeInstanceOf(Blob)
+      const specText = await (specPart as Blob).text()
+      expect(specText).toMatch(/name:\s*publish-test/)
+      expect(specText).toMatch(/type:\s*skill/)
+      const skillPart = body.get('SKILL.md')
+      expect(skillPart).toBeInstanceOf(Blob)
+      expect(await (skillPart as Blob).text()).toBe('# hi\n')
+      expect(body.get('dhpkg')).toBeNull()
+      expect(body.get('slug')).toBeNull()
+      expect(body.get('version')).toBeNull()
+
+      // Regression guard: server's spec.go declares `SkillFiles []string` so
+      // the wire-format spec.yaml MUST list skill files by NAME only — never
+      // dump the inline `Record<path, content>` map (which would emit nested
+      // YAML mappings and trigger "cannot unmarshal !!map into []string").
+      // The actual content is delivered through the multipart SKILL.md part.
+      expect(specText).toMatch(/skill_files:\s*\n\s*-\s*SKILL\.md/)
+      expect(specText).not.toMatch(/SKILL\.md:\s*[|>]/)
     } finally {
       ;(globalThis as { fetch: typeof fetch }).fetch = realFetch
     }

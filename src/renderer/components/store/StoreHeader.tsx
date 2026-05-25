@@ -6,14 +6,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, RefreshCw, Upload } from 'lucide-react'
+import { Search, RefreshCw, Share2 } from 'lucide-react'
 import { useAppsPageStore } from '../../stores/apps-page.store'
-import { useAppsStore } from '../../stores/apps.store'
-import { useSpaceStore } from '../../stores/space.store'
 import { STORE_CATEGORY_META } from '../../../shared/store/store-types'
 import { useTranslation } from '../../i18n'
-import { api } from '../../api'
 import type { AppType } from '../../../shared/apps/spec-types'
+import { ShareToStoreDialog } from './ShareToStoreDialog'
 
 const TYPE_FILTERS: Array<{ id: AppType | null; labelKey: string }> = [
   { id: null, labelKey: 'All' },
@@ -22,38 +20,23 @@ const TYPE_FILTERS: Array<{ id: AppType | null; labelKey: string }> = [
   { id: 'mcp', labelKey: 'MCP' },
 ]
 
-/** Pick a `.dhpkg` file from disk and install it locally. */
-function ImportDhpkgButton() {
+/**
+ * Open the unified Share-to-Store dialog.
+ * This replaces the previous "import .dhpkg" entry on the store header — local
+ * import has moved to AppsPage → Manual Add → Install from File, where the
+ * semantics ("add to my library") fit better.
+ */
+function ShareButton({ onClick }: { onClick: () => void }) {
   const { t } = useTranslation()
-  const [busy, setBusy] = useState(false)
-
-  async function handleImport() {
-    setBusy(true)
-    try {
-      // Default to the currently-active space so the user gets a sensible scope.
-      const activeSpaceId = useSpaceStore.getState().currentSpace?.id ?? null
-      const res = await api.storeImportDhpkg({ spaceId: activeSpaceId })
-      if (res.success && res.data?.appId) {
-        await useAppsStore.getState().loadApps()
-      } else if (res.error && res.error !== 'User cancelled') {
-        console.error('[StoreHeader] Import .dhpkg failed:', res.error)
-      }
-    } catch (err) {
-      console.error('[StoreHeader] Import .dhpkg error:', err)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <button
-      onClick={handleImport}
-      disabled={busy}
-      className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors disabled:opacity-50"
-      title={t('Import a .dhpkg file from disk')}
-      aria-label={t('Import a .dhpkg file from disk')}
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-2 sm:px-2.5 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+      title={t('Share your Digital Human or Skill to the store')}
+      aria-label={t('Share to Store')}
     >
-      <Upload className="w-4 h-4" />
+      <Share2 className="w-4 h-4" />
+      <span className="hidden sm:inline">{t('Share')}</span>
     </button>
   )
 }
@@ -69,6 +52,8 @@ export function StoreHeader() {
   const setStoreTypeFilter = useAppsPageStore(state => state.setStoreTypeFilter)
   const loadStoreApps = useAppsPageStore(state => state.loadStoreApps)
   const refreshStore = useAppsPageStore(state => state.refreshStore)
+
+  const [showShareDialog, setShowShareDialog] = useState(false)
 
   // Debounce timer ref for search
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -138,7 +123,7 @@ export function StoreHeader() {
         >
           <RefreshCw className={`w-4 h-4 ${storeLoading ? 'animate-spin' : ''}`} />
         </button>
-        <ImportDhpkgButton />
+        <ShareButton onClick={() => setShowShareDialog(true)} />
       </div>
 
       {/* Type filter tabs */}
@@ -184,6 +169,10 @@ export function StoreHeader() {
           </button>
         ))}
       </div>
+
+      {showShareDialog && (
+        <ShareToStoreDialog onClose={() => setShowShareDialog(false)} />
+      )}
     </div>
   )
 }

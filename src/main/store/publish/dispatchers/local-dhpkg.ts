@@ -6,6 +6,7 @@
 import { dialog } from 'electron'
 import { writeFile } from 'fs/promises'
 import { pack } from '../../dhpkg'
+import { deriveSlug } from '../spec-enrich'
 import type { AppSpec } from '../../../apps/spec'
 import type { PublishContext, PublishResult } from '../types'
 
@@ -15,7 +16,12 @@ export async function dispatch(
   ctx: PublishContext,
   _config: Record<string, unknown>,
 ): Promise<PublishResult> {
-  const safeName = (spec.store?.slug ?? spec.name).replace(/[^a-z0-9-]/gi, '-').toLowerCase()
+  // publish/index.ts already enriches store.slug; fall back to derivation
+  // here so the dispatcher remains safe to call directly (e.g. from the
+  // `store:export-dhpkg` IPC) without depending on the orchestrator.
+  // For .dhpkg filenames an unusable derivation (pure-CJK name) is fine —
+  // we just emit "app-<version>.dhpkg" rather than fail the save.
+  const safeName = spec.store?.slug || deriveSlug(spec.name) || 'app'
   const defaultName = `${safeName}-${spec.version ?? '0.0.0'}.dhpkg`
 
   const result = await dialog.showSaveDialog({
