@@ -6,7 +6,7 @@
 import { WebSocket, WebSocketServer } from 'ws'
 import { IncomingMessage } from 'http'
 import { v4 as uuidv4 } from 'uuid'
-import { validateToken } from './auth'
+import { validateToken } from './auth/index'
 
 interface WebSocketClient {
   id: string

@@ -140,12 +140,13 @@ export abstract class BaseStreamHandler {
     // (state.finished is set when finish_reason is received, but we still need to send final events)
     if (this.writer.isClosed) return
 
-    // Debug: print accumulated content
-    if (this.state.accumulatedThinking) {
-      console.log(`[StreamHandler] Accumulated thinking:\n${this.state.accumulatedThinking}`)
-    }
-    if (this.state.accumulatedText) {
-      console.log(`[StreamHandler] Accumulated text:\n${this.state.accumulatedText}`)
+    if (this.debug) {
+      if (this.state.accumulatedThinking) {
+        console.log(`[StreamHandler] Accumulated thinking:\n${this.state.accumulatedThinking}`)
+      }
+      if (this.state.accumulatedText) {
+        console.log(`[StreamHandler] Accumulated text:\n${this.state.accumulatedText}`)
+      }
     }
 
     // LLM response sample — one line per turn, always-on
@@ -156,9 +157,10 @@ export abstract class BaseStreamHandler {
         : ''
       if (tools.length > 0) {
         console.log(`[LLM] model=${this.state.model} stop=${this.state.stopReason} → tool_calls=[${tools.join(',')}]`)
-        // Log raw tool arguments for debugging malformed JSON from LLMs
-        for (const [idx, tc] of this.toolCallMap) {
-          console.log(`[LLM] tool[${idx}] ${tc.name} args (${tc.arguments.length} chars): ${tc.arguments}`)
+        if (this.debug) {
+          for (const [idx, tc] of this.toolCallMap) {
+            console.log(`[LLM] tool[${idx}] ${tc.name} args (${tc.arguments.length} chars): ${tc.arguments}`)
+          }
         }
       } else if (textPreview) {
         console.log(`[LLM] model=${this.state.model} stop=${this.state.stopReason} → text="${textPreview}"`)
@@ -177,28 +179,39 @@ export abstract class BaseStreamHandler {
     // Close any open block
     this.closeCurrentBlock()
 
-    // Some models return end_turn without emitting any text or thinking block.
+    // Ensure the response contains a valid terminal content block.
     // The downstream SDK (isResultSuccessful) requires the last content block to
     // be 'text', 'thinking', or 'redacted_thinking' — otherwise the response is
-    // treated as an execution error. Inject an empty text block to satisfy this
-    // contract when the model itself did not produce one.
+    // treated as an execution error.
     //
-    // Conditions (all must hold):
-    //   - stop_reason is end_turn (finish_reason: stop)
-    //   - no text block was emitted
-    //   - no thinking block was emitted (thinking is also a valid terminal type,
-    //     and reusing its block index would produce a duplicate index on the wire)
-    //   - message_start was sent (model actually responded)
-    if (
-      this.state.stopReason === 'end_turn' &&
-      !this.state.hasTextBlock &&
-      !this.state.hasThinkingBlock &&
-      this.state.started
-    ) {
-      const idx = this.state.contentBlockIndex
-      this.writer.writeTextBlockStart(idx)
-      this.writer.writeBlockStop(idx)
-      console.log(`[StreamHandler] Injected empty text block at index ${idx} (model=${this.state.model}, end_turn with no text content)`)
+    // Two failure modes observed from third-party LLMs:
+    //   1. No content blocks at all (no text, no thinking) — inject empty text block.
+    //   2. Thinking block present but text block empty (e.g. GLM-4.7 puts the full
+    //      answer inside the thinking block and emits an empty text block) — the SDK
+    //      receives text="" which triggers an execution error. Inject a placeholder
+    //      so the response is not treated as failed.
+    if (this.state.stopReason === 'end_turn' && this.state.started) {
+      const hasActualText = this.state.accumulatedText.length > 0
+      const hasToolCalls = this.toolCallMap.size > 0
+
+      if (!hasActualText && !hasToolCalls) {
+        if (!this.state.hasTextBlock && !this.state.hasThinkingBlock) {
+          // Case 1: completely empty response — inject an empty text block
+          const idx = this.state.contentBlockIndex
+          this.writer.writeTextBlockStart(idx)
+          this.writer.writeBlockStop(idx)
+          if (this.debug) console.log(`[StreamHandler] Injected empty text block at index ${idx} (model=${this.state.model}, end_turn with no content)`)
+        } else if (this.state.hasThinkingBlock && this.state.hasTextBlock) {
+          // Case 2: thinking present, text block opened but empty — the block is
+          // already closed, so we can't append to it. Re-open a new text block
+          // with a placeholder to satisfy the SDK contract.
+          const idx = this.state.contentBlockIndex
+          this.writer.writeTextBlockStart(idx)
+          this.writer.writeTextDelta(idx, ' ')
+          this.writer.writeBlockStop(idx)
+          if (this.debug) console.log(`[StreamHandler] Injected placeholder text block at index ${idx} (model=${this.state.model}, thinking-only response with empty text)`)
+        }
+      }
     }
 
     // Write message_delta

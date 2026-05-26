@@ -16,6 +16,12 @@ import {
   regeneratePassword
 } from '../services/remote.service'
 import { getMainWindow, onMainWindowChange } from '../services/window.service'
+import {
+  isTunnelSafe,
+  TUNNEL_DISABLED_BY_POLICY,
+  TUNNEL_DISABLED_BY_POLICY_MESSAGE,
+} from '../services/security-policy'
+import { CredentialRestoreError } from '../http/auth/index'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -25,7 +31,10 @@ export function registerRemoteHandlers(): void {
     mainWindow = window
   })
 
-  // Enable remote access
+  // Enable remote access. Surfaces a stable `code` when the persisted
+  // credential cannot be decoded so the renderer can render an actionable
+  // hint (e.g. ask the user to re-pair devices) instead of a generic
+  // error string.
   ipcMain.handle('remote:enable', async (_event, port?: number) => {
     console.log('[Settings] remote:enable - Enabling remote access', port ? `on port ${port}` : '')
     try {
@@ -35,6 +44,9 @@ export function registerRemoteHandlers(): void {
     } catch (error: unknown) {
       const err = error as Error
       console.error('[Settings] remote:enable - Failed:', err.message)
+      if (error instanceof CredentialRestoreError) {
+        return { success: false, error: err.message, code: error.code }
+      }
       return { success: false, error: err.message }
     }
   })
@@ -53,8 +65,20 @@ export function registerRemoteHandlers(): void {
     }
   })
 
-  // Enable tunnel
+  // Enable tunnel — short-circuit at the IPC boundary when policy forbids
+  // it so the service layer is not even reached. The renderer's tunnel
+  // section is also hidden via useSecurityPolicy(), but defense in depth
+  // still applies in case a stale renderer or remote client tries the
+  // channel directly.
   ipcMain.handle('remote:tunnel:enable', async () => {
+    if (isTunnelSafe()) {
+      console.warn('[Settings] remote:tunnel:enable - Blocked by security policy')
+      return {
+        success: false,
+        error: TUNNEL_DISABLED_BY_POLICY_MESSAGE,
+        code: TUNNEL_DISABLED_BY_POLICY,
+      }
+    }
     console.log('[Settings] remote:tunnel:enable - Enabling tunnel')
     try {
       const url = await enableTunnel()
@@ -67,7 +91,9 @@ export function registerRemoteHandlers(): void {
     }
   })
 
-  // Disable tunnel
+  // Disable tunnel — intentionally NOT gated by tunnelSafe so the handler
+  // can still clean up a tunnel that was running before the policy was
+  // toggled on.
   ipcMain.handle('remote:tunnel:disable', async () => {
     console.log('[Settings] remote:tunnel:disable - Disabling tunnel')
     try {

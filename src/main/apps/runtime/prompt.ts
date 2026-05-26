@@ -15,6 +15,7 @@
 import type { AutomationSpec } from '../spec'
 import type { MemorySnapshot } from '../../platform/memory/snapshot'
 import type { EscalationResponse } from './types'
+import type { ImSessionRecord } from '../../../shared/types/im-channel'
 import { buildSystemPrompt, buildSystemPromptWithAIBrowser } from '../../services/agent/system-prompt'
 import { AI_BROWSER_SYSTEM_PROMPT } from '../../services/ai-browser'
 
@@ -148,6 +149,48 @@ Use these tools ONLY when there is genuinely noteworthy information — not for 
 `.trim()
 
 // ============================================
+// Auto-Sync Awareness (when subscribed IM contacts exist)
+// ============================================
+
+/**
+ * Render the prompt fragment that informs the AI which IM contacts will
+ * receive its final text response automatically at run end (driven by
+ * apps/runtime/im-auto-sync.ts). Returns empty string when no contacts
+ * are subscribed — keeps the prompt minimal in the common case.
+ *
+ * The AI uses this to (a) avoid duplicate notify_bot calls to the same
+ * contacts at run end and (b) understand that its final text response
+ * has a downstream IM audience and should be written accordingly.
+ */
+function buildAutoSyncAwareness(sessions: ImSessionRecord[]): string {
+  const bullets = sessions.map((s) => {
+    const name = s.customName || s.displayName || s.chatId
+    const type = s.chatType === 'group' ? 'Group' : 'Direct'
+    return `- "${name}" (${type}) via ${s.channel}`
+  }).join('\n')
+
+  return `
+## Auto-Sync to IM Contacts
+
+Your final text response (the assistant message produced after all tool
+calls complete) will be automatically delivered by the system to the
+following IM contacts at run end:
+
+${bullets}
+
+You do not need to call notify_bot for these contacts to deliver the
+final result — the system handles it. Use notify_bot for these contacts
+only when you need to send a separate mid-run alert (e.g. an urgent
+finding before the final report is ready).
+
+Because these contacts will read your final text response verbatim,
+make sure it is self-contained, clear, and complete. Avoid leaving the
+final response empty or as a generic acknowledgement — it is the
+audience-facing artifact of this run.
+`.trim()
+}
+
+// ============================================
 // Public API
 // ============================================
 
@@ -166,6 +209,13 @@ export interface AppPromptOptions {
   workDir: string
   /** Display model name (passed to base system prompt) */
   modelInfo?: string
+  /**
+   * IM sessions for this app that have the proactive flag enabled.
+   * When non-empty, an awareness section is injected so the AI knows
+   * its final text will be auto-pushed to these contacts and avoids
+   * duplicating via notify_bot.
+   */
+  autoSyncSessions?: ImSessionRecord[]
 }
 
 /**
@@ -211,6 +261,12 @@ export function buildAppSystemPrompt(options: AppPromptOptions): string {
 
   // 6. Notification instructions (always included — the AI can check availability)
   sections.push(NOTIFICATION_INSTRUCTIONS)
+
+  // 6b. Auto-sync awareness (only when subscribed IM contacts exist for
+  //     this app — keeps the prompt minimal otherwise)
+  if (options.autoSyncSessions && options.autoSyncSessions.length > 0) {
+    sections.push(buildAutoSyncAwareness(options.autoSyncSessions))
+  }
 
   // 7. Sub-agent instructions (only if App uses AI Browser)
   // TODO: Temporarily disabled — testing whether skipping sub-agent delegation

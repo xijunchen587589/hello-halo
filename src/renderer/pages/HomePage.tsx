@@ -18,7 +18,7 @@ import {
 import { Header } from '../components/layout/Header'
 import { SpaceGuide } from '../components/space/SpaceGuide'
 import { CreateSpaceDialog } from '../components/space/CreateSpaceDialog'
-import { Blocks, BookOpen, Server, ArrowRight, AlertCircle, SendHorizontal, Unplug, type LucideIcon } from 'lucide-react'
+import { Blocks, ArrowRight, AlertCircle, SendHorizontal, Unplug } from 'lucide-react'
 import { api } from '../api'
 import { useTranslation } from '../i18n'
 import { useAppsStore } from '../stores/apps.store'
@@ -393,7 +393,6 @@ function StudioCard({
 
       <div className="flex-1 flex flex-col gap-2">
         <StudioRow
-          icon={Blocks}
           label={t('Digital Humans')}
           type="automation"
           apps={automationApps}
@@ -402,7 +401,6 @@ function StudioCard({
           emptyAction={{ label: t('Create'), onAction: onCreateAutomation }}
         />
         <StudioRow
-          icon={BookOpen}
           label={t('Skills')}
           type="skill"
           apps={skillApps}
@@ -411,7 +409,6 @@ function StudioCard({
           emptyAction={{ label: t('Add from marketplace'), onAction: onBrowseSkillsMarket }}
         />
         <StudioRow
-          icon={Server}
           label={t('MCP')}
           type="mcp"
           apps={mcpApps}
@@ -431,7 +428,6 @@ function StudioCard({
 }
 
 interface StudioRowProps {
-  icon: LucideIcon
   label: string
   type: AppType
   apps: InstalledApp[]
@@ -442,7 +438,7 @@ interface StudioRowProps {
 
 const PREVIEW_COUNT = 3
 
-function StudioRow({ icon: Icon, label, type, apps, onOpenList, onSelectApp, emptyAction }: StudioRowProps) {
+function StudioRow({ label, type, apps, onOpenList, onSelectApp, emptyAction }: StudioRowProps) {
   const isEmpty = apps.length === 0
   const previewApps = apps.slice(0, PREVIEW_COUNT)
   const extraCount = Math.max(0, apps.length - PREVIEW_COUNT)
@@ -458,7 +454,6 @@ function StudioRow({ icon: Icon, label, type, apps, onOpenList, onSelectApp, emp
       }}
       className="flex items-center gap-2 py-1 px-1 -mx-1 rounded hover:bg-secondary/60 transition-colors cursor-pointer"
     >
-      <Icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
       <span className="text-xs font-medium text-foreground flex-shrink-0">{label}</span>
       <span className="text-[11px] text-muted-foreground flex-shrink-0 tabular-nums">{apps.length}</span>
 

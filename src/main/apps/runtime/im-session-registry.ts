@@ -2,8 +2,9 @@
  * apps/runtime -- IM Session Registry
  *
  * Manages all known IM channel sessions across digital humans (Apps).
- * Sessions are automatically registered when a user messages the bot,
- * and the `proactive` flag is toggled by the user in Halo's settings UI.
+ * Sessions are automatically registered when a user messages the bot.
+ * The `proactive` flag is toggled per contact in the digital human
+ * detail page and consumed by apps/runtime/im-auto-sync.ts.
  *
  * Persistence: JSON file on disk, loaded at startup, written on every mutation.
  * Data volume is small (a few to tens of sessions per app), so full-file
@@ -105,12 +106,11 @@ export class ImSessionRegistry {
   }
 
   /**
-   * Set the proactive flag for a session.
-   *
-   * @deprecated Proactive push is replaced by AI-driven `notify_bot` tool.
-   * The `proactive` field on ImSessionRecord is deprecated and no longer
-   * toggled by the UI. This method is retained only for backward compatibility
-   * with persisted data; it should not be called from new code.
+   * Set the proactive flag for a session. When true, the assistant's final
+   * text response is auto-pushed to this contact at run completion by
+   * apps/runtime/im-auto-sync.ts. The AI is informed via a prompt fragment
+   * (see prompt.ts buildAutoSyncAwareness) so it can avoid duplicate
+   * notify_bot calls to the same contact.
    *
    * @returns true if the session was found and updated
    */
@@ -127,10 +127,9 @@ export class ImSessionRegistry {
   /**
    * Get all sessions with proactive=true for a given app.
    *
-   * @deprecated Proactive push is replaced by AI-driven `notify_bot` tool.
-   * Since `proactive` is always false for new sessions and the UI toggle has
-   * been removed, this method always returns an empty array. Callers should
-   * use `getAllSessions()` instead to get the full contact list for notify_bot.
+   * Consumed by apps/runtime/im-auto-sync.ts at run completion to dispatch
+   * the assistant's final text response, and by apps/runtime/prompt.ts when
+   * building the AI's auto-sync awareness fragment.
    */
   getProactiveSessions(appId: string): ImSessionRecord[] {
     const result: ImSessionRecord[] = []
@@ -140,6 +139,16 @@ export class ImSessionRegistry {
       }
     }
     return result
+  }
+
+  /**
+   * Find a single session by app + channel + chatId.
+   * Returns a copy, or undefined if not registered.
+   */
+  findSession(appId: string, channel: string, chatId: string): ImSessionRecord | undefined {
+    const key = this.buildKey(appId, channel, chatId)
+    const session = this.sessions.get(key)
+    return session ? { ...session } : undefined
   }
 
   /**

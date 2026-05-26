@@ -382,7 +382,8 @@ export interface ImChannelInstanceStatus {
  * Persistent record of a known IM session.
  *
  * Created automatically when a user first messages the bot in a chat.
- * The `proactive` flag is toggled by the user in Halo's settings UI.
+ * The `proactive` flag is toggled per contact in the digital human
+ * detail page (AppNotifyChannelsSection).
  */
 export interface ImSessionRecord {
   /** Associated digital human (App) ID */
@@ -404,8 +405,10 @@ export interface ImSessionRecord {
   /** Most recent message preview (truncated to 50 chars) */
   lastMessage?: string
   /**
-   * @deprecated Proactive push is now AI-driven via the notify_bot tool.
-   * This field is retained for backward compatibility but ignored at runtime.
+   * When true, the run's final assistant text response is auto-pushed to
+   * this contact at run completion (apps/runtime/im-auto-sync.ts). The AI
+   * is informed of this state via the auto-sync awareness fragment so it
+   * does not duplicate via notify_bot.
    */
   proactive: boolean
   /** Last activity timestamp (epoch ms) */

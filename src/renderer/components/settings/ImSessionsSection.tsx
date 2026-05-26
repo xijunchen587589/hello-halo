@@ -6,8 +6,10 @@
  * - Edit custom display names (used by AI for natural language matching)
  * - Remove stale sessions
  *
- * Proactive push toggle has been removed — IM notifications are now
- * AI-driven via the notify_bot tool, controlled by the im-push permission.
+ * Per-contact auto-sync toggle lives on the digital human detail page
+ * (AppNotifyChannelsSection). This global settings view stays read-write
+ * for naming and removal only — the toggle would be ambiguous when the
+ * view aggregates sessions across all apps.
  *
  * Two modes:
  * - With appId: shows sessions for a specific digital human

@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import { tool, createSdkMcpServer } from '../../services/agent/resolved-sdk'
 import { getAppManager } from '../manager'
+import { AppAlreadyInstalledError } from '../manager/errors'
 import { getAppRuntime } from '../runtime'
 import { ConcurrencyLimitError } from '../runtime/errors'
 import { validateAppSpec } from '../spec'
@@ -174,6 +175,13 @@ function buildTools(spaceId: string) {
 
         return textResult(`App created successfully. ID: ${appId}.${activationWarning}`)
       } catch (e) {
+        if (e instanceof AppAlreadyInstalledError) {
+          return textResult(
+            `A digital human named "${e.specId}" is already installed in this space. ` +
+            `Ask the user whether to uninstall the existing one first, or pick a different name before retrying.`,
+            true
+          )
+        }
         return textResult(`Error creating app: ${(e as Error).message}`, true)
       }
     }

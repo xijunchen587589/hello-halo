@@ -128,39 +128,6 @@
         }
       }
     },
-    "registryOverrides": {
-      "type": "object",
-      "description": "Per-registry overrides for built-in registry sources. Enterprise/custom builds use this to redirect the official registry or disable public sources.",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "url": { "type": "string" },
-          "name": { "type": "string" },
-          "enabled": { "type": "boolean" },
-          "publish": {
-            "type": "object",
-            "description": "Publish target. Determines where the App detail 'Publish' button routes the spec.",
-            "required": ["target"],
-            "properties": {
-              "target": {
-                "type": "string",
-                "enum": ["github-pr", "http-registry", "local-dhpkg"]
-              },
-              "github": {
-                "type": "object",
-                "properties": {
-                  "owner": { "type": "string" },
-                  "repo": { "type": "string" },
-                  "clientId": { "type": "string" }
-                },
-                "required": ["owner", "repo"]
-              },
-              "token": { "type": "string" }
-            }
-          }
-        }
-      }
-    },
     "browserPolicy": {
       "type": "object",
       "description": "Browser network access policy. Controls which domains the embedded browser can navigate to. Omit for unrestricted access (default).",
@@ -196,6 +163,73 @@
           "items": { "type": "string" },
           "description": "Whitelist of SENSITIVE_KEYS property names permitted to be sent. Recognized keys: specId, spaceName, modelName, sourceName, mcpId, skillId, imBotName, inputTokens, outputTokens, errorCode."
         }
+      }
+    },
+    "security": {
+      "type": "object",
+      "description": "Security policy for enterprise/custom builds. Each flag follows the '<surface>Safe' convention: true enables restrictions, omitted/false keeps the permissive default. Open-source builds omit this entirely. Flag definitions live in src/main/services/security-policy.ts.",
+      "properties": {
+        "remoteMcpSafe": {
+          "type": "boolean",
+          "description": "When true, every remote HTTP endpoint that could land an MCP server configuration (AppSpec type=mcp, mcp_server patch, mcpServers map, store install of MCP type) returns 403. Local UI install paths are unaffected. Use this to prevent remote callers from registering arbitrary native commands."
+        },
+        "credentialAtRestSafe": {
+          "type": "boolean",
+          "description": "When true, the stored remote-access credential is encrypted at rest with SM4-CBC plus HMAC-SM3 (encrypt-then-MAC; GM/T 0002 + GM/T 0091) under a machine-bound KEK. When omitted/false (open-source default), the credential is stored as plain text. The plaintext value is held in memory in both modes so the UI can keep displaying the current PIN; login validation uses crypto.timingSafeEqual against the in-memory value."
+        },
+        "tunnelSafe": {
+          "type": "boolean",
+          "description": "When true, the Cloudflare Quick Tunnel feature is disabled at every layer: the service refuses to spawn cloudflared, the remote:tunnel:enable IPC short-circuits before reaching the service, and the renderer hides the 'Internet Access' subsection plus the Cloudflared row in System Diagnostics. Use this when policy forbids outbound HTTPS tunnels that bypass the corporate proxy."
+        }
+      },
+      "additionalProperties": false
+    },
+    "registryOverrides": {
+      "type": "object",
+      "description": "Per-built-in-registry override map (enterprise/custom builds only). Keys are built-in registry IDs ('official', 'mcp-official', 'smithery', 'claude-skills', 'skillhub'). Each entry is merged on top of the built-in defaults during ensureBuiltinRegistries() on every startup. Omit any field to keep the built-in default. Open-source builds omit this entirely.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Override for one built-in registry. Only declared fields are applied; omitted fields retain their built-in defaults.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Replace the registry endpoint (e.g. point to an internal mirror)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Replace the display name shown in the Store UI."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Force-enable or force-disable the registry on every startup; overrides the user's manual toggle. The entry remains visible in the Store UI, just locked."
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "When true, the registry is removed entirely from the Store UI and any persisted copy from a previous run is dropped on the next startup. Takes precedence over `enabled`. Use this — not `enabled: false` — when policy forbids the registry outright."
+          },
+          "publish": {
+            "type": "object",
+            "description": "Publish target. Determines where the App detail 'Publish' button routes the spec.",
+            "required": ["target"],
+            "properties": {
+              "target": {
+                "type": "string",
+                "enum": ["github-pr", "http-registry", "local-dhpkg"]
+              },
+              "github": {
+                "type": "object",
+                "properties": {
+                  "owner": { "type": "string" },
+                  "repo": { "type": "string" },
+                  "clientId": { "type": "string" }
+                },
+                "required": ["owner", "repo"]
+              },
+              "token": { "type": "string" }
+            }
+          }
+        },
+        "additionalProperties": false
       }
     },
     "builtinApps": {

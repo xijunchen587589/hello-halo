@@ -21,6 +21,7 @@ import type {
 } from '../../shared/types'
 import { BUILTIN_PROVIDERS, getBuiltinProvider } from '../../shared/constants'
 import { decryptString } from './secure-storage.service'
+import { encryptConfigFields, decryptConfigFields } from './config-encryption'
 
 // ============================================================================
 // ENCRYPTED DATA MIGRATION
@@ -1000,6 +1001,11 @@ export function getConfig(): HaloConfig {
   try {
     const content = readFileSync(configPath, 'utf-8')
     const parsed = JSON.parse(content)
+
+    // Decrypt sensitive fields that were encrypted at rest (no-op when
+    // credentialAtRestSafe is off or the values are still plain).
+    decryptConfigFields(parsed)
+
     const aiSources = normalizeAiSources(parsed)
 
     // Migrate legacy copilotIdentity → copilot.identity (one-time)
@@ -1112,7 +1118,12 @@ export function saveConfig(config: Partial<HaloConfig>): HaloConfig {
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true })
   }
-  writeFileSync(configPath, JSON.stringify(newConfig, null, 2))
+  // Encrypt sensitive fields on a clone before writing to disk. The
+  // in-memory newConfig stays plaintext for downstream change-detection
+  // and for the return value that callers read.
+  const toWrite = JSON.parse(JSON.stringify(newConfig))
+  encryptConfigFields(toWrite)
+  writeFileSync(configPath, JSON.stringify(toWrite, null, 2))
 
   // Detect API config changes and notify subscribers
   // This allows agent.service to invalidate sessions when API config changes

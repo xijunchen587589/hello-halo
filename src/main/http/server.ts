@@ -10,7 +10,15 @@ import { BrowserWindow } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { createConnection, createServer as createNetServer } from 'net'
 
-import { authMiddleware, generateAccessToken, getAccessToken, clearAccessToken, restoreAccessToken, validateToken } from './auth'
+import {
+  authMiddleware,
+  generateAccessToken,
+  getAccessToken,
+  clearAccessToken,
+  restoreAccessToken,
+  handleLogin,
+  CredentialRestoreError,
+} from './auth'
 import { initWebSocket, shutdownWebSocket, getClientCount } from './websocket'
 import { registerApiRoutes } from './routes'
 import { getMainWindow as getMainWindowFromService } from '../services/window.service'
@@ -109,16 +117,9 @@ export async function startHttpServer(
     next()
   })
 
-  // Login endpoint (before auth middleware)
-  expressApp.post('/api/remote/login', (req: Request, res: Response) => {
-    const { token } = req.body
-
-    if (validateToken(token)) {
-      res.json({ success: true })
-    } else {
-      res.status(401).json({ success: false, error: 'Invalid token' })
-    }
-  })
+  // Login endpoint (before auth middleware). Owns rate-limit + lockout
+  // + audit + alert via the auth module.
+  expressApp.post('/api/remote/login', handleLogin)
 
   // Status endpoint (public)
   expressApp.get('/api/remote/status', (req: Request, res: Response) => {
@@ -283,11 +284,26 @@ export async function startHttpServer(
 
   // Restore previously persisted token when available; otherwise generate a
   // fresh PIN. Persistence of newly generated tokens is owned by the caller
-  // (remote.service.ts) to keep this layer free of config concerns.
+  // (remote.service.ts) to keep this layer free of config concerns. The
+  // raw stored value may be encoded (gmcred:v1:...) when
+  // `credentialAtRestSafe` is on; restoreAccessToken decodes internally and
+  // exposes the plaintext via getAccessToken so the UI keeps working.
+  //
+  // Fail-loud on restore failure: when an existing credential is present
+  // but cannot be decoded (corrupted ciphertext, key derivation drift,
+  // profile migration), we refuse to start instead of silently rotating
+  // the PIN. Silent rotation would invalidate every previously paired
+  // device without telling the user; the caller (remote.service) catches
+  // this error, disables remote access in config, and surfaces a code so
+  // the UI can prompt for a manual re-pair.
   let token: string
   if (existingToken && existingToken.length >= 4) {
-    restoreAccessToken(existingToken)
-    token = existingToken
+    const restored = restoreAccessToken(existingToken)
+    if (!restored.ok) {
+      cleanupServerOnError()
+      throw new CredentialRestoreError()
+    }
+    token = getAccessToken() as string
   } else {
     token = generateAccessToken()
   }
@@ -449,7 +465,7 @@ function getRemoteLoginPage(): string {
 
     <p>Enter access code to connect to your desktop</p>
     <div class="input-group">
-      <input type="text" id="token" maxlength="32" placeholder="000000" autocomplete="off">
+      <input type="password" id="token" maxlength="64" placeholder="Access Code" autocomplete="off">
     </div>
     <button onclick="login()" style="margin-top: 1rem; width: 100%; max-width: 300px;">Connect</button>
     <p id="error" class="error"></p>
@@ -459,7 +475,7 @@ function getRemoteLoginPage(): string {
       const token = document.getElementById('token').value;
       const error = document.getElementById('error');
 
-      if (!token || token.length < 4) {
+      if (!token || token.length < 6) {
         error.textContent = 'Please enter access code';
         return;
       }

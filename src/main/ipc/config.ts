@@ -6,6 +6,7 @@ import { ipcMain } from 'electron'
 import { getConfig, saveConfig } from '../services/config.service'
 import { getAISourceManager } from '../services/ai-sources'
 import { decryptString } from '../services/secure-storage.service'
+import { maskConfigFields, unmaskSentinels } from '../services/config-encryption'
 import { validateApiConnection, fetchModelsFromApi } from '../services/api-validator.service'
 import { runConfigProbe, emitConfigChange } from '../services/health'
 import type { AISourcesConfig, AISource } from '../../shared/types'
@@ -17,30 +18,25 @@ export function registerConfigHandlers(): void {
     try {
       const config = getConfig() as Record<string, any>
 
-      // For v2 aiSources, decrypt API keys and tokens in sources array
-      const decryptedConfig = { ...config }
-      if (decryptedConfig.aiSources?.version === 2 && Array.isArray(decryptedConfig.aiSources.sources)) {
-        decryptedConfig.aiSources = {
-          ...decryptedConfig.aiSources,
-          sources: decryptedConfig.aiSources.sources.map((source: AISource) => ({
-            ...source,
-            apiKey: source.apiKey ? decryptString(source.apiKey) : undefined,
-            accessToken: source.accessToken ? decryptString(source.accessToken) : undefined,
-            refreshToken: source.refreshToken ? decryptString(source.refreshToken) : undefined
-          }))
+      // Legacy secure-storage migration: old enc:-prefixed values are
+      // decrypted to plaintext on read (decryptString handles both
+      // encrypted and plain inputs transparently).
+      if (config.aiSources?.version === 2 && Array.isArray(config.aiSources.sources)) {
+        for (const source of config.aiSources.sources as AISource[]) {
+          if (source.apiKey) source.apiKey = decryptString(source.apiKey)
+          if (source.accessToken) source.accessToken = decryptString(source.accessToken)
+          if (source.refreshToken) source.refreshToken = decryptString(source.refreshToken)
         }
       }
-
-      // Also handle legacy api.apiKey
-      if (decryptedConfig.api?.apiKey) {
-        decryptedConfig.api = {
-          ...decryptedConfig.api,
-          apiKey: decryptString(decryptedConfig.api.apiKey)
-        }
+      if (config.api?.apiKey) {
+        config.api.apiKey = decryptString(config.api.apiKey)
       }
 
-      console.log('[Settings] config:get - Loaded, aiSources v2, currentId:', decryptedConfig.aiSources?.currentId || 'none')
-      return { success: true, data: decryptedConfig }
+      // Mask all sensitive fields before returning to renderer.
+      const masked = maskConfigFields(config)
+
+      console.log('[Settings] config:get - Loaded, aiSources v2, currentId:', config.aiSources?.currentId || 'none')
+      return { success: true, data: masked }
     } catch (error: unknown) {
       const err = error as Error
       console.error('[Settings] config:get - Failed:', err.message)
@@ -80,6 +76,10 @@ export function registerConfigHandlers(): void {
       // v2 format: aiSources is replaced entirely (sources array is the source of truth)
       // No deep merging needed - frontend manages the complete sources array
 
+      // Restore '***' sentinels to real values before saving.
+      const existing = getConfig() as Record<string, unknown>
+      unmaskSentinels(processedUpdates, existing)
+
       const config = saveConfig(processedUpdates)
       console.log('[Settings] config:set - Saved successfully')
 
@@ -98,7 +98,7 @@ export function registerConfigHandlers(): void {
         })
       }
 
-      return { success: true, data: config }
+      return { success: true, data: maskConfigFields(config as Record<string, unknown>) }
     } catch (error: unknown) {
       const err = error as Error
       console.error('[Settings] config:set - Failed:', err.message)
@@ -189,6 +189,8 @@ export function registerConfigHandlers(): void {
     try {
       const manager = getAISourceManager()
       const result = manager.setCurrentModel(modelId)
+      const src = manager.getCurrentSourceConfig()
+      console.log(`[Config] model_changed source=${src?.id || ''} provider=${src?.provider || ''} model=${modelId}`)
       emitConfigChange(['aiSources.model'])
       return { success: true, data: result }
     } catch (error: unknown) {

@@ -70,12 +70,21 @@ export interface BrowserPolicy {
  * - `url`     — replace the registry endpoint (e.g. point to an internal mirror)
  * - `name`    — replace the display name shown in the Store UI
  * - `enabled` — force-enable or force-disable the registry on every startup;
- *               overrides the user's manual toggle in Settings
+ *               overrides the user's manual toggle in Settings. The entry
+ *               is still visible in the registry list, just locked.
+ * - `hidden`  — when true, the registry is removed entirely. The entry will
+ *               not appear in the Store UI and any persisted copy from a
+ *               previous run is dropped on the next startup. Use this
+ *               (instead of `enabled: false`) when the policy forbids the
+ *               registry outright — showing a permanently-off toggle for
+ *               an immutable built-in is dead UI and misleading.
+ *               `hidden: true` takes precedence over `enabled`.
  */
 export interface RegistryOverride {
   url?: string
   name?: string
   enabled?: boolean
+  hidden?: boolean
   /**
    * Publish target for the App detail page's "Publish" button.
    * The user never picks the target — it is determined by product.json.
@@ -178,11 +187,15 @@ export interface ProductConfig {
    * ```json
    * "registryOverrides": {
    *   "official":      { "url": "http://10.x.x.x:18081", "name": "Enterprise Registry" },
-   *   "mcp-official":  { "enabled": false },
-   *   "smithery":      { "enabled": false },
-   *   "claude-skills": { "enabled": false }
+   *   "mcp-official":  { "hidden": true },
+   *   "smithery":      { "hidden": true },
+   *   "claude-skills": { "hidden": true }
    * }
    * ```
+   *
+   * Use `hidden: true` to remove a built-in registry entirely from the
+   * Store UI. Use `enabled: false` only when the entry should remain
+   * visible but locked off (rare; mostly useful for staged rollouts).
    */
   registryOverrides?: Record<string, RegistryOverride>
   /**
@@ -224,6 +237,22 @@ export interface ProductConfig {
   telemetry?: {
     allowedSensitiveFields?: string[]
   }
+
+  /**
+   * Security policy (optional, enterprise/custom builds only).
+   *
+   * Each flag is "safe mode ON" — set to true to enable restrictions.
+   * Open-source builds omit this entirely and keep permissive defaults.
+   * The flag definitions and consumers live in
+   * `src/main/services/security-policy.ts` — the only place a new flag
+   * needs to be defined.
+   *
+   * Typed as `unknown` here to avoid a circular import with the
+   * security-policy module (which itself reads loadProductConfig()). The
+   * security-policy module re-narrows the value to its own SecurityPolicy
+   * type at access time.
+   */
+  security?: Record<string, unknown>
 }
 
 /**

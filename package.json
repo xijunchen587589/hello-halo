@@ -1,6 +1,6 @@
 {
   "name": "halo",
-  "version": "2.1.10-rc.2",
+  "version": "2.1.10-rc.6",
   "description": "AI that gets things done",
   "type": "module",
   "main": "./out/main/index.mjs",
@@ -133,6 +133,7 @@
     "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
+    "sm-crypto": "^0.4.0",
     "streamdown": "^2.2.0",
     "tailwind-merge": "^2.2.0",
     "uuid": "^13.0.0",

@@ -6,10 +6,49 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from '../../i18n'
 import { api } from '../../api'
+import { useSecurityPolicy } from '../../hooks/useSecurityPolicy'
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  checkPasswordPolicy,
+  type PasswordPolicyCode,
+} from '../../../shared/auth/password-policy'
 import type { RemoteAccessStatus } from './types'
+
+type TranslateFn = (text: string, options?: Record<string, unknown>) => string
+
+/**
+ * Map a failing policy result to a single, localized message. The
+ * structural rules live in `shared/auth/password-policy` so this view
+ * never drifts from the main-side enforcement; only the wording is
+ * renderer-owned (because it must go through `t()`).
+ */
+function describePolicyFailure(codes: PasswordPolicyCode[], t: TranslateFn): string {
+  const [first] = codes
+  if (first === 'NOT_A_STRING') return t('Password is required')
+  if (first === 'TOO_SHORT') {
+    return t('Password must be at least {{min}} characters', { min: PASSWORD_MIN_LENGTH })
+  }
+  if (first === 'TOO_LONG') {
+    return t('Password must be at most {{max}} characters', { max: PASSWORD_MAX_LENGTH })
+  }
+
+  const fragments: string[] = []
+  if (codes.includes('MISSING_UPPER')) fragments.push(t('uppercase letter'))
+  if (codes.includes('MISSING_LOWER')) fragments.push(t('lowercase letter'))
+  if (codes.includes('MISSING_DIGIT')) fragments.push(t('digit'))
+  if (codes.includes('MISSING_SPECIAL')) fragments.push(t('special character'))
+  return t('Password must include: {{items}}', { items: fragments.join(', ') })
+}
 
 export function RemoteAccessSection() {
   const { t } = useTranslation()
+
+  // Build-time security policy. While `null` (first fetch in flight)
+  // we keep the permissive default — the backend still enforces every
+  // gate, this hook only controls UI visibility.
+  const securityPolicy = useSecurityPolicy()
+  const tunnelDisabledByPolicy = securityPolicy?.tunnelSafe === true
 
   // Remote access state
   const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null)
@@ -21,6 +60,11 @@ export function RemoteAccessSection() {
   const [customPassword, setCustomPassword] = useState('')
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [isSavingPassword, setIsSavingPassword] = useState(false)
+  // Surfaced when the persisted credential could not be decoded. The
+  // backend has already cleared the bad blob and disabled the feature, so
+  // re-toggling will succeed with a fresh PIN; the message tells the user
+  // why their previously paired devices stopped working.
+  const [enableError, setEnableError] = useState<string | null>(null)
 
   // Load remote access status
   useEffect(() => {
@@ -68,19 +112,29 @@ export function RemoteAccessSection() {
       if (response.success) {
         setRemoteStatus(null)
         setQrCode(null)
+        setEnableError(null)
       }
-    } else {
-      setIsEnablingRemote(true)
-      try {
-        const response = await api.enableRemoteAccess()
-        if (response.success && response.data) {
-          setRemoteStatus(response.data as RemoteAccessStatus)
-        }
-      } catch {
-        // Enable failed silently
-      } finally {
-        setIsEnablingRemote(false)
+      return
+    }
+    setIsEnablingRemote(true)
+    setEnableError(null)
+    try {
+      const response = await api.enableRemoteAccess()
+      if (response.success && response.data) {
+        setRemoteStatus(response.data as RemoteAccessStatus)
+      } else if (response.code === 'CREDENTIAL_RESTORE_FAILED') {
+        setEnableError(
+          t(
+            'Stored access credential could not be decoded and has been cleared. Toggle remote access on again to generate a new password, then re-pair your devices.',
+          ),
+        )
+      } else {
+        setEnableError(response.error || t('Failed to enable remote access'))
       }
+    } catch (error) {
+      setEnableError(t('Failed to enable remote access'))
+    } finally {
+      setIsEnablingRemote(false)
     }
   }
 
@@ -145,6 +199,12 @@ export function RemoteAccessSection() {
             </div>
           </label>
         </div>
+
+        {enableError && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+            <p className="text-sm text-red-500">{enableError}</p>
+          </div>
+        )}
 
         {/* Remote Access Details */}
         {remoteStatus?.enabled && (
@@ -217,20 +277,21 @@ export function RemoteAccessSection() {
                   ) : (
                     <div className="flex items-center gap-2">
                       <input
-                        type="text"
+                        type="password"
                         value={customPassword}
                         onChange={(e) => {
                           setCustomPassword(e.target.value)
                           setPasswordError(null)
                         }}
-                        placeholder={t('4-32 characters')}
-                        maxLength={32}
-                        className="w-32 px-2 py-1 text-sm bg-input rounded border border-border focus:border-primary focus:outline-none"
+                        placeholder={t('8-64 chars, mixed case + digit + symbol')}
+                        maxLength={PASSWORD_MAX_LENGTH}
+                        className="w-56 px-2 py-1 text-sm bg-input rounded border border-border focus:border-primary focus:outline-none"
                       />
                       <button
                         onClick={async () => {
-                          if (customPassword.length < 4) {
-                            setPasswordError(t('Password too short'))
+                          const policy = checkPasswordPolicy(customPassword)
+                          if (!policy.ok) {
+                            setPasswordError(describePolicyFailure(policy.codes, t))
                             return
                           }
                           setIsSavingPassword(true)
@@ -250,7 +311,7 @@ export function RemoteAccessSection() {
                             setIsSavingPassword(false)
                           }
                         }}
-                        disabled={isSavingPassword || customPassword.length < 4}
+                        disabled={isSavingPassword || customPassword.length < PASSWORD_MIN_LENGTH}
                         className="text-xs px-2 py-1 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
                       >
                         {isSavingPassword ? t('Saving...') : t('Save')}
@@ -281,61 +342,65 @@ export function RemoteAccessSection() {
               )}
             </div>
 
-            {/* Tunnel Section */}
-            <div className="pt-4 border-t border-border">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="font-medium">{t('Internet Access')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {t('Get public address via Cloudflare (wait about 10 seconds for DNS resolution after startup)')}
-                  </p>
+            {/* Tunnel Section — hidden entirely under security.tunnelSafe.
+                Showing a permanently-off toggle would be dead UI and would
+                misleadingly imply the user could turn the feature on. */}
+            {!tunnelDisabledByPolicy && (
+              <div className="pt-4 border-t border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="font-medium">{t('Internet Access')}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t('Get public address via Cloudflare (wait about 10 seconds for DNS resolution after startup)')}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleToggleTunnel}
+                    disabled={isEnablingTunnel}
+                    className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                      remoteStatus.tunnel.status === 'running'
+                        ? 'bg-red-500/20 text-red-500 hover:bg-red-500/30'
+                        : 'bg-primary/20 text-primary hover:bg-primary/30'
+                    }`}
+                  >
+                    {isEnablingTunnel
+                      ? t('Connecting...')
+                      : remoteStatus.tunnel.status === 'running'
+                        ? t('Stop Tunnel')
+                        : remoteStatus.tunnel.status === 'starting'
+                          ? t('Connecting...')
+                          : t('Start Tunnel')}
+                  </button>
                 </div>
-                <button
-                  onClick={handleToggleTunnel}
-                  disabled={isEnablingTunnel}
-                  className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                    remoteStatus.tunnel.status === 'running'
-                      ? 'bg-red-500/20 text-red-500 hover:bg-red-500/30'
-                      : 'bg-primary/20 text-primary hover:bg-primary/30'
-                  }`}
-                >
-                  {isEnablingTunnel
-                    ? t('Connecting...')
-                    : remoteStatus.tunnel.status === 'running'
-                      ? t('Stop Tunnel')
-                      : remoteStatus.tunnel.status === 'starting'
-                        ? t('Connecting...')
-                        : t('Start Tunnel')}
-                </button>
-              </div>
 
-              {remoteStatus.tunnel.status === 'running' && remoteStatus.tunnel.url && (
-                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-green-500">{t('Public Address')}</span>
-                    <div className="flex items-center gap-2">
-                      <code className="text-sm bg-background px-2 py-1 rounded text-green-500">
-                        {remoteStatus.tunnel.url}
-                      </code>
-                      <button
-                        onClick={() => copyToClipboard(remoteStatus.tunnel.url || '')}
-                        className="text-xs text-green-500/80 hover:text-green-500"
-                      >
-                        {t('Copy')}
-                      </button>
+                {remoteStatus.tunnel.status === 'running' && remoteStatus.tunnel.url && (
+                  <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-green-500">{t('Public Address')}</span>
+                      <div className="flex items-center gap-2">
+                        <code className="text-sm bg-background px-2 py-1 rounded text-green-500">
+                          {remoteStatus.tunnel.url}
+                        </code>
+                        <button
+                          onClick={() => copyToClipboard(remoteStatus.tunnel.url || '')}
+                          className="text-xs text-green-500/80 hover:text-green-500"
+                        >
+                          {t('Copy')}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {remoteStatus.tunnel.status === 'error' && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                  <p className="text-sm text-red-500">
-                    {t('Tunnel connection failed')}: {remoteStatus.tunnel.error}
-                  </p>
-                </div>
-              )}
-            </div>
+                {remoteStatus.tunnel.status === 'error' && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                    <p className="text-sm text-red-500">
+                      {t('Tunnel connection failed')}: {remoteStatus.tunnel.error}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* QR Code */}
             {qrCode && (

@@ -16,7 +16,9 @@ Always design with high maintainability and modularity, aligned with long-term a
 - Any code changes（edit/delete/move） require human confirmation and consent.
 - You must read the halo-dev specifications before writing code.
 - Follow Long-term principle
-- code comments should be concise and to the point, focusing on why rather than what.
-  
+- Code must stand alone — no planning labels (`E1`, `F2`, `Phase X`, etc.), no chat-session IDs, no ceremonial prefixes (`Full-chain X:`, `Helper:`, `Section:`) in code or comments. If a comment only makes sense to someone who saw the design conversation, it's wrong.
+- Code comments explain why, never what. Variable names and structure already say what. Acceptable comments: non-obvious tradeoffs, issue/RFC links, invariants the reader must preserve. A comment that paraphrases the next line is noise — delete it.
+- Variable naming follows existing-code observation. Underscore prefix (`_name`) is reserved for intentionally-unused identifiers (e.g. `_event` in IPC handlers). Scan 2–3 sibling files for established style before naming a new local.
+
 **tips.**
 This project is 100% AI-generated, so humans may not necessarily know more than you do. You need to proactively review documentation, manage documents, and examine code to confirm details and direction (for matters involving architecture and direction, actively discuss with users).

@@ -3,10 +3,8 @@
  *
  * Provides session list and management for the Settings UI.
  * The registry is populated automatically by dispatch-inbound when
- * users message the bot; these handlers expose read, rename, and remove.
- *
- * Note: The `im-sessions:set-proactive` handler is deprecated.
- * Proactive push is replaced by AI-driven `notify_bot` tool.
+ * users message the bot; these handlers expose read, rename, toggle
+ * auto-sync (proactive flag), and remove.
  */
 
 import { ipcMain } from 'electron'
@@ -27,8 +25,9 @@ export function registerImSessionHandlers(): void {
     }
   })
 
-  // @deprecated — Proactive push replaced by AI-driven notify_bot tool.
-  // Retained for backward compatibility; no UI calls this handler anymore.
+  // Toggle a session's auto-sync flag. When proactive=true, the run's
+  // final assistant text is pushed to this contact at run completion by
+  // apps/runtime/im-auto-sync.ts.
   ipcMain.handle(
     'im-sessions:set-proactive',
     async (_event, input: { appId: string; channel: string; chatId: string; proactive: boolean }) => {

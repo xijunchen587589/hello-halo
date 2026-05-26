@@ -6,6 +6,25 @@
 import { ChildProcess, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { registerProcess, unregisterProcess, getCurrentInstanceId } from './health'
+import {
+  isTunnelSafe,
+  TUNNEL_DISABLED_BY_POLICY,
+  TUNNEL_DISABLED_BY_POLICY_MESSAGE,
+} from './security-policy'
+
+/**
+ * Error thrown by {@link startTunnel} when the tunnel feature is disabled
+ * by `security.tunnelSafe`. Carries the stable {@link TUNNEL_DISABLED_BY_POLICY}
+ * code so callers / IPC handlers can map it to a localized message
+ * without string matching.
+ */
+export class TunnelDisabledByPolicyError extends Error {
+  readonly code = TUNNEL_DISABLED_BY_POLICY
+  constructor() {
+    super(TUNNEL_DISABLED_BY_POLICY_MESSAGE)
+    this.name = 'TunnelDisabledByPolicyError'
+  }
+}
 
 // Tunnel state
 interface TunnelState {
@@ -42,9 +61,18 @@ async function getBinaryPath(): Promise<string> {
 }
 
 /**
- * Start Cloudflare Tunnel (Quick Tunnel - no account needed)
+ * Start Cloudflare Tunnel (Quick Tunnel - no account needed).
+ *
+ * Throws {@link TunnelDisabledByPolicyError} when `security.tunnelSafe`
+ * is on. The check happens before any state mutation or cloudflared
+ * spawn so a policy-disabled build pays zero runtime cost.
  */
 export async function startTunnel(localPort: number): Promise<string> {
+  if (isTunnelSafe()) {
+    console.warn('[Tunnel] startTunnel blocked by security policy (tunnelSafe=true)')
+    throw new TunnelDisabledByPolicyError()
+  }
+
   if (state.status === 'running') {
     return state.url!
   }

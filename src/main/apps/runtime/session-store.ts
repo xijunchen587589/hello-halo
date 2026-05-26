@@ -96,6 +96,10 @@ function getRunsDir(spacePath: string, appId: string): string {
 
 /** Get the JSONL file path for a specific run */
 function getSessionFilePath(spacePath: string, appId: string, runId: string): string {
+  // Reject path traversal — both segments are joined into a filesystem path below.
+  if (appId.includes('..') || runId.includes('..')) {
+    throw new Error('Invalid path parameter')
+  }
   return join(getRunsDir(spacePath, appId), `${runId}.jsonl`)
 }
 

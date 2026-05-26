@@ -34,6 +34,7 @@ import {
 import { getTempSpacePath, getSpacesDir, getConfig as getServiceConfig, saveConfig } from '../../services/config.service'
 import { getSpace, getAllSpacePaths } from '../../services/space.service'
 import { getAppManager } from '../../apps/manager'
+import { AppAlreadyInstalledError } from '../../apps/manager/errors'
 import { getAppRuntime, getImChannelManager, sendAppChatMessage, stopAppChat, isAppChatGenerating, loadAppChatMessages, loadImChatMessages, getAppChatSessionState, getAppChatConversationId, clearAppChat, clearImSession, restartAppChat, dispatchInboundMessage } from '../../apps/runtime'
 import { buildDefaultAssistantSpec } from '../../apps/runtime/im-channels/wecom-bot-default-spec'
 import type { AppListFilter, UninstallOptions, InstalledApp } from '../../apps/manager'
@@ -45,6 +46,30 @@ import { broadcastToAll } from '../websocket'
 import * as appController from '../../controllers/app.controller'
 import type { AppErrorCode } from '../../controllers/app.controller'
 import * as storeController from '../../controllers/store.controller'
+import {
+  rejectIfRemoteMcpForbidden,
+  rejectIfRemoteMcpForbiddenAsync,
+  isMcpAppSpec,
+  patchTouchesMcp,
+  configTouchesMcp,
+  yamlIsMcpSpec,
+  getPublicSecurityPolicy,
+} from '../../services/security-policy'
+
+/**
+ * Peek a store entry's spec type. Returns true when the resolved spec is
+ * an MCP. Used to gate /api/store/install routes — only called when
+ * remoteMcpSafe is on, so the (cached) network/disk lookup never runs in
+ * default open-source builds.
+ */
+async function storeSlugIsMcp(slug: string): Promise<boolean> {
+  try {
+    const detail = await storeController.getStoreAppDetail(slug)
+    return detail.success && isMcpAppSpec(detail.data.spec)
+  } catch {
+    return false
+  }
+}
 import { modelCapabilitiesService } from '../../services/model-capabilities.service'
 import type { ModelCapabilityOverride } from '../../../shared/types/model-capabilities'
 import { fetchJson, ILINK_BASE_URL } from '../../apps/runtime/im-channels/ilink-api'
@@ -145,6 +170,14 @@ function validateFilePath(res: Response, filePath?: string): string | null {
  * Register all API routes
  */
 export function registerApiRoutes(app: Express): void {
+  // ===== Security Policy =====
+  // Renderer-safe slice of the security policy. Returned to both the
+  // Electron renderer (via the IPC mirror) and to remote/web clients so
+  // every UI surface gates consistently.
+  app.get('/api/security/policy', async (_req: Request, res: Response) => {
+    res.json({ success: true, data: getPublicSecurityPolicy() })
+  })
+
   // ===== Config Routes =====
   app.get('/api/config', async (req: Request, res: Response) => {
     const result = configController.getConfig()
@@ -152,6 +185,7 @@ export function registerApiRoutes(app: Express): void {
   })
 
   app.post('/api/config', async (req: Request, res: Response) => {
+    if (rejectIfRemoteMcpForbidden(res, () => configTouchesMcp(req.body), 'POST /api/config')) return
     const result = configController.setConfig(req.body)
     res.json(result)
   })
@@ -1111,9 +1145,10 @@ export function registerApiRoutes(app: Express): void {
     }
   })
 
-  // @deprecated — Proactive push replaced by AI-driven notify_bot tool.
-  // Retained for backward compatibility; no UI calls this endpoint anymore.
-  // POST /api/im-sessions/set-proactive — set proactive flag for a session
+  // POST /api/im-sessions/set-proactive — toggle a session's auto-sync flag.
+  // When proactive=true, the run's final assistant text is pushed to this
+  // contact at run completion (apps/runtime/im-auto-sync.ts). Used by the
+  // remote web client; desktop goes through IPC.
   app.post('/api/im-sessions/set-proactive', async (req: Request, res: Response) => {
     try {
       const registry = getImSessionRegistry()
@@ -1257,6 +1292,7 @@ export function registerApiRoutes(app: Express): void {
         res.status(400).json({ success: false, error: 'Missing required field: spec' })
         return
       }
+      if (rejectIfRemoteMcpForbidden(res, () => isMcpAppSpec(spec), 'POST /api/apps/install')) return
       const appId = await manager.install(resolvedSpaceId, spec as import('../../apps/spec').AppSpec, userConfig)
 
       // Auto-activate in runtime if available
@@ -1270,6 +1306,10 @@ export function registerApiRoutes(app: Express): void {
       console.log('[HTTP] POST /api/apps/install: appId=%s, space=%s', appId, resolvedSpaceId ?? 'global')
       res.json({ success: true, data: { appId } })
     } catch (error) {
+      if (error instanceof AppAlreadyInstalledError) {
+        res.status(409).json({ success: false, error: (error as Error).message, code: 'ALREADY_INSTALLED' })
+        return
+      }
       res.json({ success: false, error: (error as Error).message })
     }
   })
@@ -1701,6 +1741,16 @@ export function registerApiRoutes(app: Express): void {
       const manager = getManagerOrFail(res)
       if (!manager) return
       const specPatch = req.body as Record<string, unknown>
+      // Guard both directions: a patch touching mcp_server/type, OR a patch
+      // against an app that is already type=mcp (any field change there
+      // could re-persist a malicious command).
+      if (
+        rejectIfRemoteMcpForbidden(
+          res,
+          () => patchTouchesMcp(specPatch) || isMcpAppSpec(manager.getApp(appId)?.spec),
+          'PATCH /api/apps/:appId/spec',
+        )
+      ) return
       manager.updateSpec(appId, specPatch)
 
       // Hot-sync subscriptions if subscriptions changed.
@@ -1745,6 +1795,7 @@ export function registerApiRoutes(app: Express): void {
     NOT_FOUND: 404,
     INVALID_YAML: 400,
     VALIDATION_FAILED: 422,
+    ALREADY_INSTALLED: 409,
   }
 
   // GET /api/apps/:appId/export-spec — export app spec as YAML
@@ -1759,7 +1810,7 @@ export function registerApiRoutes(app: Express): void {
       const result = appController.exportSpec(appId)
       if (!result.success) {
         const status = result.code ? appErrorStatus[result.code] : 400
-        res.status(status).json({ success: false, error: result.error })
+        res.status(status).json({ success: false, error: result.error, code: result.code })
         return
       }
 
@@ -1788,10 +1839,18 @@ export function registerApiRoutes(app: Express): void {
         return
       }
 
+      if (
+        rejectIfRemoteMcpForbidden(
+          res,
+          () => yamlIsMcpSpec(yamlContent),
+          'POST /api/apps/import-spec',
+        )
+      ) return
+
       const result = await appController.importSpec({ spaceId, yamlContent, userConfig })
       if (!result.success) {
         const status = result.code ? appErrorStatus[result.code] : 400
-        res.status(status).json({ success: false, error: result.error })
+        res.status(status).json({ success: false, error: result.error, code: result.code })
         return
       }
 
@@ -2070,6 +2129,13 @@ export function registerApiRoutes(app: Express): void {
         res.status(400).json({ success: false, error: 'Missing required field: slug' })
         return
       }
+      if (
+        await rejectIfRemoteMcpForbiddenAsync(
+          res,
+          () => storeSlugIsMcp(slug),
+          'POST /api/store/install',
+        )
+      ) return
       // spaceId may be null for global installs (MCP/Skill available across all spaces)
       const resolvedSpaceId = spaceId || null
       const result = await storeController.installStoreApp(slug, resolvedSpaceId, userConfig)
@@ -2091,6 +2157,13 @@ export function registerApiRoutes(app: Express): void {
         res.status(400).json({ success: false, error: 'Missing required param: slug' })
         return
       }
+      if (
+        await rejectIfRemoteMcpForbiddenAsync(
+          res,
+          () => storeSlugIsMcp(slug),
+          'POST /api/store/apps/:slug/install',
+        )
+      ) return
       // spaceId may be null for global installs (MCP/Skill available across all spaces)
       const resolvedSpaceId = spaceId || null
       const result = await storeController.installStoreApp(slug, resolvedSpaceId, userConfig)

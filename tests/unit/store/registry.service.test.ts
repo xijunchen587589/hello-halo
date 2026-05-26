@@ -19,6 +19,10 @@ vi.mock("../../../src/main/apps/runtime", () => ({
 
 vi.mock("../../../src/main/services/ai-sources/auth-loader", () => ({
   loadProductConfig: loadProductConfigMock,
+  // config.service indirectly imports getDataFolderName via the same
+  // module; provide a deterministic fallback so the test mock surface
+  // matches the production export set.
+  getDataFolderName: () => "halo-test",
 }))
 
 import {
@@ -439,6 +443,42 @@ store:
 
       // enabled should retain the builtin default (true)
       expect(getRegistries().find(r => r.id === "official")?.enabled).toBe(true)
+    })
+
+    it("removes hidden built-in registries entirely (not just disabled)", () => {
+      loadProductConfigMock.mockReturnValue({
+        authProviders: [],
+        registryOverrides: {
+          "mcp-official":  { hidden: true },
+          "smithery":      { hidden: true },
+          "claude-skills": { hidden: true },
+        },
+      })
+
+      initRegistryService()
+
+      const registries = getRegistries()
+      // Hidden registries must NOT appear in the list at all — they are
+      // not just disabled, they are absent.
+      expect(registries.find(r => r.id === "mcp-official")).toBeUndefined()
+      expect(registries.find(r => r.id === "smithery")).toBeUndefined()
+      expect(registries.find(r => r.id === "claude-skills")).toBeUndefined()
+      // Non-hidden built-ins remain visible.
+      expect(registries.find(r => r.id === "official")).toBeDefined()
+    })
+
+    it("hidden takes precedence over enabled", () => {
+      loadProductConfigMock.mockReturnValue({
+        authProviders: [],
+        registryOverrides: {
+          // Both flags set — hidden wins.
+          "smithery": { enabled: true, hidden: true },
+        },
+      })
+
+      initRegistryService()
+
+      expect(getRegistries().find(r => r.id === "smithery")).toBeUndefined()
     })
   })
 })

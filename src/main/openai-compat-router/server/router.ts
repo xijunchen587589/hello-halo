@@ -52,6 +52,7 @@ export function createApp(options: RouterOptions = {}): Express {
     const rawKeyStr = Array.isArray(rawKey) ? rawKey[0] : rawKey
 
     if (!rawKeyStr) {
+      console.log(`[Router] decode_backend_config_failed endpoint=/v1/messages reason=missing_x_api_key from=${req.ip || ''}:${req.socket?.remotePort ?? ''}`)
       return res.status(401).json({
         type: 'error',
         error: { type: 'authentication_error', message: 'x-api-key is required' }
@@ -61,6 +62,7 @@ export function createApp(options: RouterOptions = {}): Express {
     // Decode backend configuration from API key
     const decodedConfig = decodeBackendConfig(String(rawKeyStr))
     if (!decodedConfig) {
+      console.log(`[Router] decode_backend_config_failed endpoint=/v1/messages reason=invalid_format raw_head="${String(rawKeyStr).slice(0, 200).replace(/"/g, "'")}" from=${req.ip || ''}:${req.socket?.remotePort ?? ''}`)
       return res.status(400).json({
         type: 'error',
         error: {
@@ -69,6 +71,8 @@ export function createApp(options: RouterOptions = {}): Express {
         }
       })
     }
+
+    console.log(`[Router] in_detail endpoint=/v1/messages method=${req.method} url=${req.url} from=${req.ip || ''}:${req.socket?.remotePort ?? ''} backend_host=${(() => { try { return new URL(decodedConfig.url).host } catch { return decodedConfig.url } })()} model_override=${decodedConfig.model || ''} api_type=${decodedConfig.apiType || ''} ts=${Date.now()}`)
 
     // Handle the request
     // Forward all SDK headers for transparent passthrough, excluding hop-by-hop
@@ -96,6 +100,7 @@ export function createApp(options: RouterOptions = {}): Express {
     const token = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length) : undefined
 
     if (!token) {
+      console.log(`[Router] decode_backend_config_failed endpoint=/v1/responses reason=missing_bearer from=${req.ip || ''}:${req.socket?.remotePort ?? ''}`)
       return res.status(401).json({
         error: { type: 'authentication_error', message: 'Authorization Bearer token is required' }
       })
@@ -103,6 +108,7 @@ export function createApp(options: RouterOptions = {}): Express {
 
     const decodedConfig = decodeBackendConfig(token)
     if (!decodedConfig) {
+      console.log(`[Router] decode_backend_config_failed endpoint=/v1/responses reason=invalid_format raw_head="${String(token).slice(0, 200).replace(/"/g, "'")}" from=${req.ip || ''}:${req.socket?.remotePort ?? ''}`)
       return res.status(400).json({
         error: {
           type: 'invalid_request_error',
@@ -110,6 +116,8 @@ export function createApp(options: RouterOptions = {}): Express {
         }
       })
     }
+
+    console.log(`[Router] in_detail endpoint=/v1/responses method=${req.method} url=${req.url} from=${req.ip || ''}:${req.socket?.remotePort ?? ''} backend_host=${(() => { try { return new URL(decodedConfig.url).host } catch { return decodedConfig.url } })()} model_override=${decodedConfig.model || ''} api_type=${decodedConfig.apiType || ''} ts=${Date.now()}`)
 
     await handleResponsesRequest(req.body || {}, decodedConfig, res, { debug, timeoutMs })
   })

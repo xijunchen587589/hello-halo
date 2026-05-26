@@ -27,7 +27,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
-import { useAppsStore } from '../../stores/apps.store'
+import { useAppsStore, AppApiError } from '../../stores/apps.store'
 import { useSpaceStore } from '../../stores/space.store'
 import { useTranslation } from '../../i18n'
 import { CreateSpaceForm } from '../space/CreateSpaceForm'
@@ -322,7 +322,28 @@ interface SkillInstallResult {
   name: string
   success: boolean
   error?: string
-  skipped?: boolean
+}
+
+/**
+ * Translate an install/import failure to user-facing copy.
+ * Routes known `AppApiError.code` discriminators to localized strings;
+ * falls back to the backend's raw `.message` for unexpected failures.
+ *
+ * Kept at module scope (pure function) so `t` is the single source of
+ * translation and call sites stay short.
+ */
+function formatInstallError(
+  err: unknown,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  context: 'skill' | 'digital_human',
+): string {
+  if (err instanceof AppApiError && err.code === 'ALREADY_INSTALLED') {
+    return context === 'skill'
+      ? t('A skill with the same name already exists. Uninstall it first or rename your skill before retrying.')
+      : t('A digital human with the same name already exists in this space. Uninstall it first or rename your digital human before retrying.')
+  }
+  if (err instanceof Error) return err.message
+  return t('Installation failed')
 }
 
 interface InstallProgress {
@@ -558,15 +579,11 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
   const handleYamlInstall = useCallback(async (yamlStr: string) => {
     setLoading(true)
     try {
-      const appId = await importApp(selectedSpaceId, yamlStr)
-      if (appId) {
-        await loadApps()
-        onClose()
-      } else {
-        setError(t('Import failed. Check the YAML spec and try again.'))
-      }
+      await importApp(selectedSpaceId, yamlStr)
+      await loadApps()
+      onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('Import failed'))
+      setError(formatInstallError(err, t, 'digital_human'))
     } finally {
       setLoading(false)
     }
@@ -601,15 +618,18 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
           type: 'skill',
           skill_files: skill.files,
         }
+        // Backend overwrites same-name skills in place, so a fresh
+        // install and a re-install of an existing skill both return
+        // success here. Real failures (e.g. spec validation) are
+        // captured in the catch and reported to the user.
         await installApp(selectedSpaceId || null, skillSpec)
         skillResults.push({ name: skill.name, success: true })
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        if (message.includes('already') || message.includes('exists')) {
-          skillResults.push({ name: skill.name, success: true, skipped: true })
-        } else {
-          skillResults.push({ name: skill.name, success: false, error: message })
-        }
+        skillResults.push({
+          name: skill.name,
+          success: false,
+          error: formatInstallError(err, t, 'skill'),
+        })
       }
     }
 
@@ -625,28 +645,19 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
     })
 
     try {
-      const appId = await importApp(selectedSpaceId, result.yamlContent)
-      if (appId) {
-        await loadApps()
-        const failedSkills = skillResults.filter(s => !s.success)
-        if (failedSkills.length > 0) {
-          setImportState({ phase: 'partial', result, skillResults })
-        } else {
-          setImportState({ phase: 'success', result, skillResults })
-        }
+      await importApp(selectedSpaceId, result.yamlContent)
+      await loadApps()
+      const failedSkills = skillResults.filter(s => !s.success)
+      if (failedSkills.length > 0) {
+        setImportState({ phase: 'partial', result, skillResults })
       } else {
-        setImportState({
-          phase: 'failed',
-          result,
-          error: t('Import failed. The backend rejected the spec. Check the YAML content.'),
-          skillResults,
-        })
+        setImportState({ phase: 'success', result, skillResults })
       }
     } catch (err) {
       setImportState({
         phase: 'failed',
         result,
-        error: err instanceof Error ? err.message : t('Installation failed'),
+        error: formatInstallError(err, t, 'digital_human'),
         skillResults,
       })
     }
@@ -692,7 +703,11 @@ export function AppInstallDialog({ onClose }: AppInstallDialogProps) {
         setError(t('Installation failed. Check the spec and try again.'))
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('Installation failed'))
+      // Skills are installed via the Visual/YAML mode only when the user
+      // explicitly writes type: 'skill'; default mode produces automation
+      // apps. Treat as digital human for messaging — skill conflicts are
+      // already overwritten silently by the backend.
+      setError(formatInstallError(err, t, 'digital_human'))
     } finally {
       setLoading(false)
     }
@@ -1463,7 +1478,7 @@ function BundlePreview({
 }
 
 // ── Skill results list (success/partial/failed) ──
-function SkillResultsList({ skillResults }: { skillResults: Array<{ name: string; success: boolean; error?: string; skipped?: boolean }> }) {
+function SkillResultsList({ skillResults }: { skillResults: SkillInstallResult[] }) {
   const { t } = useTranslation()
   return (
     <div className="space-y-1.5">
@@ -1474,10 +1489,13 @@ function SkillResultsList({ skillResults }: { skillResults: Array<{ name: string
           {sr.success ? (
             <span className="flex items-center gap-1 text-xs text-green-500 flex-shrink-0">
               <CheckCircle2 className="w-3 h-3" />
-              {sr.skipped ? t('Already installed') : t('Installed')}
+              {t('Installed')}
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-xs text-destructive flex-shrink-0">
+            <span
+              className="flex items-center gap-1 text-xs text-destructive flex-shrink-0"
+              title={sr.error}
+            >
               <AlertCircle className="w-3 h-3" />
               {t('Failed')}
             </span>

@@ -9,8 +9,12 @@
  *    Links to Settings for configuration.
  *
  * B. Reachable Contacts (when im-push enabled)
- *    Shows IM sessions for this app with editable display names.
- *    These contacts appear in the AI's notify_bot tool directory.
+ *    Shows IM sessions for this app with editable display names and a
+ *    per-contact "Auto-sync run result" toggle.
+ *    - The toggle (proactive flag) controls whether the system pushes the
+ *      assistant's final text to that contact at run completion.
+ *    - These contacts also appear in the AI's notify_bot tool directory
+ *      for mid-run AI-driven notifications.
  *    Contacts are auto-discovered when users message via Bot.
  */
 
@@ -234,6 +238,45 @@ function ContactsSection({ appId }: { appId: string }) {
     }
   }, [editingName])
 
+  const handleToggleProactive = useCallback(async (session: ImSessionRecord, next: boolean) => {
+    // Optimistic update: flip immediately, revert on failure. The IPC round-
+    // trip is fast on desktop but noticeable on remote — optimistic UI keeps
+    // the toggle feeling responsive regardless of transport.
+    setSessions(prev =>
+      prev.map(s =>
+        s.appId === session.appId && s.channel === session.channel && s.chatId === session.chatId
+          ? { ...s, proactive: next }
+          : s
+      )
+    )
+    try {
+      const result = await api.imSessionsSetProactive({
+        appId: session.appId,
+        channel: session.channel,
+        chatId: session.chatId,
+        proactive: next,
+      })
+      if (!result.success) {
+        // Revert on backend rejection
+        setSessions(prev =>
+          prev.map(s =>
+            s.appId === session.appId && s.channel === session.channel && s.chatId === session.chatId
+              ? { ...s, proactive: !next }
+              : s
+          )
+        )
+      }
+    } catch {
+      setSessions(prev =>
+        prev.map(s =>
+          s.appId === session.appId && s.channel === session.channel && s.chatId === session.chatId
+            ? { ...s, proactive: !next }
+            : s
+        )
+      )
+    }
+  }, [])
+
   const handleCopyContact = useCallback(async (session: ImSessionRecord) => {
     const displayName = session.customName ?? session.displayName
     const text = `Name: ${displayName} ID: ${session.instanceId}:${session.chatId}`
@@ -271,84 +314,105 @@ function ContactsSection({ appId }: { appId: string }) {
         const channelInfo = getImChannelDisplay(session.channel)
         const key = `${session.appId}:${session.channel}:${session.chatId}`
         const displayName = session.customName ?? session.displayName
+        const proactiveOn = session.proactive === true
 
         return (
           <div
             key={key}
-            className="flex items-center gap-2.5 p-2.5 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors group/contact"
+            className="flex flex-col gap-2 p-2.5 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors group/contact"
           >
-            {/* Chat type icon */}
-            {session.chatType === 'group' ? (
-              <Users className="w-4 h-4 text-muted-foreground shrink-0" />
-            ) : (
-              <User className="w-4 h-4 text-muted-foreground shrink-0" />
-            )}
+            <div className="flex items-center gap-2.5">
+              {/* Chat type icon */}
+              {session.chatType === 'group' ? (
+                <Users className="w-4 h-4 text-muted-foreground shrink-0" />
+              ) : (
+                <User className="w-4 h-4 text-muted-foreground shrink-0" />
+              )}
 
-            {/* Contact info */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                {editingKey === key ? (
-                  <input
-                    ref={renameInputRef}
-                    type="text"
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    onBlur={() => handleCommitRename(session)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleCommitRename(session)
-                      if (e.key === 'Escape') setEditingKey(null)
-                    }}
-                    className="text-sm font-medium bg-background border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary w-full max-w-[200px]"
-                  />
-                ) : (
-                  <>
-                    <span className="text-sm font-medium truncate">
-                      {displayName}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleStartRename(session)}
-                      className="p-0.5 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover/contact:opacity-100"
-                      title={t('Rename')}
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                  </>
-                )}
-                <span className={`text-xs shrink-0 ${channelInfo.color}`}>
-                  {channelInfo.label}
+              {/* Contact info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  {editingKey === key ? (
+                    <input
+                      ref={renameInputRef}
+                      type="text"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onBlur={() => handleCommitRename(session)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleCommitRename(session)
+                        if (e.key === 'Escape') setEditingKey(null)
+                      }}
+                      className="text-sm font-medium bg-background border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary w-full max-w-[200px]"
+                    />
+                  ) : (
+                    <>
+                      <span className="text-sm font-medium truncate">
+                        {displayName}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleStartRename(session)}
+                        className="p-0.5 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover/contact:opacity-100"
+                        title={t('Rename')}
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    </>
+                  )}
+                  <span className={`text-xs shrink-0 ${channelInfo.color}`}>
+                    {channelInfo.label}
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground/60 mt-0.5 flex flex-wrap items-center gap-x-1">
+                  <span>{session.chatType === 'group' ? t('Group') : t('Direct')}</span>
+                  <span>·</span>
+                  <span className="font-mono text-[10px] break-all">{session.chatId}</span>
+                  <span>·</span>
+                  <span>{formatTime(session.lastActiveAt)}</span>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleCopyContact(session)}
+                  className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover/contact:opacity-100"
+                  title={t('Copy contact info')}
+                >
+                  {copiedKey === key
+                    ? <Check className="w-3.5 h-3.5 text-green-500" />
+                    : <Copy className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(session)}
+                  className="p-1 text-muted-foreground hover:text-red-500 transition-colors rounded opacity-0 group-hover/contact:opacity-100"
+                  title={t('Remove')}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Auto-sync toggle: pushes the AI final reply to this contact at run end */}
+            <label className="flex items-start gap-2 pl-6 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={proactiveOn}
+                onChange={(e) => handleToggleProactive(session, e.target.checked)}
+                className="mt-0.5 w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+              />
+              <span className="flex-1 min-w-0">
+                <span className="text-xs text-foreground">
+                  {t('Auto-sync run result')}
                 </span>
-              </div>
-              <div className="text-xs text-muted-foreground/60 mt-0.5 flex flex-wrap items-center gap-x-1">
-                <span>{session.chatType === 'group' ? t('Group') : t('Direct')}</span>
-                <span>·</span>
-                <span className="font-mono text-[10px] break-all">{session.chatId}</span>
-                <span>·</span>
-                <span>{formatTime(session.lastActiveAt)}</span>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => handleCopyContact(session)}
-                className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover/contact:opacity-100"
-                title={t('Copy contact info')}
-              >
-                {copiedKey === key
-                  ? <Check className="w-3.5 h-3.5 text-green-500" />
-                  : <Copy className="w-3.5 h-3.5" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRemove(session)}
-                className="p-1 text-muted-foreground hover:text-red-500 transition-colors rounded opacity-0 group-hover/contact:opacity-100"
-                title={t('Remove')}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+                <span className="block text-xs text-muted-foreground/70 mt-0.5">
+                  {t('Send the AI final reply to this contact after each successful run')}
+                </span>
+              </span>
+            </label>
           </div>
         )
       })}
@@ -376,7 +440,7 @@ export function AppNotifyChannelsSection({ appId, appName, imPushEnabled }: AppN
             <span className="text-sm font-medium text-foreground">{t('Reachable Contacts')}</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {t('AI can proactively send messages to these contacts. Names help AI match your instructions.')}
+            {t('Toggle auto-sync to push the AI final reply to a contact after each run. The AI may also message any contact proactively when your prompt instructs it.')}
           </p>
           <ContactsSection appId={appId} />
         </div>

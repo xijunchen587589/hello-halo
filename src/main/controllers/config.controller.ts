@@ -7,6 +7,7 @@ import {
   getConfig as serviceGetConfig,
   saveConfig as serviceSaveConfig
 } from '../services/config.service'
+import { maskConfigFields, unmaskSentinels } from '../services/config-encryption'
 import { validateApiConnection, fetchModelsFromApi } from '../services/api-validator.service'
 
 export interface ControllerResponse<T = unknown> {
@@ -16,12 +17,14 @@ export interface ControllerResponse<T = unknown> {
 }
 
 /**
- * Get current configuration
+ * Get current configuration. Sensitive fields (API keys, tokens,
+ * passwords) are replaced with '***' so the HTTP / IPC boundary never
+ * leaks credentials.
  */
 export function getConfig(): ControllerResponse {
   try {
     const config = serviceGetConfig()
-    return { success: true, data: config }
+    return { success: true, data: maskConfigFields(config as Record<string, unknown>) }
   } catch (error: unknown) {
     const err = error as Error
     return { success: false, error: err.message }
@@ -29,12 +32,15 @@ export function getConfig(): ControllerResponse {
 }
 
 /**
- * Update configuration
+ * Update configuration. '***' sentinels in the incoming payload are
+ * replaced with the current value so unchanged secrets are preserved.
  */
 export function setConfig(updates: Record<string, unknown>): ControllerResponse {
   try {
+    const existing = serviceGetConfig() as Record<string, unknown>
+    unmaskSentinels(updates, existing)
     const config = serviceSaveConfig(updates as any)
-    return { success: true, data: config }
+    return { success: true, data: maskConfigFields(config as Record<string, unknown>) }
   } catch (error: unknown) {
     const err = error as Error
     return { success: false, error: err.message }

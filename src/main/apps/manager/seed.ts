@@ -1,7 +1,7 @@
 /**
  * apps/manager -- Default App Seed
  *
- * Seeds a "Halo AI 默认数字人' default automation app when no automation-type apps
+ * Seeds a "Halo AI 数字人模板" default automation app when no automation-type apps
  * exist. Runs as a Tier 3 idle task so it never blocks startup. Failures
  * are logged as warnings and do not affect any functionality.
  *
@@ -24,7 +24,7 @@ const SEED_SPACE_ID = 'halo-temp'
 /** Default app spec — no subscriptions (IM / manual-trigger only) */
 const DEFAULT_APP_SPEC: AutomationSpec = {
   spec_version: '1',
-  name: 'Halo AI 默认数字人',
+  name: 'Halo AI 数字人模板',
   version: '1.0',
   author: 'Halo',
   description: '默认数字人，可绑定 IM 机器人或手动对话',

@@ -25,6 +25,7 @@
 
 import { registerOnboardingHandlers } from '../ipc/onboarding'
 import { registerRemoteHandlers } from '../ipc/remote'
+import { registerSecurityHandlers } from '../ipc/security'
 import { enableRemoteAccess } from '../services/remote.service'
 import { getConfig } from '../services/config.service'
 import { registerBrowserHandlers } from '../ipc/browser'
@@ -177,6 +178,8 @@ export function initializeExtendedServices(): void {
   const start = performance.now()
   console.log('[Bootstrap] Extended services starting...')
 
+  console.log(`[Startup] proxy env_http=${process.env.HTTP_PROXY || ''} env_https=${process.env.HTTPS_PROXY || ''} env_no_proxy=${process.env.NO_PROXY || ''} app_proxy=${getConfig().network?.proxy || ''}`)
+
   // Get main window for services that still need it directly
   const mainWindow = getMainWindow()
 
@@ -190,13 +193,29 @@ export function initializeExtendedServices(): void {
   // Remote: Remote access feature, optional functionality
   registerRemoteHandlers()
 
+  // Security: expose renderer-safe security policy flags so the UI can
+  // gate features (e.g. Tunnel section visibility under tunnelSafe).
+  registerSecurityHandlers()
+
   // Auto-restore so paired devices keep working without manual re-enable.
   // CF tunnel is intentionally not restored — its Quick Tunnel URL changes per
   // run, which would break any previously shared link.
+  //
+  // Errors are caught here (rather than letting the idle task crash) so a
+  // corrupted credential at rest cannot block other extended bootstrap
+  // tasks. enableRemoteAccess has already disabled the persisted flag and
+  // pushed a status update, so the UI will reflect the failure when the
+  // settings page is opened.
   registerIdleTask('restore-remote-access', async () => {
     const cfg = getConfig()
-    if (cfg.remoteAccess.enabled) {
+    if (!cfg.remoteAccess.enabled) return
+    try {
       await enableRemoteAccess(cfg.remoteAccess.port)
+    } catch (err) {
+      console.warn(
+        '[Bootstrap] Remote access auto-restore failed:',
+        (err as Error).message,
+      )
     }
   })
 

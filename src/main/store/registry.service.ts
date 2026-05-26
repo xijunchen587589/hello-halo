@@ -1090,6 +1090,10 @@ function isBuiltinRegistry(registry: RegistrySource): boolean {
  * Ensure all built-in registries are present in the config.
  *
  * For each built-in registry:
+ *  - If product.json declares `hidden: true` for it: the entry is removed
+ *    from `config.registries` (and never inserted). Any persisted copy
+ *    from a previous run — including one created before the policy was
+ *    flipped on — is dropped. This is the policy-forbids-it case.
  *  - If already present: update immutable fields (name, url, sourceType) but
  *    preserve the user's `enabled` toggle and `adapterConfig` (e.g. API keys).
  *  - If absent: insert it at the correct position.
@@ -1103,11 +1107,28 @@ function ensureBuiltinRegistries(): boolean {
 
   // Read product.json overrides once (loadProductConfig is singleton-cached).
   // Enterprise builds use this to redirect the official registry
-  // to an internal mirror and/or force-disable unreachable public sources.
+  // to an internal mirror, hide forbidden public sources, and/or
+  // force-disable specific entries.
   const productOverrides = loadProductConfig().registryOverrides ?? {}
 
   for (const builtin of BUILTIN_REGISTRIES) {
     const override = productOverrides[builtin.id] ?? {}
+
+    // `hidden: true` is the strongest signal: the registry must not
+    // appear in the Store UI at all. Strip any persisted entry and
+    // skip the rest of the merge so it never reaches the user.
+    if (override.hidden === true) {
+      const before = config.registries.length
+      config.registries = config.registries.filter(r => r.id !== builtin.id)
+      if (config.registries.length !== before) {
+        if (syncService) {
+          syncService.clearProxyCache(builtin.id)
+        }
+        console.log(`[RegistryService] Removed hidden built-in registry "${builtin.id}" per product.json`)
+        changed = true
+      }
+      continue
+    }
 
     // Merge: builtin defaults ← product.json override (only declared fields win)
     const effective = {

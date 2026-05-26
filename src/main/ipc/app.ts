@@ -37,6 +37,7 @@
 import { ipcMain, shell } from 'electron'
 import { existsSync } from 'fs'
 import { getAppManager } from '../apps/manager'
+import { AppAlreadyInstalledError } from '../apps/manager/errors'
 import { getSkillDir } from '../apps/manager/skill-sync'
 import {
   getAppRuntime,
@@ -121,6 +122,9 @@ export function registerAppHandlers(): void {
         const err = error as Error
         console.error('[AppIPC] app:install error:', err.message)
         analytics.trackErrorSurface('app-install', err)
+        if (error instanceof AppAlreadyInstalledError) {
+          return { success: false, error: err.message, code: 'ALREADY_INSTALLED' }
+        }
         return { success: false, error: err.message }
       }
     }

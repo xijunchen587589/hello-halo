@@ -14,6 +14,7 @@ import type { HaloConfig } from '../../types'
 import type { HealthCheckResult, HealthReport } from './types'
 import { Switch } from '../ui/Switch'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { useSecurityPolicy } from '../../hooks/useSecurityPolicy'
 
 interface SystemSectionProps {
   config: HaloConfig | null
@@ -23,6 +24,11 @@ interface SystemSectionProps {
 export function SystemSection({ config, setConfig }: SystemSectionProps) {
   const { t } = useTranslation()
   const { showConfirm, DialogComponent: RestartDialogComponent } = useConfirmDialog()
+
+  // Build-time security policy. Used to hide tunnel-related diagnostics
+  // rows when the tunnel feature is disabled by product config.
+  const securityPolicy = useSecurityPolicy()
+  const tunnelDisabledByPolicy = securityPolicy?.tunnelSafe === true
 
   // System settings state
   const [autoLaunch, setAutoLaunch] = useState(config?.system?.autoLaunch || false)
@@ -568,23 +574,28 @@ export function SystemSection({ config, setConfig }: SystemSectionProps) {
                               )}
                             </div>
                           </div>
-                          {/* Cloudflared processes */}
-                          <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-2 h-2 rounded-full ${healthCheckResult.processes.cloudflared.actual === 0 ? 'bg-muted-foreground' : healthCheckResult.processes.cloudflared.healthy ? 'bg-green-500' : 'bg-amber-500'}`} />
-                              <span className="text-muted-foreground">Cloudflared (Tunnel)</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={healthCheckResult.processes.cloudflared.actual === 0 ? 'text-muted-foreground' : healthCheckResult.processes.cloudflared.healthy ? '' : 'text-amber-500'}>
-                                {healthCheckResult.processes.cloudflared.actual === 0 ? t('Not running') : `${healthCheckResult.processes.cloudflared.actual} ${t('running')}`}
-                              </span>
-                              {healthCheckResult.processes.cloudflared.pids.length > 0 && (
-                                <span className="text-xs text-muted-foreground">
-                                  (PID: {healthCheckResult.processes.cloudflared.pids.join(', ')})
+                          {/* Cloudflared processes — hidden when the tunnel
+                              feature is disabled by security policy. The row
+                              would always read "Not running" in that case,
+                              so it carries no diagnostic value. */}
+                          {!tunnelDisabledByPolicy && (
+                            <div className="flex items-center justify-between text-sm">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${healthCheckResult.processes.cloudflared.actual === 0 ? 'bg-muted-foreground' : healthCheckResult.processes.cloudflared.healthy ? 'bg-green-500' : 'bg-amber-500'}`} />
+                                <span className="text-muted-foreground">Cloudflared (Tunnel)</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={healthCheckResult.processes.cloudflared.actual === 0 ? 'text-muted-foreground' : healthCheckResult.processes.cloudflared.healthy ? '' : 'text-amber-500'}>
+                                  {healthCheckResult.processes.cloudflared.actual === 0 ? t('Not running') : `${healthCheckResult.processes.cloudflared.actual} ${t('running')}`}
                                 </span>
-                              )}
+                                {healthCheckResult.processes.cloudflared.pids.length > 0 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    (PID: {healthCheckResult.processes.cloudflared.pids.join(', ')})
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       </div>
                     )}

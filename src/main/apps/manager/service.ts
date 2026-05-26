@@ -316,6 +316,27 @@ export function createAppManagerService(deps: AppManagerDeps): AppManagerService
           }
           return existing.id
         }
+
+        // Skills are content-only artifacts (prompt + files on disk) with no
+        // runtime state; reinstalling the same skill should refresh content
+        // rather than fail. Automation/MCP apps retain userConfig, memory,
+        // schedule overrides and runtime sessions, so duplicates still throw
+        // and the caller must explicitly uninstall before reinstalling.
+        if (spec.type === 'skill') {
+          store.updateSpec(existing.id, spec)
+          if (userConfig) {
+            store.updateConfig(existing.id, userConfig)
+          }
+          const refreshed = store.getById(existing.id)
+          if (refreshed) {
+            syncSkillToFilesystem(refreshed, getSpacePath)
+          }
+          console.log(
+            `[AppManager] Overwrote existing skill '${spec.name}' (${existing.id})`
+          )
+          return existing.id
+        }
+
         throw new AppAlreadyInstalledError(specId, spaceId)
       }
 

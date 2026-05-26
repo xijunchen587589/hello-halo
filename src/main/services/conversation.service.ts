@@ -198,6 +198,9 @@ function cacheEvict(conversationId: string): void {
  * On cache miss, reads from disk and populates cache.
  */
 function cachedRead(spaceId: string, conversationId: string): { conversation: Conversation; filePath: string; conversationsDir: string } | null {
+  // Reject path traversal — conversationId is used as a filename segment below.
+  if (conversationId.includes('..')) return null
+
   // Cache hit
   const cached = conversationCache.get(conversationId)
   if (cached) {
@@ -896,6 +899,9 @@ export function getMessageThoughts(
  * Delete a conversation and its associated thoughts file.
  */
 export function deleteConversation(spaceId: string, conversationId: string): boolean {
+  // Reject path traversal — conversationId is used as a filename segment below.
+  if (conversationId.includes('..')) return false
+
   const conversationsDir = getConversationsDir(spaceId)
   const filePath = join(conversationsDir, `${conversationId}.json`)
 

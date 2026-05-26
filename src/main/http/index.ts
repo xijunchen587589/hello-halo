@@ -4,4 +4,4 @@
 
 export { startHttpServer, stopHttpServer, isServerRunning, getServerInfo, getExpressApp } from './server'
 export { initWebSocket, shutdownWebSocket, broadcastToWebSocket, broadcastToAll, getClientCount } from './websocket'
-export { authMiddleware, generateAccessToken, getAccessToken, clearAccessToken, validateToken } from './auth'
+export { authMiddleware, generateAccessToken, getAccessToken, clearAccessToken, validateToken } from './auth/index'

@@ -35,6 +35,7 @@ import type { ReportToolContext } from './report-tool'
 import { createNotifyToolServer } from './notify-tool'
 import { FileExportGate } from './file-export-gate'
 import { getImSessionRegistry } from './im-session-registry'
+import { autoSyncRunResult } from './im-auto-sync'
 import { getApiCredentials, getApiCredentialsForSource, getHeadlessElectronPath, getWorkingDir, getMcpServersForRequires } from '../../services/agent/helpers'
 import { resolveCredentialsForSdk, buildBaseSdkOptions } from '../../services/agent/sdk-config'
 import { getOrCreateV2Session } from '../../services/agent/session-manager'
@@ -263,6 +264,13 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
       `appId=${memoryScope.appId}, hasMemoryInstructions=${memoryInstructions.length > 0}`
     )
 
+    // Auto-sync awareness: include subscribed sessions only when the app has
+    // im-push enabled. The prompt builder skips the fragment when the array is
+    // empty, so this branch keeps the lookup off the hot path otherwise.
+    const autoSyncSessions = usesImPush
+      ? (getImSessionRegistry()?.getProactiveSessions(app.id) ?? [])
+      : []
+
     const systemPrompt = buildAppSystemPrompt({
       appSpec: app.spec,
       memoryInstructions,
@@ -271,6 +279,7 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
       usesAIBrowser,
       workDir,
       modelInfo: resolvedCreds.displayModel,
+      autoSyncSessions,
     })
 
     console.log(
@@ -617,7 +626,22 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
       `escalation=${escalationEntryId ? 'yes' : 'no'}`
     )
 
-    // ── 7b. Save session summary to memory ────────────────
+    // ── 7b. Auto-sync result to subscribed IM contacts ────
+    //    Fires only on a clean completion (no escalation, no error). The
+    //    function internally short-circuits when no contacts have been
+    //    subscribed, so the call is cheap and safe to make unconditionally
+    //    on success.
+    if (finalStatus === 'ok') {
+      await autoSyncRunResult({
+        appId: app.id,
+        appName: app.spec.name,
+        runId,
+        finalText: streamResult.finalText,
+        runTag,
+      })
+    }
+
+    // ── 7c. Save session summary to memory ────────────────
     await saveRunSessionSummary(memory, memoryScope, {
       appName: app.spec.name,
       runId,
@@ -630,7 +654,7 @@ export async function executeRun(options: ExecuteRunOptions): Promise<AppRunResu
       runTag,
     })
 
-    // ── 7c. Check if memory needs compaction ─────────────
+    // ── 7d. Check if memory needs compaction ─────────────
     await checkAndCompactMemory(memory, memoryScope, app, runTag)
 
     return {

@@ -10,9 +10,7 @@ import {
   generateToolCallId,
   encodeBackendConfig,
   decodeBackendConfig,
-  normalizeOpenAIChatCompletionsUrl,
-  normalizeOpenAIResponsesUrl,
-  normalizeAnthropicMessagesUrl,
+  normalizeApiUrl,
   safeJsonParse,
   deepClone,
   isNonEmptyString,
@@ -100,45 +98,63 @@ describe('Backend Config', () => {
   })
 })
 
-describe('URL Normalization', () => {
-  describe('normalizeOpenAIChatCompletionsUrl', () => {
-    it('should add /v1/chat/completions to base URL', () => {
-      const result = normalizeOpenAIChatCompletionsUrl('https://api.openai.com')
-      expect(result).toBe('https://api.openai.com/v1/chat/completions')
+describe('normalizeApiUrl', () => {
+  describe("provider: 'openai'", () => {
+    it('appends /v1/chat/completions to host-only URL', () => {
+      expect(normalizeApiUrl('https://api.openai.com', 'openai'))
+        .toBe('https://api.openai.com/v1/chat/completions')
     })
 
-    it('should handle URL with trailing slash', () => {
-      const result = normalizeOpenAIChatCompletionsUrl('https://api.openai.com/')
-      expect(result).toBe('https://api.openai.com/v1/chat/completions')
+    it('strips trailing slash before appending', () => {
+      expect(normalizeApiUrl('https://api.openai.com/', 'openai'))
+        .toBe('https://api.openai.com/v1/chat/completions')
     })
 
-    it('should not modify URL already ending with /chat/completions', () => {
-      const result = normalizeOpenAIChatCompletionsUrl('https://api.openai.com/v1/chat/completions')
-      expect(result).toBe('https://api.openai.com/v1/chat/completions')
+    it('preserves URL already ending with /chat/completions', () => {
+      expect(normalizeApiUrl('https://api.openai.com/v1/chat/completions', 'openai'))
+        .toBe('https://api.openai.com/v1/chat/completions')
     })
 
-    it('should handle URL already ending with /v1', () => {
-      const result = normalizeOpenAIChatCompletionsUrl('https://api.openai.com/v1')
-      expect(result).toBe('https://api.openai.com/v1/chat/completions')
-    })
-  })
-
-  describe('normalizeOpenAIResponsesUrl', () => {
-    it('should add /v1/responses to base URL', () => {
-      const result = normalizeOpenAIResponsesUrl('https://api.openai.com')
-      expect(result).toBe('https://api.openai.com/v1/responses')
+    it('preserves URL already ending with /responses', () => {
+      expect(normalizeApiUrl('https://api.openai.com/v1/responses', 'openai'))
+        .toBe('https://api.openai.com/v1/responses')
     })
 
-    it('should not modify URL already ending with /responses', () => {
-      const result = normalizeOpenAIResponsesUrl('https://api.openai.com/v1/responses')
-      expect(result).toBe('https://api.openai.com/v1/responses')
+    it('completes URL ending with /v1', () => {
+      expect(normalizeApiUrl('https://api.openai.com/v1', 'openai'))
+        .toBe('https://api.openai.com/v1/chat/completions')
     })
   })
 
-  describe('normalizeAnthropicMessagesUrl', () => {
-    it('should add /v1/messages to base URL', () => {
-      const result = normalizeAnthropicMessagesUrl('https://api.anthropic.com')
-      expect(result).toBe('https://api.anthropic.com/v1/messages')
+  describe("provider: 'anthropic'", () => {
+    it('returns base URL untouched (Claude SDK appends /v1/messages natively)', () => {
+      expect(normalizeApiUrl('https://api.anthropic.com', 'anthropic'))
+        .toBe('https://api.anthropic.com')
+    })
+
+    it('trims trailing slash', () => {
+      expect(normalizeApiUrl('https://api.anthropic.com/', 'anthropic'))
+        .toBe('https://api.anthropic.com')
+    })
+  })
+
+  describe("provider: 'anthropic_passthrough'", () => {
+    // Regression: bare baseUrl previously reached handleAnthropicPassthrough
+    // and was POSTed as-is, producing 405 from gateways that only expose
+    // /v1/messages. See ai-sources/manager.ts comment for the contract.
+    it('appends /v1/messages to bare gateway URL', () => {
+      expect(normalizeApiUrl('http://172.21.11.82/public', 'anthropic_passthrough'))
+        .toBe('http://172.21.11.82/public/v1/messages')
+    })
+
+    it('strips trailing slash before appending', () => {
+      expect(normalizeApiUrl('http://172.21.11.82/public/', 'anthropic_passthrough'))
+        .toBe('http://172.21.11.82/public/v1/messages')
+    })
+
+    it('preserves URL already ending with /v1/messages', () => {
+      expect(normalizeApiUrl('https://api.anthropic.com/v1/messages', 'anthropic_passthrough'))
+        .toBe('https://api.anthropic.com/v1/messages')
     })
   })
 })

@@ -214,6 +214,9 @@ export interface HaloAPI {
   regenerateRemotePassword: () => Promise<IpcResponse>
   onRemoteStatusChange: (callback: (data: unknown) => void) => () => void
 
+  // Security policy (renderer-safe slice — see ipc/security.ts)
+  getSecurityPolicy: () => Promise<IpcResponse>
+
   // System Settings
   getAutoLaunch: () => Promise<IpcResponse>
   setAutoLaunch: (enabled: boolean) => Promise<IpcResponse>
@@ -471,6 +474,11 @@ interface IpcResponse<T = unknown> {
   success: boolean
   data?: T
   error?: string
+  // Stable, machine-readable failure identifier. Present on a small set
+  // of handlers that need the renderer to branch on specific failures
+  // (e.g. TUNNEL_DISABLED_BY_POLICY, CREDENTIAL_RESTORE_FAILED) without
+  // depending on the English `error` string.
+  code?: string
 }
 
 // Type-safe event listener creator
@@ -627,6 +635,9 @@ const api: HaloAPI = {
   setRemotePassword: (password) => ipcRenderer.invoke('remote:set-password', password),
   regenerateRemotePassword: () => ipcRenderer.invoke('remote:regenerate-password'),
   onRemoteStatusChange: (callback) => createEventListener('remote:status-change', callback),
+
+  // Security policy
+  getSecurityPolicy: () => ipcRenderer.invoke('security:get-public-policy'),
 
   // System Settings
   getAutoLaunch: () => ipcRenderer.invoke('system:get-auto-launch'),

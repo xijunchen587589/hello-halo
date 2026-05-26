@@ -13,23 +13,39 @@ export function extractBaseUrl(endpointUrl: string): string {
 }
 
 /**
- * Normalize API URL based on provider type
+ * Normalize API URL based on wire format
  *
  * Ensures URLs are in the correct format expected by the router:
- * - Anthropic: base URL only (e.g., https://api.anthropic.com)
- * - OpenAI compatible: full endpoint URL (e.g., https://api.openai.com/v1/chat/completions)
+ * - 'anthropic'              — base URL only (Claude Agent SDK appends /v1/messages natively)
+ * - 'anthropic_passthrough'  — full URL with /v1/messages suffix (router POSTs as-is)
+ * - 'openai'                 — full URL with /chat/completions suffix
+ *
+ * For `anthropic_passthrough` the router's handleAnthropicPassthrough sends
+ * the body to backendUrl verbatim, so callers must supply the complete
+ * endpoint. claude.provider.ts builds it inline; this function gives the
+ * generic API-key path the same composition.
  *
  * @param apiUrl - User-provided URL (may be incomplete)
- * @param provider - 'anthropic' or 'openai'
+ * @param provider - Wire format
  * @returns Normalized URL ready for use
  */
-export function normalizeApiUrl(apiUrl: string, provider: 'anthropic' | 'openai'): string {
+export function normalizeApiUrl(
+  apiUrl: string,
+  provider: 'anthropic' | 'anthropic_passthrough' | 'openai'
+): string {
   const trimSlash = (s: string) => s.replace(/\s/g, '').replace(/\/+$/, '')
   let normalized = trimSlash(apiUrl)
 
   if (provider === 'anthropic') {
     // Anthropic: just trim trailing slashes
     return normalized
+  }
+
+  if (provider === 'anthropic_passthrough') {
+    if (/\/v1\/messages$/.test(normalized)) {
+      return normalized
+    }
+    return `${normalized}/v1/messages`
   }
 
   // OpenAI compatible: ensure URL ends with valid endpoint
