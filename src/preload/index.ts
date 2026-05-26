@@ -452,7 +452,7 @@ export interface HaloAPI {
   storeUpdateRegistryAdapterConfig: (input: { registryId: string; adapterConfig: Record<string, unknown> }) => Promise<IpcResponse>
   storeCheckUpdatesNow: () => Promise<IpcResponse>
   storeApplyUpgrade: (input: { appId: string; mode?: 'patch_minor' | 'major' | 'force' }) => Promise<IpcResponse>
-  storePublish: (input: { appId: string }) => Promise<IpcResponse>
+  storePublish: (input: { appId: string; author?: string }) => Promise<IpcResponse>
   storeExportDhpkg: (input: { appId: string }) => Promise<IpcResponse<{ path: string }>>
   storeImportDhpkg: (input?: { filePath?: string; spaceId?: string | null }) => Promise<IpcResponse<{ appId: string }>>
   onStoreSyncStatusChanged: (callback: (data: { registryId: string; status: string; appCount: number; error?: string }) => void) => () => void

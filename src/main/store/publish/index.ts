@@ -28,7 +28,7 @@ export function resolvePublishTarget(): { registryId: string; config: NonNullabl
 }
 
 /** Publish an installed App through the configured dispatcher. */
-export async function publish(appId: string): Promise<PublishResult> {
+export async function publish(appId: string, authorOverride?: string): Promise<PublishResult> {
   const manager = getAppManager()
   if (!manager) {
     return { status: 'error', target: 'local-dhpkg', details: 'App Manager is not yet initialized' }
@@ -54,7 +54,7 @@ export async function publish(appId: string): Promise<PublishResult> {
   // populate distribution fields they don't use.
   let spec: AppSpec
   try {
-    spec = enrichSpecForPublish(app.spec)
+    spec = enrichSpecForPublish(app.spec, authorOverride)
   } catch (e) {
     return {
       status: 'error',
@@ -100,7 +100,12 @@ export async function publish(appId: string): Promise<PublishResult> {
 function collectFiles(spec: AppSpec): Record<string, string> {
   if (spec.type === 'skill') {
     const skillFiles = (spec as SkillSpec).skill_files ?? {}
-    return { ...skillFiles }
+    const result: Record<string, string> = {}
+    for (const [name, content] of Object.entries(skillFiles)) {
+      if (name === 'spec.yaml') continue
+      result[name] = content
+    }
+    return result
   }
   return {}
 }

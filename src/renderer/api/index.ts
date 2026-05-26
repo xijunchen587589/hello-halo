@@ -2058,11 +2058,11 @@ export const api = {
     return httpRequest('POST', `/api/store/apps/${appId}/upgrade`, { mode })
   },
 
-  storePublish: async (appId: string): Promise<ApiResponse> => {
+  storePublish: async (appId: string, author?: string): Promise<ApiResponse> => {
     if (isElectron()) {
-      return window.halo.storePublish({ appId })
+      return window.halo.storePublish({ appId, author })
     }
-    return httpRequest('POST', `/api/store/apps/${appId}/publish`)
+    return httpRequest('POST', `/api/store/apps/${appId}/publish`, { author })
   },
 
   storeExportDhpkg: async (appId: string): Promise<ApiResponse<{ path: string }>> => {

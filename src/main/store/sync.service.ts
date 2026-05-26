@@ -219,6 +219,22 @@ export class SyncService {
   }
 
   /**
+   * Clear all cached data for a specific registry.
+   *
+   * Removes: FTS entries, registry_items, sync state, spec cache, and query cache.
+   * Used when a registry source is removed, hidden, or has its URL changed —
+   * any scenario where the old cached data is no longer valid.
+   */
+  clearRegistryData(registryId: string): void {
+    this.removeFtsForRegistry(registryId)
+    this.clearRegistryItems(registryId)
+    this.db.prepare(`DELETE FROM registry_sync_state WHERE registry_id = ?`).run(registryId)
+    this.db.prepare(`DELETE FROM registry_spec_cache WHERE registry_id = ?`).run(registryId)
+    this.db.prepare(`DELETE FROM registry_query_cache WHERE registry_id = ?`).run(registryId)
+    console.log(`[SyncService] Cleared all cached data for registry "${registryId}"`)
+  }
+
+  /**
    * Get sync state for all registries.
    */
   getSyncStates(): Array<{ registryId: string; status: string; appCount: number; lastSyncedAt: number | null }> {

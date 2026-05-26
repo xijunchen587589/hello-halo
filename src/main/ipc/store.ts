@@ -186,9 +186,9 @@ export function registerStoreHandlers(): void {
   )
 
   // ── store:publish ──────────────────────────────────────────────────────
-  ipcMain.handle('store:publish', async (_event, input: { appId: string }) => {
+  ipcMain.handle('store:publish', async (_event, input: { appId: string; author?: string }) => {
     try {
-      const result = await publish(input.appId)
+      const result = await publish(input.appId, input.author)
       // Always include details so production logs let us trace failures end-to-end.
       console.log(
         `[StoreIPC] store:publish: appId=${input.appId} status=${result.status} target=${result.target}` +

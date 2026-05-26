@@ -121,6 +121,7 @@
     "node-pty": "^1.1.0",
     "nodemailer": "^8.0.1",
     "open": "^10.2.0",
+    "pinyin-pro": "^3.28.1",
     "proxy-agent": "^7.0.0",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",

@@ -178,6 +178,6 @@ function projectSpecForWire(spec: AppSpec): AppSpec {
   }
   return {
     ...spec,
-    skill_files: Object.keys(skillFiles as Record<string, unknown>),
+    skill_files: Object.keys(skillFiles as Record<string, unknown>).filter(n => n !== 'spec.yaml'),
   } as AppSpec
 }

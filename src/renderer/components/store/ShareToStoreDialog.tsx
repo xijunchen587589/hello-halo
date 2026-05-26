@@ -3,12 +3,11 @@
  *
  * "I want to share SOMETHING but haven't picked it yet" entry — opened from
  * the store header. Lets the user pick a type (Digital Human / Skill) and a
- * source (one of their installed apps, an uploaded file, or a dropped folder).
+ * source (one of their installed apps, or import from file/folder).
  *
  * Sources accepted (per type tab):
  *   - From installed: pick one of your already-installed apps (most common)
- *   - Upload file:   .dhpkg / .zip / .yaml(automation) / .md(skill)
- *   - Drop folder:   drag/drop or browse a directory
+ *   - Import: unified drop zone accepting files and folders alike
  *
  * Backed by the existing `api.storePublish` IPC. For file/folder sources we
  * install locally first to obtain an `appId`, then publish. On publish failure
@@ -19,14 +18,13 @@
  * confirm flow where the type and target are already known.
  */
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   X,
   Loader2,
   Share2,
   Bot,
   BookOpen,
-  Upload,
   FolderOpen,
   AlertCircle,
   CheckCircle2,
@@ -52,13 +50,15 @@ import {
   parseDigitalHumanFolder,
   type ZipParseResult,
 } from '../apps/zip-import-utils'
+import { readDirectoryEntryToMap, readFileListToMap } from '../apps/file-read-utils'
+import { FileImportZone } from '../apps/FileImportZone'
 
 // ────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────
 
 type ShareType = 'automation' | 'skill'
-type ShareSource = 'installed' | 'file' | 'folder'
+type ShareSource = 'installed' | 'import'
 
 /** A staged spec ready for publish (parsed but not yet installed) */
 interface StagedSpec {
@@ -226,8 +226,7 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
       if (type === 'skill') {
         await parseSkillFromDirEntry(entry)
       } else {
-        // Walk the dir entry into a Record<path, string> and feed parseDigitalHumanFolder.
-        const flat = await walkDirEntryToMap(entry)
+        const flat = await readDirectoryEntryToMap(entry)
         await parseAutomationFolder(flat, entry.name)
       }
     } catch (err) {
@@ -245,18 +244,7 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
       if (type === 'skill') {
         await parseSkillFromFileList(files)
       } else {
-        // Flatten FileList to map for automation parser
-        const map: Record<string, string> = {}
-        let folderName = ''
-        for (const f of Array.from(files)) {
-          const rel = f.webkitRelativePath
-          const parts = rel.split('/')
-          if (parts.length < 2) continue
-          if (!folderName) folderName = parts[0]
-          const sub = parts.slice(1).join('/')
-          if (!sub) continue
-          map[sub] = await f.text()
-        }
+        const { files: map, folderName } = await readFileListToMap(files)
         await parseAutomationFolder(map, folderName || t('Folder'))
       }
     } catch (err) {
@@ -389,14 +377,9 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
               label={t('From installed')}
             />
             <SourceSeg
-              active={source === 'file'}
-              onClick={() => setSource('file')}
-              label={t('Upload file')}
-            />
-            <SourceSeg
-              active={source === 'folder'}
-              onClick={() => setSource('folder')}
-              label={t('Drop folder')}
+              active={source === 'import'}
+              onClick={() => setSource('import')}
+              label={t('Import')}
             />
           </div>
 
@@ -408,25 +391,32 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
               onSelect={setSelectedInstalledId}
               type={type}
             />
-          ) : source === 'file' ? (
-            <FileDropZone
-              type={type}
-              parsing={parsing}
-              staged={staged}
-              error={parseError}
-              onFile={handleFile}
-              onClear={() => { setStaged(null); setParseError(null) }}
-            />
+          ) : staged ? (
+            <StagedPreview staged={staged} onClear={() => { setStaged(null); setParseError(null) }} />
           ) : (
-            <FolderDropZone
-              type={type}
-              parsing={parsing}
-              staged={staged}
-              error={parseError}
-              onFolderEntry={handleFolder}
-              onFolderList={handleFolderList}
-              onClear={() => { setStaged(null); setParseError(null) }}
-            />
+            <FileImportZone
+              onFile={handleFile}
+              onDirectoryEntry={handleFolder}
+              onFolderFileList={handleFolderList}
+              fileAccept={type === 'skill' ? '.md,.zip' : '.zip,.dhpkg,.yaml,.yml'}
+              dropLabel={type === 'skill'
+                ? t('Drop a skill file or folder here')
+                : t('Drop a digital human file or folder here')}
+              dropHint={type === 'skill'
+                ? t('.md file · skill folder · .zip archive')
+                : t('.zip · .dhpkg · .yaml · folder')}
+              folderLabel={type === 'skill'
+                ? t('Browse skill folder...')
+                : t('Browse digital human folder...')}
+              processing={parsing}
+            >
+              {parseError && (
+                <div className="flex items-start gap-2 text-xs text-red-400">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span className="whitespace-pre-wrap break-words">{parseError}</span>
+                </div>
+              )}
+            </FileImportZone>
           )}
 
           {/* Submit feedback */}
@@ -563,159 +553,6 @@ function InstalledPicker({ apps, selectedId, onSelect, type }: InstalledPickerPr
   )
 }
 
-interface FileDropZoneProps {
-  type: ShareType
-  parsing: boolean
-  staged: StagedSpec | null
-  error: string | null
-  onFile: (file: File) => void
-  onClear: () => void
-}
-
-function FileDropZone({ type, parsing, staged, error, onFile, onClear }: FileDropZoneProps) {
-  const { t } = useTranslation()
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [isDragOver, setIsDragOver] = useState(false)
-
-  const accept = type === 'skill' ? '.md,.zip' : '.zip,.dhpkg,.yaml,.yml'
-  const formats = type === 'skill'
-    ? t('.md file · .zip archive')
-    : t('.zip · .dhpkg · .yaml')
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-    const f = e.dataTransfer.files[0]
-    if (f) onFile(f)
-  }, [onFile])
-
-  if (staged) {
-    return <StagedPreview staged={staged} onClear={onClear} />
-  }
-
-  return (
-    <div className="space-y-2">
-      <div
-        onDragOver={e => { e.preventDefault(); setIsDragOver(true) }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
-        className={`flex flex-col items-center justify-center gap-2 h-40 border-2 border-dashed rounded-lg cursor-pointer select-none transition-colors ${
-          isDragOver
-            ? 'border-primary bg-primary/5'
-            : 'border-border hover:border-muted-foreground/50'
-        }`}
-      >
-        {parsing
-          ? <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-          : <Upload className={`w-6 h-6 ${isDragOver ? 'text-primary' : 'text-muted-foreground'}`} />
-        }
-        <div className="text-center px-4">
-          <p className="text-sm text-foreground">
-            {type === 'skill' ? t('Drop a skill file here') : t('Drop a digital human file here')}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">{formats}</p>
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept={accept}
-          onChange={e => {
-            const f = e.target.files?.[0]
-            if (f) onFile(f)
-            e.target.value = ''
-          }}
-          className="hidden"
-        />
-      </div>
-      {error && (
-        <div className="flex items-start gap-2 text-xs text-red-400">
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-          <span className="whitespace-pre-wrap break-words">{error}</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-interface FolderDropZoneProps {
-  type: ShareType
-  parsing: boolean
-  staged: StagedSpec | null
-  error: string | null
-  onFolderEntry: (entry: FileSystemDirectoryEntry) => void
-  onFolderList: (files: FileList) => void
-  onClear: () => void
-}
-
-function FolderDropZone({ type, parsing, staged, error, onFolderEntry, onFolderList, onClear }: FolderDropZoneProps) {
-  const { t } = useTranslation()
-  const folderInputRef = useRef<HTMLInputElement>(null)
-  const [isDragOver, setIsDragOver] = useState(false)
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-    const item = e.dataTransfer.items[0]
-    const entry = item?.webkitGetAsEntry?.()
-    if (entry?.isDirectory) {
-      onFolderEntry(entry as FileSystemDirectoryEntry)
-    }
-  }, [onFolderEntry])
-
-  if (staged) {
-    return <StagedPreview staged={staged} onClear={onClear} />
-  }
-
-  return (
-    <div className="space-y-2">
-      <div
-        onDragOver={e => { e.preventDefault(); setIsDragOver(true) }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => folderInputRef.current?.click()}
-        className={`flex flex-col items-center justify-center gap-2 h-40 border-2 border-dashed rounded-lg cursor-pointer select-none transition-colors ${
-          isDragOver
-            ? 'border-primary bg-primary/5'
-            : 'border-border hover:border-muted-foreground/50'
-        }`}
-      >
-        {parsing
-          ? <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-          : <FolderOpen className={`w-6 h-6 ${isDragOver ? 'text-primary' : 'text-muted-foreground'}`} />
-        }
-        <div className="text-center px-4">
-          <p className="text-sm text-foreground">
-            {type === 'skill'
-              ? t('Drop a skill folder (must contain SKILL.md)')
-              : t('Drop a digital human folder (must contain spec.yaml)')}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t('Drag a folder here or click to browse')}
-          </p>
-        </div>
-        <input
-          ref={folderInputRef}
-          type="file"
-          // @ts-expect-error -- non-standard but supported in Electron/Chrome
-          webkitdirectory=""
-          onChange={e => {
-            const files = e.target.files
-            if (files && files.length > 0) onFolderList(files)
-            e.target.value = ''
-          }}
-          className="hidden"
-        />
-      </div>
-      {error && (
-        <div className="flex items-start gap-2 text-xs text-red-400">
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-          <span className="whitespace-pre-wrap break-words">{error}</span>
-        </div>
-      )}
-    </div>
-  )
-}
 
 interface StagedPreviewProps {
   staged: StagedSpec
@@ -751,35 +588,3 @@ function StagedPreview({ staged, onClear }: StagedPreviewProps) {
   )
 }
 
-// ────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────
-
-/** Read a FileSystemDirectoryEntry into a flat path→content map (text only). */
-async function walkDirEntryToMap(
-  entry: FileSystemDirectoryEntry,
-  prefix = ''
-): Promise<Record<string, string>> {
-  const result: Record<string, string> = {}
-  const reader = entry.createReader()
-
-  const readBatch = (): Promise<FileSystemEntry[]> =>
-    new Promise((resolve, reject) => reader.readEntries(resolve, reject))
-
-  while (true) {
-    const batch = await readBatch()
-    if (batch.length === 0) break
-    for (const child of batch) {
-      if (child.isFile) {
-        const fileEntry = child as FileSystemFileEntry
-        const file = await new Promise<File>((resolve, reject) =>
-          fileEntry.file(resolve, reject)
-        )
-        result[prefix + child.name] = await file.text()
-      } else if (child.isDirectory) {
-        Object.assign(result, await walkDirEntryToMap(child as FileSystemDirectoryEntry, prefix + child.name + '/'))
-      }
-    }
-  }
-  return result
-}

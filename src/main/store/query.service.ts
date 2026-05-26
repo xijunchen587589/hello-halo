@@ -279,7 +279,7 @@ export class QueryService {
 
     // Fetch page
     const rows = this.db.prepare(
-      `SELECT ri.* FROM registry_items ri ${where} ORDER BY ri.rank ASC NULLS LAST, ri.rowid ASC LIMIT ? OFFSET ?`
+      `SELECT ri.* FROM registry_items ri ${where} ORDER BY ri.rank ASC NULLS LAST, ri.updated_at DESC, ri.rowid ASC LIMIT ? OFFSET ?`
     ).all(...bindings, pageSize, offset) as ItemRow[]
 
     const items = rows.map(r => {

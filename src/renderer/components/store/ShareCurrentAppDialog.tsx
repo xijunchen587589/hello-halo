@@ -44,6 +44,8 @@ function typeLabel(type: AppType, t: (s: string) => string): string {
   }
 }
 
+const AUTHOR_STORAGE_KEY = 'halo:publish-author'
+
 export function ShareCurrentAppDialog({ appId, onClose }: ShareCurrentAppDialogProps) {
   const { t } = useTranslation()
   const app = useAppsStore(s => s.apps.find(a => a.id === appId))
@@ -51,13 +53,22 @@ export function ShareCurrentAppDialog({ appId, onClose }: ShareCurrentAppDialogP
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [author, setAuthor] = useState(() => {
+    return localStorage.getItem(AUTHOR_STORAGE_KEY) || app?.spec.author || ''
+  })
 
   const handleShare = useCallback(async () => {
+    const trimmed = author.trim()
+    if (!trimmed) {
+      setError(t('Author is required'))
+      return
+    }
     setError(null)
     setSuccess(null)
     setSubmitting(true)
     try {
-      const res = await api.storePublish(appId)
+      localStorage.setItem(AUTHOR_STORAGE_KEY, trimmed)
+      const res = await api.storePublish(appId, trimmed)
       if (!res.success) {
         setError(res.error ?? t('Share failed.'))
         return
@@ -69,7 +80,7 @@ export function ShareCurrentAppDialog({ appId, onClose }: ShareCurrentAppDialogP
     } finally {
       setSubmitting(false)
     }
-  }, [appId, t])
+  }, [appId, author, t])
 
   // App may have been uninstalled between mount and render — guard gracefully.
   if (!app) {
@@ -139,6 +150,23 @@ export function ShareCurrentAppDialog({ appId, onClose }: ShareCurrentAppDialogP
                 </p>
               )}
             </div>
+          </div>
+
+          {/* Author input */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">
+              {t('Author')} <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={author}
+              onChange={e => { setAuthor(e.target.value); setError(null) }}
+              placeholder={t('Your name or handle')}
+              className="w-full px-3 py-1.5 text-sm bg-secondary border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground/50"
+            />
+            <p className="text-[11px] text-muted-foreground/70">
+              {t('Used as your namespace in the store (e.g. author/app-name).')}
+            </p>
           </div>
 
           <p className="text-xs text-muted-foreground">

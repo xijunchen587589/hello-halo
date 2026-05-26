@@ -9,7 +9,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Play, Pause, RotateCcw, Globe, ExternalLink, MessageSquare, Activity, Cog, ChevronRight, Share2 } from 'lucide-react'
+import { Play, Pause, RotateCcw, RefreshCw, Globe, ExternalLink, MessageSquare, Activity, Cog, ChevronRight, Share2 } from 'lucide-react'
 import Avatar from 'boring-avatars'
 import { useAppsStore } from '../../stores/apps.store'
 import { useAppsPageStore } from '../../stores/apps-page.store'
@@ -236,7 +236,7 @@ export function AutomationHeader({ appId, spaceName }: AutomationHeaderProps) {
                 title={t('Resume')}
                 className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors"
               >
-                <Play className="w-3.5 h-3.5" />
+                <RefreshCw className="w-3.5 h-3.5" />
               </button>
             ) : (
               <button

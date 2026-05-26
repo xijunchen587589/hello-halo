@@ -211,19 +211,24 @@ export class HaloAdapter implements RegistryAdapter {
     // the rest of the install pipeline sees the canonical local shape.
     if (raw.type === 'skill' && Array.isArray(raw.skill_files)) {
       const fileNames = (raw.skill_files as unknown[]).filter(
-        (v): v is string => typeof v === 'string' && v.length > 0
+        (v): v is string => typeof v === 'string' && v.length > 0 && v !== 'spec.yaml'
       )
       const filesBase = `${baseUrl}/${entry.path}/files`
       const materialized: Record<string, string> = {}
       await Promise.all(fileNames.map(async (name) => {
-        const url = `${filesBase}/${name}`
-        const fileRes = await fetchWithTimeout(url, {
-          headers: { 'User-Agent': 'Halo-Store/1.0' },
-        })
-        if (!fileRes.ok) {
-          throw new Error(`Failed to fetch ${name} for "${entry.slug}": HTTP ${fileRes.status}`)
+        try {
+          const url = `${filesBase}/${name}`
+          const fileRes = await fetchWithTimeout(url, {
+            headers: { 'User-Agent': 'Halo-Store/1.0' },
+          })
+          if (!fileRes.ok) {
+            console.warn(`[HaloAdapter] Skipping "${name}" for "${entry.slug}": HTTP ${fileRes.status}`)
+            return
+          }
+          materialized[name] = await fileRes.text()
+        } catch (err) {
+          console.warn(`[HaloAdapter] Skipping "${name}" for "${entry.slug}": ${(err as Error).message}`)
         }
-        materialized[name] = await fileRes.text()
       }))
       raw.skill_files = materialized
     }

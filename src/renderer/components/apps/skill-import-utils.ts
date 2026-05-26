@@ -74,59 +74,7 @@ export function parseMd(content: string): { name: string; description: string; b
   return { name, description, bodyContent: body }
 }
 
-// ─────────────────────────────────────────────────────────
-// File-reading utilities
-// ─────────────────────────────────────────────────────────
-
-function readFileText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = e => resolve(e.target!.result as string)
-    reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`))
-    reader.readAsText(file)
-  })
-}
-
-/** Read all entries from a FileSystemDirectoryReader, handling its 100-entry batch limit. */
-async function readAllEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
-  const all: FileSystemEntry[] = []
-  while (true) {
-    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
-      reader.readEntries(resolve, reject)
-    )
-    if (batch.length === 0) break
-    all.push(...batch)
-  }
-  return all
-}
-
-/**
- * Recursively walk a FileSystemDirectoryEntry and return all file contents
- * keyed by their paths relative to the entry itself.
- */
-async function readDirectoryEntry(
-  entry: FileSystemDirectoryEntry,
-  prefix = ''
-): Promise<Record<string, string>> {
-  const result: Record<string, string> = {}
-  const entries = await readAllEntries(entry.createReader())
-
-  for (const child of entries) {
-    if (child.isFile) {
-      const fileEntry = child as FileSystemFileEntry
-      const file = await new Promise<File>((resolve, reject) =>
-        fileEntry.file(resolve, reject)
-      )
-      const content = await readFileText(file)
-      result[prefix + child.name] = content
-    } else if (child.isDirectory) {
-      const subDir = child as FileSystemDirectoryEntry
-      const sub = await readDirectoryEntry(subDir, prefix + child.name + '/')
-      Object.assign(result, sub)
-    }
-  }
-  return result
-}
+import { readFileText, readDirectoryEntryToMap } from './file-read-utils'
 
 // ─────────────────────────────────────────────────────────
 // Top-level processors
@@ -151,7 +99,7 @@ export async function processMdFile(file: File): Promise<ParsedSkill> {
  * The entry is the folder itself; we strip its name from all paths.
  */
 export async function processDirectoryEntry(entry: FileSystemDirectoryEntry): Promise<ParsedSkill> {
-  const files = await readDirectoryEntry(entry)
+  const files = await readDirectoryEntryToMap(entry)
 
   if (!files['SKILL.md']) {
     throw new Error('SKILL.md not found. A skill folder must contain SKILL.md at its root.')

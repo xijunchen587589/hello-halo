@@ -17,11 +17,10 @@ import {
   useState,
   useMemo,
   useCallback,
-  useRef,
   lazy,
   Suspense,
 } from 'react'
-import { X, Loader2, Upload, FolderOpen, FileText, Archive, AlertCircle } from 'lucide-react'
+import { X, Loader2, FolderOpen, FileText, Archive, AlertCircle } from 'lucide-react'
 import { useAppsStore } from '../../stores/apps.store'
 import { useSpaceStore } from '../../stores/space.store'
 import { useTranslation } from '../../i18n'
@@ -36,6 +35,7 @@ import {
   processZipFile,
   type ParsedSkill,
 } from './skill-import-utils'
+import { FileImportZone } from './FileImportZone'
 
 // Lazy-load CodeMirrorEditor to keep initial bundle small
 const CodeMirrorEditor = lazy(() =>
@@ -86,10 +86,7 @@ interface ImportDropZoneProps {
 
 function ImportDropZone({ imported, onImported, onClear, onError }: ImportDropZoneProps) {
   const { t } = useTranslation()
-  const [isDragOver, setIsDragOver] = useState(false)
   const [processing, setProcessing] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const folderInputRef = useRef<HTMLInputElement>(null)
 
   const handleProcess = useCallback(async (task: () => Promise<ImportedSkill>) => {
     setProcessing(true)
@@ -103,43 +100,8 @@ function ImportDropZone({ imported, onImported, onClear, onError }: ImportDropZo
     }
   }, [onImported, onError, t])
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-    onError('') // clear previous error
-
-    // Prefer the FileSystem Entry API for correct folder support
-    const items = e.dataTransfer.items
-    if (items && items.length > 0) {
-      const item = items[0]
-      const entry = item.webkitGetAsEntry?.()
-
-      if (entry?.isDirectory) {
-        const dirEntry = entry as FileSystemDirectoryEntry
-        await handleProcess(async () => ({
-          parsed: await processDirectoryEntry(dirEntry),
-          label: dirEntry.name,
-          sourceType: 'folder' as const,
-        }))
-        return
-      }
-
-      if (entry?.isFile) {
-        const fileEntry = entry as FileSystemFileEntry
-        const file = await new Promise<File>((resolve, reject) =>
-          fileEntry.file(resolve, reject)
-        )
-        await handleDroppedFile(file)
-        return
-      }
-    }
-
-    // Fallback: plain File
-    const file = e.dataTransfer.files[0]
-    if (file) await handleDroppedFile(file)
-  }, [handleProcess]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleDroppedFile(file: File) {
+  const handleFile = useCallback(async (file: File) => {
+    onError('')
     const name = file.name.toLowerCase()
     if (name.endsWith('.md')) {
       await handleProcess(async () => ({
@@ -156,25 +118,25 @@ function ImportDropZone({ imported, onImported, onClear, onError }: ImportDropZo
     } else {
       onError(t('Unsupported file type. Drop a .md file, a .zip archive, or a skill folder.'))
     }
-  }
+  }, [handleProcess, onError, t])
 
-  const handleFileInput = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    e.target.value = '' // allow re-selecting same file
-    await handleDroppedFile(file)
-  }, [handleProcess]) // eslint-disable-line react-hooks/exhaustive-deps
+  const handleDirEntry = useCallback(async (entry: FileSystemDirectoryEntry) => {
+    onError('')
+    await handleProcess(async () => ({
+      parsed: await processDirectoryEntry(entry),
+      label: entry.name,
+      sourceType: 'folder' as const,
+    }))
+  }, [handleProcess, onError])
 
-  const handleFolderInput = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
-    e.target.value = ''
+  const handleFolderList = useCallback(async (files: FileList) => {
+    onError('')
     await handleProcess(async () => ({
       parsed: await processFileListAsFolder(files),
       label: files[0].webkitRelativePath.split('/')[0] || t('Folder'),
       sourceType: 'folder' as const,
     }))
-  }, [handleProcess, t])
+  }, [handleProcess, onError, t])
 
   if (imported) {
     const Icon = imported.sourceType === 'folder' ? FolderOpen
@@ -227,58 +189,16 @@ function ImportDropZone({ imported, onImported, onClear, onError }: ImportDropZo
   }
 
   return (
-    <div className="space-y-3">
-      {/* Drop zone */}
-      <div
-        onDragOver={e => { e.preventDefault(); setIsDragOver(true) }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
-        className={`flex flex-col items-center justify-center gap-3 h-48 border-2 border-dashed rounded-lg cursor-pointer select-none transition-colors ${
-          isDragOver
-            ? 'border-primary bg-primary/5'
-            : 'border-border hover:border-muted-foreground/50'
-        }`}
-      >
-        {processing
-          ? <Loader2 className="w-7 h-7 text-muted-foreground animate-spin" />
-          : <Upload className={`w-7 h-7 ${isDragOver ? 'text-primary' : 'text-muted-foreground'}`} />
-        }
-        <div className="text-center px-4">
-          <p className="text-sm text-foreground">
-            {t('Drop a skill file or folder here')}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t('.md file · skill folder · .zip archive')}
-          </p>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".md,.zip"
-          onChange={handleFileInput}
-          className="hidden"
-        />
-      </div>
-
-      {/* Browse folder button */}
-      <button
-        type="button"
-        onClick={() => folderInputRef.current?.click()}
-        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground border border-border hover:border-muted-foreground/50 rounded-lg transition-colors"
-      >
-        <FolderOpen className="w-4 h-4" />
-        {t('Browse skill folder...')}
-        <input
-          ref={folderInputRef}
-          type="file"
-          // @ts-expect-error -- non-standard but supported in Electron/Chrome
-          webkitdirectory=""
-          onChange={handleFolderInput}
-          className="hidden"
-        />
-      </button>
-
+    <FileImportZone
+      onFile={handleFile}
+      onDirectoryEntry={handleDirEntry}
+      onFolderFileList={handleFolderList}
+      fileAccept=".md,.zip"
+      dropLabel={t('Drop a skill file or folder here')}
+      dropHint={t('.md file · skill folder · .zip archive')}
+      folderLabel={t('Browse skill folder...')}
+      processing={processing}
+    >
       {/* Format hints */}
       <div className="space-y-1.5">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -300,7 +220,7 @@ function ImportDropZone({ imported, onImported, onClear, onError }: ImportDropZo
           ))}
         </div>
       </div>
-    </div>
+    </FileImportZone>
   )
 }
 

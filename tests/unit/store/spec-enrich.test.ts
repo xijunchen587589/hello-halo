@@ -33,8 +33,9 @@ describe('deriveSlug', () => {
     ['foo--bar', 'foo-bar'],
     ['---weird---', 'weird'],
     ['v2.1 release', 'v2-1-release'],
-    ['中文名', ''],
-    ['中文 mixed Name', 'mixed-name'],
+    ['中文名', 'zhong-wen-ming'],
+    ['中文 mixed Name', 'zhong-wen-mixed-name'],
+    ['会议室自动预订数字人', 'hui-yi-shi-zi-dong-yu-ding-shu-zi-ren'],
   ]
   for (const [input, want] of cases) {
     it(`${JSON.stringify(input)} → ${JSON.stringify(want)}`, () => {
@@ -44,42 +45,63 @@ describe('deriveSlug', () => {
 })
 
 describe('enrichSpecForPublish', () => {
-  it('passes through specs that already carry store.slug', () => {
+  it('re-scopes existing scoped slug under authorOverride', () => {
+    const spec = fakeSpec({ store: { slug: 'old-author/hn-daily', tags: [] } })
+    const out = enrichSpecForPublish(spec, 'fly')
+    expect(out.store?.slug).toBe('fly/hn-daily')
+    expect(out.author).toBe('fly')
+  })
+
+  it('preserves scoped slug when author matches', () => {
     const spec = fakeSpec({ store: { slug: 'tester/hn-daily', tags: [] } })
     const out = enrichSpecForPublish(spec)
     expect(out.store?.slug).toBe('tester/hn-daily')
   })
 
-  it('derives store.slug from name when missing', () => {
-    const spec = fakeSpec({ name: 'HN Daily' })
+  it('derives scoped slug from author + name when missing', () => {
+    const spec = fakeSpec({ name: 'HN Daily', author: 'fly' })
     const out = enrichSpecForPublish(spec)
-    expect(out.store?.slug).toBe('hn-daily')
+    expect(out.store?.slug).toBe('fly/hn-daily')
   })
 
-  it('preserves other store fields while filling in slug', () => {
+  it('scopes flat slug under author', () => {
     const spec = fakeSpec({
       name: 'My App',
-      store: { tags: ['news'], category: 'tools' },
+      author: 'fly',
+      store: { slug: 'my-app', tags: ['news'], category: 'tools' },
     } as Partial<AppSpec>)
     const out = enrichSpecForPublish(spec)
-    expect(out.store?.slug).toBe('my-app')
+    expect(out.store?.slug).toBe('fly/my-app')
     expect(out.store?.tags).toEqual(['news'])
     expect(out.store?.category).toBe('tools')
   })
 
   it('treats whitespace-only slug as missing', () => {
-    const spec = fakeSpec({ name: 'HN Daily', store: { slug: '   ', tags: [] } })
+    const spec = fakeSpec({ name: 'HN Daily', author: 'fly', store: { slug: '   ', tags: [] } })
     const out = enrichSpecForPublish(spec)
-    expect(out.store?.slug).toBe('hn-daily')
+    expect(out.store?.slug).toBe('fly/hn-daily')
   })
 
-  it('throws when no usable slug can be derived', () => {
-    const spec = fakeSpec({ name: '中文名' })
-    expect(() => enrichSpecForPublish(spec)).toThrow(/中文名/)
+  it('derives slug from pure-CJK name via pinyin', () => {
+    const spec = fakeSpec({ name: '中文名', author: 'fly' })
+    const out = enrichSpecForPublish(spec)
+    expect(out.store?.slug).toBe('fly/zhong-wen-ming')
+  })
+
+  it('uses authorOverride over spec.author', () => {
+    const spec = fakeSpec({ name: 'My App', author: 'old' })
+    const out = enrichSpecForPublish(spec, 'newauthor')
+    expect(out.store?.slug).toBe('newauthor/my-app')
+    expect(out.author).toBe('newauthor')
+  })
+
+  it('throws when author is missing', () => {
+    const spec = fakeSpec({ author: '' })
+    expect(() => enrichSpecForPublish(spec)).toThrow('Author is required')
   })
 
   it('does not mutate the input spec', () => {
-    const spec = fakeSpec({ name: 'HN Daily' })
+    const spec = fakeSpec({ name: 'HN Daily', author: 'fly' })
     enrichSpecForPublish(spec)
     expect(spec.store).toBeUndefined()
   })

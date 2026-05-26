@@ -179,7 +179,7 @@ export function initRegistryService(opts?: { db?: DatabaseManager; overrides?: P
     cacheTtlMs: normalizeCacheTtl(opts?.overrides?.cacheTtlMs ?? persisted.cacheTtlMs),
   }
 
-  const defaultChanged = ensureBuiltinRegistries()
+  const { changed: defaultChanged, purgeRegistryIds } = ensureBuiltinRegistries()
   if (defaultChanged) {
     saveConfigToFile()
   }
@@ -191,6 +191,13 @@ export function initRegistryService(opts?: { db?: DatabaseManager; overrides?: P
 
     syncService = new SyncService(opts.db)
     queryService = new QueryService(opts.db)
+
+    // Purge stale data for registries that were hidden or had their URL changed.
+    // This runs after syncService creation to avoid the timing issue where
+    // ensureBuiltinRegistries() executes before syncService exists.
+    for (const id of purgeRegistryIds) {
+      syncService.clearRegistryData(id)
+    }
 
     // Wire sync status listener
     syncService.onSyncStatusChanged((event) => {
@@ -827,9 +834,8 @@ export function removeRegistry(registryId: string): void {
   }
 
   config.registries = config.registries.filter(r => r.id !== registryId)
-  // Clear SQLite cache for this registry
   if (syncService) {
-    syncService.clearProxyCache(registryId)
+    syncService.clearRegistryData(registryId)
   }
   saveConfigToFile()
 
@@ -1100,10 +1106,12 @@ function isBuiltinRegistry(registry: RegistrySource): boolean {
  *
  * The official registry is always first.
  *
- * @returns true if any change was made (triggers a config save)
+ * @returns Object with `changed` (triggers config save) and `purgeRegistryIds`
+ *          (registry IDs whose cached data must be cleared after SyncService creation).
  */
-function ensureBuiltinRegistries(): boolean {
+function ensureBuiltinRegistries(): { changed: boolean; purgeRegistryIds: string[] } {
   let changed = false
+  const purgeRegistryIds: string[] = []
 
   // Read product.json overrides once (loadProductConfig is singleton-cached).
   // Enterprise builds use this to redirect the official registry
@@ -1121,9 +1129,7 @@ function ensureBuiltinRegistries(): boolean {
       const before = config.registries.length
       config.registries = config.registries.filter(r => r.id !== builtin.id)
       if (config.registries.length !== before) {
-        if (syncService) {
-          syncService.clearProxyCache(builtin.id)
-        }
+        purgeRegistryIds.push(builtin.id)
         console.log(`[RegistryService] Removed hidden built-in registry "${builtin.id}" per product.json`)
         changed = true
       }
@@ -1144,9 +1150,10 @@ function ensureBuiltinRegistries(): boolean {
       // Immutable fields (name, url, sourceType, isDefault, enabled when
       // product.json declares an override) are enforced on every startup.
       // User-controlled fields (adapterConfig) are always preserved.
+      const urlChanged = existing.url !== effective.url
       if (
         existing.name       !== effective.name       ||
-        existing.url        !== effective.url        ||
+        urlChanged                                   ||
         existing.sourceType !== effective.sourceType ||
         existing.isDefault  !== effective.isDefault  ||
         // Only enforce `enabled` when product.json explicitly declares it;
@@ -1159,6 +1166,9 @@ function ensureBuiltinRegistries(): boolean {
         existing.isDefault  = effective.isDefault
         if (override.enabled !== undefined) {
           existing.enabled = effective.enabled
+        }
+        if (urlChanged) {
+          purgeRegistryIds.push(builtin.id)
         }
         changed = true
       }
@@ -1187,7 +1197,7 @@ function ensureBuiltinRegistries(): boolean {
     }
   }
 
-  return changed
+  return { changed, purgeRegistryIds }
 }
 
 function withInstallStoreMetadata(spec: AppSpec, slug: string, registryId: string): AppSpec {
