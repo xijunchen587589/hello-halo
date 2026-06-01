@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 💬 其他话题 / 联系方式
+  - name: 💬 其他话题 / 联系方式 · Other topics & contact
     url: https://github.com/openkursar/hello-halo/blob/main/README.md
-    about: 本仓库 Issue 仅受理 Halo 的产品与技术 / bug 问题。兴趣讨论、闲聊等非产品非技术话题，以及联系方式，请见 README（不定期受理）。
+    about: 本仓库 Issue 仅受理 Halo 的产品与技术 / bug 问题，其他话题及联系方式请见 README（不定期受理）。This tracker accepts only product & technical/bug issues; for other topics and contact, see the README.
