@@ -52,6 +52,8 @@ import {
 } from '../apps/zip-import-utils'
 import { readDirectoryEntryToMap, readFileListToMap } from '../apps/file-read-utils'
 import { FileImportZone } from '../apps/FileImportZone'
+import { AuthorField } from './AuthorField'
+import { loadStoredAuthor, saveAuthor } from './publish-author'
 
 // ────────────────────────────────────────────────
 // Types
@@ -103,6 +105,9 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
   const [staged, setStaged] = useState<StagedSpec | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
   const [parsing, setParsing] = useState(false)
+
+  // Author — required for publish; persisted across share flows.
+  const [author, setAuthor] = useState(loadStoredAuthor)
 
   // Submit state
   const [submitting, setSubmitting] = useState(false)
@@ -259,6 +264,13 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
   const handleSubmit = useCallback(async () => {
     setSubmitError(null)
     setSubmitSuccess(null)
+
+    const trimmedAuthor = author.trim()
+    if (!trimmedAuthor) {
+      setSubmitError(t('Author is required'))
+      return
+    }
+
     setSubmitting(true)
 
     try {
@@ -285,7 +297,7 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
       }
 
       // Publish to registry
-      const pubRes = await api.storePublish(appIdToPublish)
+      const pubRes = await api.storePublish(appIdToPublish, trimmedAuthor)
       if (!pubRes.success) {
         // Rollback the just-installed app so the user is not left with a stray entry.
         if (didInstall) {
@@ -299,6 +311,7 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
         await loadApps()
       }
 
+      saveAuthor(trimmedAuthor)
       const details = (pubRes.data as { details?: string } | undefined)?.details
       setSubmitSuccess(details ?? t('Shared to store successfully.'))
     } catch (err) {
@@ -306,12 +319,12 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
     } finally {
       setSubmitting(false)
     }
-  }, [source, selectedInstalledId, staged, loadApps, t])
+  }, [source, selectedInstalledId, staged, author, loadApps, t])
 
   // ── Derived ──────────────────────────────────
 
   const canSubmit =
-    !submitting && !parsing && (
+    !submitting && !parsing && !!author.trim() && (
       source === 'installed'
         ? !!selectedInstalledId
         : !!staged
@@ -417,6 +430,14 @@ export function ShareToStoreDialog({ onClose }: ShareToStoreDialogProps) {
                 </div>
               )}
             </FileImportZone>
+          )}
+
+          {/* Author — required for publish */}
+          {!submitSuccess && (
+            <AuthorField
+              value={author}
+              onChange={v => { setAuthor(v); setSubmitError(null) }}
+            />
           )}
 
           {/* Submit feedback */}
