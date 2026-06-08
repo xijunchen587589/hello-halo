@@ -140,17 +140,16 @@ describe('normalizeApiUrl', () => {
   })
 
   describe("provider: 'anthropic_passthrough'", () => {
-    // Regression: bare baseUrl previously reached handleAnthropicPassthrough
-    // and was POSTed as-is, producing 405 from gateways that only expose
-    // /v1/messages. See ai-sources/manager.ts comment for the contract.
+    // A bare gateway URL must gain /v1/messages; gateways that only expose
+    // that path return 405 when POSTed to the root.
     it('appends /v1/messages to bare gateway URL', () => {
-      expect(normalizeApiUrl('http://172.21.11.82/public', 'anthropic_passthrough'))
-        .toBe('http://172.21.11.82/public/v1/messages')
+      expect(normalizeApiUrl('http://203.0.113.10/public', 'anthropic_passthrough'))
+        .toBe('http://203.0.113.10/public/v1/messages')
     })
 
     it('strips trailing slash before appending', () => {
-      expect(normalizeApiUrl('http://172.21.11.82/public/', 'anthropic_passthrough'))
-        .toBe('http://172.21.11.82/public/v1/messages')
+      expect(normalizeApiUrl('http://203.0.113.10/public/', 'anthropic_passthrough'))
+        .toBe('http://203.0.113.10/public/v1/messages')
     })
 
     it('preserves URL already ending with /v1/messages', () => {

@@ -187,6 +187,7 @@ export class HaloAdapter implements RegistryAdapter {
 
   async fetchSpec(source: RegistrySource, entry: RegistryEntry): Promise<AppSpec> {
     const baseUrl = source.url.replace(/\/+$/, '')
+    assertSafeRelPath(entry.path, `entry "${entry.slug}" path`)
     const specPath = `${entry.path}/spec.yaml`
     const specUrl = entry.download_url || `${baseUrl}/${specPath}`
 
@@ -217,6 +218,7 @@ export class HaloAdapter implements RegistryAdapter {
       const materialized: Record<string, string> = {}
       await Promise.all(fileNames.map(async (name) => {
         try {
+          assertSafeRelPath(name, `skill file of "${entry.slug}"`)
           const url = `${filesBase}/${name}`
           const fileRes = await fetchWithTimeout(url, {
             headers: { 'User-Agent': 'Halo-Store/1.0' },
@@ -265,6 +267,7 @@ export class HaloAdapter implements RegistryAdapter {
   ): Promise<Map<string, SkillSpec>> {
     const result = new Map<string, SkillSpec>()
     const baseUrl = source.url.replace(/\/+$/, '')
+    assertSafeRelPath(entry.path, `entry "${entry.slug}" path`)
 
     for (const skill of skills) {
       if (!skill.files || skill.files.length === 0) {
@@ -276,8 +279,10 @@ export class HaloAdapter implements RegistryAdapter {
       const skill_files: Record<string, string> = {}
 
       try {
+        assertSafeRelPath(skill.id, `bundled skill id of "${entry.slug}"`)
         // Download all declared files in parallel — static URLs, no API quota
         await Promise.all(skill.files.map(async (filePath) => {
+          assertSafeRelPath(filePath, `bundled skill "${skill.id}" file`)
           const url = `${skillBaseUrl}/${filePath}`
           const res = await fetchWithTimeout(url, {
             headers: { 'User-Agent': 'Halo-Store/1.0' },
@@ -362,6 +367,35 @@ export async function fetchWithTimeout(url: string, init?: RequestInit): Promise
   } catch (err) {
     clearTimeout(timeout)
     throw err
+  }
+}
+
+/**
+ * Reject registry-controlled path fragments before they are spliced into a
+ * fetch URL. The index is downloaded from a remote (possibly compromised)
+ * mirror, so an entry's `path` or a declared file name must stay a plain
+ * relative sub-path: no parent traversal, no absolute path, no scheme of its
+ * own. Both the raw and percent-decoded forms are checked so `%2e%2e` cannot
+ * smuggle a `..` past the literal scan.
+ */
+function assertSafeRelPath(value: string, context: string): void {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(value)
+  } catch {
+    throw new Error(`[HaloAdapter] Malformed registry path for ${context}: "${value}"`)
+  }
+  for (const candidate of [value, decoded]) {
+    if (
+      !candidate ||
+      candidate.includes('..') ||
+      candidate.startsWith('/') ||
+      candidate.includes('\\') ||
+      candidate.includes('://') ||
+      /[\u0000-\u001f]/.test(candidate)
+    ) {
+      throw new Error(`[HaloAdapter] Unsafe registry path for ${context}: "${value}"`)
+    }
   }
 }
 

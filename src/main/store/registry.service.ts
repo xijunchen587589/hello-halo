@@ -794,6 +794,9 @@ export function addRegistry(registry: Omit<RegistrySource, 'id'>): RegistrySourc
   if (!isHttpUrl(normalizedUrl)) {
     throw new Error('Registry URL must use http:// or https://')
   }
+  if (isBlockedRegistryHost(new URL(normalizedUrl).hostname)) {
+    throw new Error('Registry URL must point to a public host (loopback, private, and link-local addresses are not allowed)')
+  }
 
   const duplicate = config.registries.find(
     r => normalizeRegistryUrl(r.url) === normalizedUrl
@@ -1082,6 +1085,45 @@ function isHttpUrl(url: string): boolean {
   } catch {
     return false
   }
+}
+
+function isBlockedV4(a: number, b: number): boolean {
+  return (
+    a === 0 ||                            // unspecified
+    a === 127 ||                          // loopback
+    a === 10 ||                           // RFC1918
+    (a === 172 && b >= 16 && b <= 31) ||  // RFC1918
+    (a === 192 && b === 168) ||           // RFC1918
+    (a === 169 && b === 254)              // link-local / cloud metadata (169.254.169.254)
+  )
+}
+
+/**
+ * True when a hostname names the local machine or a private/internal network.
+ * Gates the user-driven "add registry" action so an operator cannot turn the
+ * store fetcher into an SSRF probe against loopback, RFC1918, or the cloud
+ * metadata endpoint. Only literal IPs are inspected (no DNS resolution): a
+ * hostname that resolves to a private address is out of scope here, and
+ * trusted built-in / enterprise registries never pass through this gate.
+ */
+function isBlockedRegistryHost(rawHost: string): boolean {
+  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '')
+  if (!host) return true
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/)
+  if (v4) return isBlockedV4(Number(v4[1]), Number(v4[2]))
+
+  if (host.includes(':')) {
+    if (host === '::1' || host === '::') return true        // loopback / unspecified
+    if (host.startsWith('fe80:')) return true               // link-local
+    if (host.startsWith('fc') || host.startsWith('fd')) return true // unique-local fc00::/7
+    if (host.startsWith('::ffff:')) {
+      const mapped = host.slice('::ffff:'.length).match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/)
+      if (mapped) return isBlockedV4(Number(mapped[1]), Number(mapped[2]))
+    }
+  }
+  return false
 }
 
 function isDefaultRegistry(registry: RegistrySource): boolean {

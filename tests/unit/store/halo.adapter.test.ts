@@ -180,6 +180,22 @@ describe('HaloAdapter', () => {
     })
   })
 
+  it('rejects an entry whose path attempts directory traversal', async () => {
+    // The index comes from a remote mirror; a `..` in `path` would let a
+    // compromised registry pull spec.yaml from outside its own subtree.
+    ;(globalThis as { fetch: typeof fetch }).fetch = mockFetchMap({})
+    const adapter = new HaloAdapter()
+    const entry = baseEntry({ path: '../../../../etc' }) as unknown as Parameters<typeof adapter.fetchSpec>[1]
+    await expect(adapter.fetchSpec(MOCK_SOURCE, entry)).rejects.toThrow(/Unsafe registry path/)
+  })
+
+  it('rejects a percent-encoded traversal in an entry path', async () => {
+    ;(globalThis as { fetch: typeof fetch }).fetch = mockFetchMap({})
+    const adapter = new HaloAdapter()
+    const entry = baseEntry({ path: 'apps/%2e%2e/%2e%2e/secret' }) as unknown as Parameters<typeof adapter.fetchSpec>[1]
+    await expect(adapter.fetchSpec(MOCK_SOURCE, entry)).rejects.toThrow(/Unsafe registry path/)
+  })
+
   it('rejects entries with an unknown format literal', async () => {
     // The forgiveness for missing-format must NOT extend to other values —
     // unknown packaging would let bogus entries slip into the store.

@@ -115,7 +115,7 @@ async function initPlatformAndApps(): Promise<void> {
   // ── Phase 2: App Manager ─────────────────────────────────────────────────
   const appManager = await initAppManager({ db })
 
-  // ── Phase 2.5: Migrate legacy config.mcpServers → DB ────────────────────
+  // ── Migrate legacy config.mcpServers → DB ───────────────────────────────
   // One-time migration: config.json mcpServers (dead storage from Issue #74)
   // are imported into the App Manager DB where getDbMcpServers() can read them.
   try {
@@ -130,7 +130,7 @@ async function initPlatformAndApps(): Promise<void> {
   // (FileWatcherSource, WebhookSource), activates Apps, and starts the router.
   const runtime = await initAppRuntime({ db, appManager, scheduler, memory, background })
 
-  // ── Phase 3.5: Analytics subscribers ────────────────────────────────────
+  // ── Analytics subscribers ───────────────────────────────────────────────
   // Wire lifecycle events (install/uninstall/run) into the analytics pipeline.
   // Must come after both appManager and runtime are ready.
   installAppsSubscribers(appManager, runtime)
@@ -138,7 +138,7 @@ async function initPlatformAndApps(): Promise<void> {
   // ── Phase 4: Registry Service (App Store) ─────────────────────────────
   initRegistryService({ db })
 
-  // ── Phase 4.5: Upgrade Scheduler ──────────────────────────────────────
+  // ── Upgrade Scheduler ─────────────────────────────────────────────────
   // 6h periodic check + auto-apply for patch/minor on 'auto' strategy.
   // Surfaces 'store:upgrade-available' events for major/notify/manual.
   startUpgradeScheduler()

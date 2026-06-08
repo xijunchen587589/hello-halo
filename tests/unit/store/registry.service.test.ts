@@ -481,4 +481,25 @@ store:
       expect(getRegistries().find(r => r.id === "smithery")).toBeUndefined()
     })
   })
+
+  describe("addRegistry host policy", () => {
+    it("accepts a public https registry URL", () => {
+      initRegistryService()
+      const reg = addRegistry({ name: "Public", url: "https://registry.example.com", enabled: true })
+      expect(reg.url).toBe("https://registry.example.com")
+    })
+
+    it.each([
+      "http://127.0.0.1:8080",
+      "http://localhost/registry",
+      "http://10.1.2.3",
+      "http://192.168.0.5",
+      "http://172.16.9.9",
+      "http://169.254.169.254/latest/meta-data",
+      "http://[::1]/registry",
+    ])("rejects loopback/private/link-local host %s", (url) => {
+      initRegistryService()
+      expect(() => addRegistry({ name: "Bad", url, enabled: true })).toThrow(/public host/i)
+    })
+  })
 })

@@ -304,11 +304,10 @@ async function processEntry(
   const bundledSkills = buildBundledSkillSpecs(appDir, spec.author).map(stampBuiltin)
   for (const s of bundledSkills) processed.skills.add(s.name)
 
-  // ── Look up existing record by (specId, spaceId) ──────────────────────
   // Pass entry.spaceId verbatim: null filters to global-only, a string filters
   // to that space. Coercing null → undefined here would broaden the lookup to
   // ALL spaces and mistakenly match a same-named app in another space, causing
-  // the loader to silently skip the install. (See review item #6.)
+  // the loader to silently skip the install.
   const existing = appManager.listApps({ spaceId: entry.spaceId })
     .find(a => a.specId === stampedSpec.name)
 

@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest'
 import { zipSync, strToU8 } from 'fflate'
 import { pack } from '../../../src/main/store/dhpkg/pack'
-import { unpack, MAX_UNPACK_BYTES } from '../../../src/main/store/dhpkg/unpack'
+import { unpack, MAX_UNPACK_BYTES, MAX_UNPACK_DECOMPRESSED_BYTES } from '../../../src/main/store/dhpkg/unpack'
 import type { AppSpec } from '../../../src/main/apps/spec/schema'
 
 function testSpec(overrides?: Partial<AppSpec>): AppSpec {
@@ -57,6 +57,21 @@ describe('dhpkg pack/unpack', () => {
     // Synthesize a buffer larger than the cap (we never actually try to unzip it)
     const oversize = Buffer.alloc(MAX_UNPACK_BYTES + 1)
     await expect(unpack(oversize)).rejects.toThrow(/Archive too large/)
+  })
+
+  it('rejects archives that decompress past the cap (zip-bomb)', async () => {
+    // A small compressed archive can still inflate to gigabytes. Zeros are
+    // highly compressible, so a single over-cap entry stays tiny on disk but
+    // declares a huge uncompressed size in the central directory — exactly the
+    // case the unzip filter must reject before allocating it.
+    const bomb = zipSync({
+      'spec.yaml': strToU8(
+        'spec_version: "1"\nname: ok\nversion: 1.0.0\nauthor: a\ndescription: d\ntype: skill\nskill_files: {}\n'
+      ),
+      'big.bin': new Uint8Array(MAX_UNPACK_DECOMPRESSED_BYTES + 1),
+    })
+    expect(bomb.byteLength).toBeLessThan(MAX_UNPACK_BYTES)
+    await expect(unpack(Buffer.from(bomb))).rejects.toThrow(/decompresses too large/)
   })
 
   it('rejects unsafe path entries (zip-slip)', async () => {

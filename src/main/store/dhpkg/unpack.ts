@@ -1,9 +1,17 @@
-import { unzipSync, strFromU8 } from 'fflate'
+import { unzipSync, strFromU8, type UnzipFileInfo } from 'fflate'
 import { parse as parseYaml } from 'yaml'
 import { AppSpecSchema, type AppSpec } from '../../apps/spec'
 
-/** Hard cap on archive size we are willing to unpack. */
+/** Hard cap on the compressed archive we are willing to read. */
 export const MAX_UNPACK_BYTES = 50 * 1024 * 1024
+
+/**
+ * Hard cap on cumulative decompressed bytes. The compressed cap alone does not
+ * bound memory: a deflate stream can expand ~1000x, so a 50 MB archive could
+ * inflate to tens of GB. The unzip filter sums the per-entry uncompressed sizes
+ * from the central directory and aborts before that expansion happens.
+ */
+export const MAX_UNPACK_DECOMPRESSED_BYTES = 200 * 1024 * 1024
 
 export interface UnpackResult {
   spec: AppSpec
@@ -24,7 +32,19 @@ export async function unpack(buffer: Buffer | Uint8Array): Promise<UnpackResult>
     )
   }
 
-  const entries = unzipSync(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength))
+  let declaredBytes = 0
+  const entries = unzipSync(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
+    filter: (file: UnzipFileInfo) => {
+      declaredBytes += file.originalSize
+      if (declaredBytes > MAX_UNPACK_DECOMPRESSED_BYTES) {
+        throw new Error(
+          `[dhpkg/unpack] Archive decompresses too large: ` +
+          `${declaredBytes} bytes (max ${MAX_UNPACK_DECOMPRESSED_BYTES})`
+        )
+      }
+      return true
+    },
+  })
 
   const specRaw = entries['spec.yaml']
   if (!specRaw) {
