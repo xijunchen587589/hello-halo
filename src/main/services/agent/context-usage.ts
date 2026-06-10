@@ -100,12 +100,16 @@ export function computeContextUsed(usage: SingleCallUsage): number {
 }
 
 /**
- * Context-window limit for the displayed model, mirroring claude-code's
- * `getContextWindowForModel` resolution order:
+ * Fallback context-window resolution from a model name alone, mirroring
+ * claude-code's `getContextWindowForModel` order:
  *   1. `[1m]` suffix → 1M (documented client-side opt-in)
  *   2. known capability table entry → its window
  *   3. unknown → 200K (claude-code's MODEL_CONTEXT_WINDOW_DEFAULT)
- * Resolved from the local table only — no SDK field is read.
+ *
+ * Only used when the caller cannot supply the resolved window from
+ * credentials (see `buildTokenUsage`). The name here is often a friendly
+ * displayModel, so this chain can disagree with the runtime window —
+ * callers that know the source-resolved value must pass it instead.
  */
 export function resolveContextWindow(model: string): number {
   if (/\[1m\]$/i.test(model)) return 1_000_000
@@ -128,14 +132,18 @@ export function resolveContextWindow(model: string): number {
 export function buildTokenUsage(
   resultMsg: RawResultMessage,
   lastRealUsage: SingleCallUsage | null,
-  model: string
+  model: string,
+  contextWindow?: number
 ): TokenUsage | null {
   const usage = lastRealUsage ?? resultUsageFallback(resultMsg)
   if (!usage) return null
   return {
     ...usage,
     totalCostUsd: resultMsg.total_cost_usd || 0,
-    contextWindow: resolveContextWindow(model)
+    // Prefer the source-resolved window (same value that drives the CC
+    // subprocess via CLAUDE_CODE_AUTO_COMPACT_WINDOW) so the displayed
+    // window always matches actual compaction behavior.
+    contextWindow: contextWindow ?? resolveContextWindow(model)
   }
 }
 

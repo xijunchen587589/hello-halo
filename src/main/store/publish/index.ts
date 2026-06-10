@@ -7,6 +7,7 @@
 
 import { loadProductConfig } from '../../services/ai-sources/auth-loader'
 import { getAppManager } from '../../apps/manager'
+import type { AppManagerService } from '../../apps/manager'
 import { getRegistries } from '../registry.service'
 import { dispatch as dispatchGithubPr } from './dispatchers/github-pr'
 import { dispatch as dispatchHttpRegistry } from './dispatchers/http-registry'
@@ -62,7 +63,16 @@ export async function publish(appId: string, authorOverride?: string): Promise<P
       details: (e as Error).message,
     }
   }
-  const files = collectFiles(spec)
+  const { files, missingSkillIds } = collectFiles(spec, manager, app.spaceId)
+  if (missingSkillIds.length > 0) {
+    return {
+      status: 'error',
+      target: target.config.target,
+      details:
+        `Bundled skill dependencies are incomplete — publishing would produce a broken package. ` +
+        `Missing skills: ${missingSkillIds.join(', ')}. Install them first, then publish again.`,
+    }
+  }
 
   const registries = getRegistries()
   const registry = registries.find(r => r.id === target.registryId)
@@ -96,16 +106,60 @@ export async function publish(appId: string, authorOverride?: string): Promise<P
   }
 }
 
-/** Extract inline files (currently only `skill_files`) for the dispatcher. */
-function collectFiles(spec: AppSpec): Record<string, string> {
+/**
+ * Collect the auxiliary files to upload alongside the spec.
+ *
+ * - For a skill: its own `skill_files` (name → content).
+ * - For a digital human (or other non-skill app): the files of any BUNDLED
+ *   skills, so the package stays self-contained. The DH spec only carries the
+ *   `requires.skills[]` metadata — each bundled skill's content lives in its
+ *   own installed skill app (materialized at install time), so it is read back
+ *   from there and uploaded under `skills/<id>/<file>`, the layout the registry
+ *   stores and `fetchBundledSkills()` reads on install.
+ *
+ * Bundled skills are looked up with the same effective-resolution semantics
+ * the runtime uses (space-scoped overriding global), so a skill installed in
+ * global scope satisfies the dependency. Skills still missing are returned in
+ * `missingSkillIds` — the caller must fail the publish, because a bundled
+ * declaration is a self-containment promise and a partial package is broken
+ * for every installer.
+ */
+function collectFiles(
+  spec: AppSpec,
+  manager: AppManagerService,
+  spaceId: string | null,
+): { files: Record<string, string>; missingSkillIds: string[] } {
   if (spec.type === 'skill') {
     const skillFiles = (spec as SkillSpec).skill_files ?? {}
-    const result: Record<string, string> = {}
+    const files: Record<string, string> = {}
     for (const [name, content] of Object.entries(skillFiles)) {
       if (name === 'spec.yaml') continue
-      result[name] = content
+      files[name] = content
     }
-    return result
+    return { files, missingSkillIds: [] }
   }
-  return {}
+
+  const files: Record<string, string> = {}
+  const missingSkillIds: string[] = []
+  const bundledDeps = (spec.requires?.skills ?? []).filter(
+    (dep): dep is { id: string; bundled?: boolean } => typeof dep !== 'string' && dep.bundled === true,
+  )
+  if (bundledDeps.length === 0) return { files, missingSkillIds }
+
+  const installedSkills = spaceId
+    ? manager.listEffectiveSkillApps(spaceId)
+    : manager.listApps({ spaceId: null, type: 'skill' })
+  for (const dep of bundledDeps) {
+    const skillApp = installedSkills.find(a => a.specId === dep.id)
+    if (!skillApp) {
+      missingSkillIds.push(dep.id)
+      continue
+    }
+    const skillFiles = (skillApp.spec as SkillSpec).skill_files ?? {}
+    for (const [name, content] of Object.entries(skillFiles)) {
+      if (name === 'spec.yaml') continue
+      files[`skills/${dep.id}/${name}`] = content
+    }
+  }
+  return { files, missingSkillIds }
 }

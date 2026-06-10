@@ -122,6 +122,11 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     description: 'Next-generation frontier model, preview access'
   },
   {
+    id: 'claude-fable-5',
+    name: 'Claude Fable 5',
+    description: 'Frontier model with native 1M context, strongest coding and agentic performance'
+  },
+  {
     id: 'claude-opus-4-7',
     name: 'Claude Opus 4.7',
     description: 'Latest and most powerful model, great for complex reasoning and architecture decisions'

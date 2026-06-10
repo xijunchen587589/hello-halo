@@ -275,7 +275,6 @@ export class HaloAdapter implements RegistryAdapter {
         continue
       }
 
-      const skillBaseUrl = `${baseUrl}/${entry.path}/skills/${skill.id}`
       const skill_files: Record<string, string> = {}
 
       try {
@@ -283,17 +282,31 @@ export class HaloAdapter implements RegistryAdapter {
         // Download all declared files in parallel — static URLs, no API quota
         await Promise.all(skill.files.map(async (filePath) => {
           assertSafeRelPath(filePath, `bundled skill "${skill.id}" file`)
-          const url = `${skillBaseUrl}/${filePath}`
-          const res = await fetchWithTimeout(url, {
-            headers: { 'User-Agent': 'Halo-Store/1.0' },
-          })
-          if (!res.ok) {
+          // The DHP dynamic registry stores a bundle's aux files under files/,
+          // so a bundled skill lives at files/skills/<id>/<file>. Static mirrors
+          // keep the original skills/<id>/<file> tree. Try the registry layout
+          // first, then fall back to the mirror layout.
+          const candidates = [
+            `${baseUrl}/${entry.path}/files/skills/${skill.id}/${filePath}`,
+            `${baseUrl}/${entry.path}/skills/${skill.id}/${filePath}`,
+          ]
+          let content: string | null = null
+          for (const url of candidates) {
+            const res = await fetchWithTimeout(url, {
+              headers: { 'User-Agent': 'Halo-Store/1.0' },
+            })
+            if (res.ok) {
+              content = await res.text()
+              break
+            }
+          }
+          if (content === null) {
             console.warn(
-              `[HaloAdapter] Failed to fetch "${filePath}" for bundled skill "${skill.id}": HTTP ${res.status}`
+              `[HaloAdapter] Failed to fetch "${filePath}" for bundled skill "${skill.id}" (tried files/skills and skills layouts)`
             )
             return
           }
-          skill_files[filePath] = await res.text()
+          skill_files[filePath] = content
         }))
 
         if (Object.keys(skill_files).length === 0) {
@@ -332,6 +345,18 @@ export class HaloAdapter implements RegistryAdapter {
  * (connection + headers + body reading). The AbortController signal
  * is passed to fetch() so the abort propagates to body consumption too.
  */
+/**
+ * Total attempts for a store GET. When traffic is routed through a forward
+ * HTTP proxy (system/corporate proxy resolved by proxy-fetch), the first
+ * request over a freshly opened or stale keep-alive connection can come back
+ * as a spurious `400` with an empty body in a few ms — the identical request
+ * then succeeds. The registry only ever answers these GETs with 200/404/5xx,
+ * so retrying once or twice on 400/5xx (never on 404 or success) removes the
+ * "first open/install fails, retry works" glitch without masking real errors.
+ */
+const FETCH_MAX_ATTEMPTS = 3
+const FETCH_RETRY_BASE_DELAY_MS = 150
+
 export async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController()
   const existingSignal = init?.signal
@@ -346,10 +371,10 @@ export async function fetchWithTimeout(url: string, init?: RequestInit): Promise
   }
 
   const timeout = setTimeout(() => controller.abort(new Error(`Fetch timeout after ${FETCH_TIMEOUT_MS}ms: ${url}`)), FETCH_TIMEOUT_MS)
-  try {
-    const response = await proxyFetch(url, { ...init, signal: controller.signal })
-    // Return a wrapper that keeps the abort controller alive during body consumption
-    return new Proxy(response, {
+
+  // Keeps the abort controller / timeout alive until the body is consumed.
+  const keepAliveDuringBody = (response: Response): Response =>
+    new Proxy(response, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver)
         if (typeof value === 'function' && (prop === 'json' || prop === 'text' || prop === 'arrayBuffer' || prop === 'blob')) {
@@ -364,6 +389,29 @@ export async function fetchWithTimeout(url: string, init?: RequestInit): Promise
         return value
       },
     })
+
+  try {
+    let lastError: unknown
+    for (let attempt = 1; attempt <= FETCH_MAX_ATTEMPTS; attempt++) {
+      try {
+        const response = await proxyFetch(url, { ...init, signal: controller.signal })
+        const transient = response.status === 400 || response.status >= 500
+        if (transient && attempt < FETCH_MAX_ATTEMPTS && !controller.signal.aborted) {
+          console.warn(`[HaloAdapter] Transient ${response.status} (attempt ${attempt}/${FETCH_MAX_ATTEMPTS}), retrying: ${url}`)
+          // Release the underlying socket before retrying on a fresh connection.
+          await response.body?.cancel().catch(() => { /* body may be unreadable */ })
+          await new Promise(resolve => setTimeout(resolve, FETCH_RETRY_BASE_DELAY_MS * attempt))
+          continue
+        }
+        return keepAliveDuringBody(response)
+      } catch (err) {
+        lastError = err
+        if (controller.signal.aborted || attempt >= FETCH_MAX_ATTEMPTS) throw err
+        console.warn(`[HaloAdapter] Fetch error (attempt ${attempt}/${FETCH_MAX_ATTEMPTS}), retrying: ${url}`)
+        await new Promise(resolve => setTimeout(resolve, FETCH_RETRY_BASE_DELAY_MS * attempt))
+      }
+    }
+    throw lastError
   } catch (err) {
     clearTimeout(timeout)
     throw err

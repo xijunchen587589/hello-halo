@@ -138,6 +138,11 @@ export interface ImChannelsPermissionDefaults {
   }
   /** Placeholder hint for the Owner User IDs input (enterprise-customizable) */
   ownerIdHint?: string
+  /**
+   * Documentation URL appended to the no-owner guide message sent in IM
+   * when permission control is on but no owner is bound yet.
+   */
+  ownerSetupGuideUrl?: string
 }
 
 /**

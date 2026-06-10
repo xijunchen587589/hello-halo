@@ -224,6 +224,10 @@ export interface ProcessStreamParams {
   messageContent?: string | Array<{ type: string; [key: string]: unknown }>
   /** Display model name for thought parsing (user's configured model, not SDK internal) */
   displayModel: string
+  /** Source-resolved context window (same value injected into the CC subprocess).
+   *  When provided, token-usage display uses it instead of guessing from the
+   *  model name — keeps the UI window consistent with compaction behavior. */
+  contextWindow?: number
   /** Abort controller for cancellation */
   abortController: AbortController
   /** Timestamp of send start (for timing logs) */
@@ -261,6 +265,7 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
     conversationId,
     messageContent,
     displayModel,
+    contextWindow,
     abortController,
     t0,
     callbacks
@@ -438,7 +443,7 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
           capturedSessionId = sessionIdFromMsg as string
         }
         // Extract token usage
-        tokenUsage = buildTokenUsage(msg, lastSingleUsage, displayModel)
+        tokenUsage = buildTokenUsage(msg, lastSingleUsage, displayModel, contextWindow)
         console.log(`[Agent][${conversationId}] Drain complete — result consumed after ${Date.now() - drainStartTime}ms`)
         break
       }
@@ -1031,7 +1036,7 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
       }
 
       // Extract token usage from result message
-      tokenUsage = buildTokenUsage(msg, lastSingleUsage, displayModel)
+      tokenUsage = buildTokenUsage(msg, lastSingleUsage, displayModel, contextWindow)
       if (tokenUsage) {
         console.log(`[Agent][${conversationId}] Token usage (single API):`, tokenUsage)
       }

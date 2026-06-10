@@ -57,10 +57,11 @@ export interface ConsumerHandle {
   /** Get thoughts accumulated in the most recently completed turn.
    * Used by session-manager to detect active team agents between turns. */
   getLastTurnThoughts(): Thought[]
-  /** Update the display model name used for thought parsing.
-   * Called by sendMessage to keep displayModel in sync after model switches
+  /** Update the display model name used for thought parsing (and the
+   * source-resolved context window shown in token usage).
+   * Called by sendMessage to keep both in sync after model switches
    * without requiring a full session rebuild. */
-  updateDisplayModel(displayModel: string): void
+  updateDisplayModel(displayModel: string, contextWindow?: number): void
 }
 
 /**
@@ -70,6 +71,8 @@ interface ConsumerState {
   spaceId: string
   conversationId: string
   displayModel: string
+  /** Source-resolved context window for token-usage display (see ProcessStreamParams) */
+  contextWindow?: number
   /** AbortController for the consumer loop itself (not per-turn) */
   consumerAbort: AbortController
   /** True when consumer is inside for-await (processing a turn) */
@@ -98,18 +101,21 @@ interface ConsumerState {
  * @param spaceId - Space ID for persistence and event routing
  * @param conversationId - Conversation ID for persistence and event routing
  * @param displayModel - Display model name for thought parsing
+ * @param contextWindow - Source-resolved context window for token-usage display
  * @returns ConsumerHandle for lifecycle control
  */
 export function startConsumer(
   v2Session: V2SDKSession,
   spaceId: string,
   conversationId: string,
-  displayModel: string
+  displayModel: string,
+  contextWindow?: number
 ): ConsumerHandle {
   const state: ConsumerState = {
     spaceId,
     conversationId,
     displayModel,
+    contextWindow,
     consumerAbort: new AbortController(),
     processingTurn: false,
     currentSessionState: null,
@@ -148,11 +154,12 @@ export function startConsumer(
     getLastTurnThoughts() {
       return state.lastTurnThoughts
     },
-    updateDisplayModel(newDisplayModel: string) {
+    updateDisplayModel(newDisplayModel: string, newContextWindow?: number) {
       if (state.displayModel !== newDisplayModel) {
         console.log(`[Consumer][${conversationId}] Display model updated: ${state.displayModel} → ${newDisplayModel}`)
         state.displayModel = newDisplayModel
       }
+      state.contextWindow = newContextWindow
     },
   }
 
@@ -209,6 +216,7 @@ async function consumeLoop(v2Session: V2SDKSession, state: ConsumerState): Promi
         spaceId,
         conversationId,
         displayModel: state.displayModel,
+        contextWindow: state.contextWindow,
         abortController: turnAbort,
         t0: turnStartTime,
         callbacks: {
