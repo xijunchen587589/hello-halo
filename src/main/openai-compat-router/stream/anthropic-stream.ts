@@ -60,7 +60,7 @@ export class AnthropicStreamHandler extends BaseStreamHandler {
         console.error('[AnthropicStream] Error:', error)
       }
     } finally {
-      this.finishMessage()
+      await this.finishMessage()
     }
   }
 
@@ -184,9 +184,10 @@ export async function streamAnthropicPassthrough(
   stream: unknown,
   res: ExpressResponse,
   model?: string,
-  debug = false
+  debug = false,
+  estimateInputTokens?: () => Promise<number>
 ): Promise<void> {
-  const handler = new AnthropicStreamHandler(res, { model, debug })
+  const handler = new AnthropicStreamHandler(res, { model, debug, estimateInputTokens })
   await handler.processStream(stream)
 }
 

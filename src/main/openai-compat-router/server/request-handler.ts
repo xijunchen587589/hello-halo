@@ -33,6 +33,7 @@ import { runInterceptors } from '../interceptors'
 import { applyProviderAdapter, type AdapterContext } from './provider-adapters'
 import { handleKiroRequest } from '../adapters/kiro.adapter'
 import { countTokens } from '../utils/token-counter'
+import { deferInputTokensEstimate, fillResponseUsageFallback } from '../utils/usage-estimator'
 
 export interface RequestHandlerOptions {
   debug?: boolean
@@ -414,11 +415,14 @@ async function handleAnthropicPassthrough(
 
       // Third-party Anthropic-compatible providers: re-serialize through the
       // BaseStreamHandler repair pipeline (empty text block, tool JSON, etc.).
+      // The deferred estimate backs the usage fallback for providers that
+      // omit usage; it computes in the background while the model generates.
       await streamAnthropicPassthrough(
         upstreamResp.body,
         res,
         anthropicRequest.model,
-        debug
+        debug,
+        deferInputTokensEstimate(anthropicRequest)
       )
       return
     }
@@ -561,10 +565,14 @@ async function handleOpenAIConversion(
         res.setHeader('Cache-Control', 'no-cache')
         res.setHeader('Connection', 'keep-alive')
 
+        // Background input-token estimate backing the usage fallback for
+        // providers that omit usage from the stream; computes while the
+        // model generates, so stream finish never waits on it.
+        const estimateInputTokens = deferInputTokensEstimate(anthropicRequest)
         if (apiType === 'responses') {
-          await streamOpenAIResponsesToAnthropic(upstreamResp.body, res, anthropicRequest.model, debug)
+          await streamOpenAIResponsesToAnthropic(upstreamResp.body, res, anthropicRequest.model, debug, estimateInputTokens)
         } else {
-          await streamOpenAIChatToAnthropic(upstreamResp.body, res, anthropicRequest.model, debug)
+          await streamOpenAIChatToAnthropic(upstreamResp.body, res, anthropicRequest.model, debug, estimateInputTokens)
         }
         return
       }
@@ -578,6 +586,7 @@ async function handleOpenAIConversion(
         ? convertOpenAIResponsesToAnthropic(openaiResponse)
         : convertOpenAIChatToAnthropic(openaiResponse, anthropicRequest.model)
 
+      fillResponseUsageFallback(anthropicResponse, anthropicRequest)
       res.json(anthropicResponse)
     } catch (error: any) {
       // Handle abort/timeout

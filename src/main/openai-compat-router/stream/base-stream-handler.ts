@@ -13,6 +13,7 @@ import { jsonrepair } from 'jsonrepair'
 import { SSEWriter } from './sse-writer'
 import type { AnthropicStopReason, StreamToolCallState } from '../types'
 import { safeJsonParse } from '../utils'
+import { estimateUsageTokens } from '../utils/usage-estimator'
 
 // ============================================================================
 // Stream State
@@ -68,12 +69,19 @@ export function createInitialState(model: string): StreamState {
 export interface StreamHandlerOptions {
   model?: string
   debug?: boolean
+  /**
+   * Deferred input-token estimate started at request dispatch (see
+   * usage-estimator.ts). Awaited only when the upstream omitted usage —
+   * settled long before stream finish, so the await never blocks.
+   */
+  estimateInputTokens?: () => Promise<number>
 }
 
 export abstract class BaseStreamHandler {
   protected writer: SSEWriter
   protected state: StreamState
   protected debug: boolean
+  private estimateInputTokens?: () => Promise<number>
 
   // Tool call tracking
   protected toolCallMap = new Map<number, StreamToolCallState>()
@@ -83,6 +91,7 @@ export abstract class BaseStreamHandler {
     this.writer = new SSEWriter(res, { debug: options.debug })
     this.state = createInitialState(options.model || 'unknown')
     this.debug = options.debug ?? false
+    this.estimateInputTokens = options.estimateInputTokens
   }
 
   /**
@@ -135,7 +144,7 @@ export abstract class BaseStreamHandler {
     return true
   }
 
-  protected finishMessage(): void {
+  protected async finishMessage(): Promise<void> {
     // Only check if writer is closed, not if state is finished
     // (state.finished is set when finish_reason is received, but we still need to send final events)
     if (this.writer.isClosed) return
@@ -214,6 +223,8 @@ export abstract class BaseStreamHandler {
       }
     }
 
+    await this.applyUsageFallback()
+
     // Write message_delta
     this.writer.writeMessageDelta(this.state.stopReason || 'end_turn', {
       inputTokens: this.state.usage.inputTokens,
@@ -228,6 +239,55 @@ export abstract class BaseStreamHandler {
     this.writer.end()
 
     this.state.finished = true
+  }
+
+  /**
+   * Bias-high usage fallback for upstreams that omit usage entirely.
+   *
+   * The final message_delta is the single source of token accounting for
+   * every downstream consumer (SDK context display, llm.invocation telemetry,
+   * automation run records); leaving it at 0 silently zeroes all of them.
+   * Estimation contract: may over-count, must never under-count (see
+   * usage-estimator.ts).
+   *
+   * Input side awaits the deferred estimate started at dispatch time — by
+   * stream finish it has settled, so the await is a resolved-promise
+   * microtask. Output side runs a single char pass over text already
+   * accumulated in state (KB-scale).
+   *
+   * Gated on `state.started`: a stream that never produced a message (e.g.
+   * upstream error before any chunk) was likely never charged, so no tokens
+   * are attributed to it.
+   */
+  private async applyUsageFallback(): Promise<void> {
+    if (!this.state.started) return
+    const usage = this.state.usage
+    if (usage.inputTokens > 0 && usage.outputTokens > 0) return
+
+    try {
+      const needInput = usage.inputTokens === 0 && !!this.estimateInputTokens
+      const needOutput = usage.outputTokens === 0
+
+      if (needInput) {
+        usage.inputTokens = await this.estimateInputTokens!()
+      }
+      if (needOutput) {
+        let raw = estimateUsageTokens(this.state.accumulatedText)
+        raw += estimateUsageTokens(this.state.accumulatedThinking)
+        for (const tc of this.toolCallMap.values()) {
+          raw += estimateUsageTokens(tc.arguments)
+        }
+        if (raw > 0) usage.outputTokens = raw
+      }
+      if (needInput || needOutput) {
+        console.log(
+          `[StreamHandler] usage fallback applied: input=${usage.inputTokens} output=${usage.outputTokens} (bias-high estimate, model=${this.state.model})`
+        )
+      }
+    } catch (err) {
+      // Fallback must never break stream finalization.
+      console.warn('[StreamHandler] usage fallback failed:', err)
+    }
   }
 
   // ============================================================================

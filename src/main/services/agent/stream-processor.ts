@@ -26,7 +26,7 @@ import type {
 } from './types'
 import { emitAgentEvent } from './events'
 import { parseSDKMessage } from './message-utils'
-import { extractRealAssistantUsage, buildTokenUsage } from './context-usage'
+import { extractRealAssistantUsage, buildTokenUsage, isSyntheticAssistantMessage } from './context-usage'
 import { broadcastMcpStatus } from './mcp-manager'
 import {
   handleSubAgentMessage,
@@ -321,6 +321,33 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
   // tail-emit when the turn ultimately aborts/interrupts AFTER one or
   // more successful invocations.
   let invocationOkEmitted = false
+  // Telemetry: invocation pending its boundary flush. Engines split one API
+  // response into several assistant frames sharing one message id; only one
+  // frame (if any) carries real usage. Emission is therefore deferred to the
+  // call boundary — the next assistant frame with a different id, or stream
+  // end — so providers that never return usage still produce exactly one
+  // `llm.invocation` per call (count must never be lost), with token fields
+  // attached only when usage was observed.
+  let pendingInvocation: { messageId: string | undefined; usage: SingleCallUsage | null } | null = null
+
+  const flushPendingInvocation = (): void => {
+    if (!pendingInvocation) return
+    const now = Date.now()
+    void analytics.track(AnalyticsEvents.LLM_INVOCATION, {
+      ...deriveAnalyticsSource(conversationId),
+      conversationId,
+      modelName: displayModel,
+      durationMs: now - lastInvocationEmitAt,
+      status: 'ok',
+      ...(pendingInvocation.usage && {
+        inputTokens: pendingInvocation.usage.inputTokens,
+        outputTokens: pendingInvocation.usage.outputTokens,
+      }),
+    })
+    lastInvocationEmitAt = now
+    invocationOkEmitted = true
+    pendingInvocation = null
+  }
 
   // Token-level streaming state
   let currentStreamingText = ''  // Accumulates text_delta tokens
@@ -762,29 +789,23 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
     )
 
     // Capture per-call usage from real assistant messages (represents current
-    // context size). Synthetic messages (interrupt/cancel/reject) return null
-    // and are skipped so they never overwrite the last real usage.
-    if (sdkMessage.type === 'assistant') {
+    // context size). Synthetic messages (interrupt/cancel/reject) are skipped
+    // entirely — they are bookkeeping, not API calls, and must neither
+    // overwrite the last real usage nor open/flush a pending invocation.
+    if (sdkMessage.type === 'assistant' && !isSyntheticAssistantMessage(sdkMessage)) {
+      const messageId = (sdkMessage as { message?: { id?: string } }).message?.id
+      // A frame with a different message id signals the previous API call's
+      // boundary — flush it (with or without observed usage).
+      if (pendingInvocation && pendingInvocation.messageId !== messageId) {
+        flushPendingInvocation()
+      }
+      if (!pendingInvocation) {
+        pendingInvocation = { messageId, usage: null }
+      }
       const usage = extractRealAssistantUsage(sdkMessage)
       if (usage) {
         lastSingleUsage = usage
-        // Telemetry: emit per-call llm.invocation. modelName is sensitive —
-        // the SENSITIVE_KEYS gate drops it for open-source builds. Token
-        // counts are likewise sensitive. `durationMs` is the per-call delta
-        // (this call's wall-clock cost), not cumulative since send start,
-        // so dashboards can plot per-call latency directly.
-        const now = Date.now()
-        void analytics.track(AnalyticsEvents.LLM_INVOCATION, {
-          ...deriveAnalyticsSource(conversationId),
-          conversationId,
-          modelName: displayModel,
-          durationMs: now - lastInvocationEmitAt,
-          status: 'ok',
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-        })
-        lastInvocationEmitAt = now
-        invocationOkEmitted = true
+        pendingInvocation.usage = usage
       }
     }
 
@@ -1159,6 +1180,12 @@ export async function processStream(params: ProcessStreamParams): Promise<Stream
   } else if (wasAborted) {
     console.log(`[Agent][${conversationId}] User stopped - no error sent`)
   }
+
+  // Telemetry: flush the last API call of this stream. Mid-stream calls flush
+  // at the next call's boundary; the final one has no successor, so it flushes
+  // here. This also covers providers that never return usage — the count is
+  // preserved even when token fields are absent.
+  flushPendingInvocation()
 
   // Telemetry: drain tool usage stats for this stream. Emitting here covers
   // both legacy callers (who get agent:complete via line 963 above) and
