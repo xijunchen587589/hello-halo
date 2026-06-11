@@ -34,7 +34,7 @@ export function StoreCard({ entry, onClick }: StoreCardProps) {
           {entry.icon && (
             <span className="text-base flex-shrink-0">{entry.icon}</span>
           )}
-          <span className="text-sm font-medium text-foreground truncate">
+          <span className="text-sm font-medium text-foreground truncate min-w-0">
             {name}
           </span>
           <AppTypeBadge type={entry.type} />
