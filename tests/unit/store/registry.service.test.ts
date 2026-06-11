@@ -17,6 +17,12 @@ vi.mock("../../../src/main/apps/runtime", () => ({
   getAppRuntime: getAppRuntimeMock,
 }))
 
+// Adapters fetch via proxyFetch (system-proxy aware), which does not go through
+// the stubbed global fetch. Route it back so fetchMock intercepts all traffic.
+vi.mock("../../../src/main/services/proxy-fetch", () => ({
+  proxyFetch: (url: string | URL, init?: RequestInit) => fetch(String(url), init),
+}))
+
 vi.mock("../../../src/main/services/ai-sources/auth-loader", () => ({
   loadProductConfig: loadProductConfigMock,
   // config.service indirectly imports getDataFolderName via the same
@@ -35,7 +41,10 @@ import {
   listApps,
   installFromStore,
   getRegistries,
+  onSyncStatusChanged,
 } from "../../../src/main/store/registry.service"
+import { createDatabaseManager } from "../../../src/main/platform/store/database-manager"
+import type { DatabaseManager } from "../../../src/main/platform/store/types"
 import type { RegistryIndex } from "../../../src/shared/store/store-types"
 
 function jsonResponse(data: unknown): Response {
@@ -52,13 +61,33 @@ function textResponse(body: string): Response {
   })
 }
 
+// Unmocked URLs (split index shards, other registries) must 404 rather than
+// throw: a 404 makes the HaloAdapter fall back to legacy index.json without
+// retry delays, keeping the init-time background sync fast and deterministic.
+function notFoundResponse(): Response {
+  return new Response("not found", { status: 404 })
+}
+
+// initRegistryService kicks off a non-blocking syncAll; refreshIndex skips
+// registries that are still mid-flight. Record terminal sync statuses so
+// tests can await the background sync instead of racing it.
+function trackSyncSettled(): string[] {
+  const settled: string[] = []
+  onSyncStatusChanged((event) => {
+    if (event.status !== "syncing") settled.push(event.registryId)
+  })
+  return settled
+}
+
 describe("registry.service", () => {
   const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>()
+  let db: DatabaseManager
 
   beforeEach(() => {
     fetchMock.mockReset()
     vi.stubGlobal("fetch", fetchMock)
     mkdirSync(join(homedir(), ".halo-dev"), { recursive: true })
+    db = createDatabaseManager(":memory:")
     getAppManagerMock.mockReset()
     getAppRuntimeMock.mockReset()
     getAppManagerMock.mockReturnValue(null)
@@ -69,40 +98,19 @@ describe("registry.service", () => {
 
   afterEach(() => {
     shutdownRegistryService()
+    db.closeAll()
     vi.unstubAllGlobals()
   })
 
-  it("lazily initializes when called before explicit init", async () => {
-    const emptyIndex: RegistryIndex = {
-      version: 1,
-      generated_at: "2026-02-24T00:00:00.000Z",
-      source: "https://openkursar.github.io/digital-human-protocol",
-      apps: [],
-    }
-
-    fetchMock.mockImplementation(async (input) => {
-      const url = String(input)
-      if (url.endsWith("/index.json")) return jsonResponse(emptyIndex)
-      throw new Error(`Unexpected URL: ${url}`)
-    })
-
+  it("lazily initializes and degrades to empty results without a db", async () => {
+    // No explicit init: ensureInitialized() runs without a DatabaseManager,
+    // so queries must return empty without throwing or touching the network.
     const apps = await listApps()
     expect(apps).toEqual([])
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://openkursar.github.io/digital-human-protocol/index.json",
-      expect.any(Object)
-    )
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it("checks updates against the installed app registry when slugs collide", async () => {
-    initRegistryService()
-
-    const custom = addRegistry({
-      name: "Custom Registry",
-      url: "https://example.com/registry",
-      enabled: true,
-    })
-
     const officialIndex: RegistryIndex = {
       version: 1,
       generated_at: "2026-02-24T00:00:00.000Z",
@@ -151,9 +159,19 @@ describe("registry.service", () => {
       if (url === "https://example.com/registry/index.json") {
         return jsonResponse(customIndex)
       }
-      throw new Error(`Unexpected URL: ${url}`)
+      return notFoundResponse()
     })
 
+    const settled = trackSyncSettled()
+    initRegistryService({ db })
+
+    const custom = addRegistry({
+      name: "Custom Registry",
+      url: "https://example.com/registry",
+      enabled: true,
+    })
+
+    await vi.waitFor(() => expect(settled).toContain("official"))
     await refreshIndex()
 
     const updates = await checkUpdates([
@@ -176,8 +194,6 @@ describe("registry.service", () => {
   })
 
   it("re-fetches spec when cached version does not match latest index", async () => {
-    initRegistryService()
-
     const indexV1: RegistryIndex = {
       version: 1,
       generated_at: "2026-02-24T00:00:00.000Z",
@@ -237,9 +253,13 @@ store:
       if (url === "https://openkursar.github.io/digital-human-protocol/packages/digital-humans/cache-app/spec.yaml") {
         return textResponse(currentSpec)
       }
-      throw new Error(`Unexpected URL: ${url}`)
+      return notFoundResponse()
     })
 
+    const settled = trackSyncSettled()
+    initRegistryService({ db })
+
+    await vi.waitFor(() => expect(settled).toContain("official"))
     await refreshIndex()
     const first = await getAppDetail("cache-app")
     expect(first.spec.version).toBe("1.0.0")
@@ -258,8 +278,6 @@ store:
   })
 
   it("installs bundle app and persists store provenance metadata", async () => {
-    initRegistryService()
-
     const index: RegistryIndex = {
       version: 1,
       generated_at: "2026-02-24T00:00:00.000Z",
@@ -305,8 +323,14 @@ store:
       if (url === "https://openkursar.github.io/digital-human-protocol/packages/digital-humans/install-app/spec.yaml") {
         return textResponse(specYaml)
       }
-      throw new Error(`Unexpected URL: ${url}`)
+      return notFoundResponse()
     })
+
+    const settled = trackSyncSettled()
+    initRegistryService({ db })
+
+    await vi.waitFor(() => expect(settled).toContain("official"))
+    await refreshIndex()
 
     const appId = await installFromStore("install-app", "space-1", { threshold: 10 })
     expect(appId).toBe("app-installed-1")
@@ -322,8 +346,6 @@ store:
   })
 
   it("filters out legacy yaml entries from the merged index", async () => {
-    initRegistryService()
-
     // Deliberately inject legacy format data to verify runtime filtering.
     const index = {
       version: 1,
@@ -350,8 +372,16 @@ store:
       if (url === "https://openkursar.github.io/digital-human-protocol/index.json") {
         return jsonResponse(index)
       }
-      throw new Error(`Unexpected URL: ${url}`)
+      return notFoundResponse()
     })
+
+    const settled = trackSyncSettled()
+    initRegistryService({ db })
+
+    // The empty-list assertion is only meaningful after the official sync has
+    // actually ingested (and filtered) the legacy index — wait for it.
+    await vi.waitFor(() => expect(settled).toContain("official"))
+    await refreshIndex()
 
     const apps = await listApps()
     expect(apps).toEqual([])

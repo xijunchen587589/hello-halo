@@ -172,8 +172,23 @@ export class QueryService {
   /**
    * Look up a single entry by slug across all mirror data + proxy caches.
    * Returns the entry and its registryId, or null.
+   *
+   * When `registryId` is given, that registry's entry is preferred — slugs can
+   * collide across registries and callers with provenance (e.g. update checks)
+   * must resolve against the registry the app was installed from.
    */
-  findEntry(slug: string): { entry: RegistryEntry; registryId: string } | null {
+  findEntry(slug: string, registryId?: string): { entry: RegistryEntry; registryId: string } | null {
+    if (registryId) {
+      const scoped = this.db.prepare(
+        `SELECT * FROM registry_items WHERE slug = ? AND registry_id = ? LIMIT 1`
+      ).get(slug, registryId) as ItemRow | undefined
+      if (scoped) {
+        const mapped = rowToEntry(scoped)
+        const { _registryId, ...entry } = mapped
+        return { entry: entry as RegistryEntry, registryId: _registryId }
+      }
+    }
+
     // 1. Search mirror data (registry_items)
     const row = this.db.prepare(
       `SELECT * FROM registry_items WHERE slug = ? LIMIT 1`
