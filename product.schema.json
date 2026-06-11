@@ -161,6 +161,10 @@
         "homepage": {
           "type": "string",
           "description": "Default homepage URL for new browser tabs. Falls back to about:blank when policy is active but homepage is not set."
+        },
+        "userExtensible": {
+          "type": "boolean",
+          "description": "Allowlist mode only. When true, users may add their own allowlist entries from the desktop Settings UI and the blocked-page prompt (stored in config.json browser.customAllowlist). User entries can only widen the allowlist; mode and built-in patterns stay fixed. Omit/false to fully lock the allowlist (default)."
         }
       },
       "required": ["mode"]

@@ -78,7 +78,8 @@ src/
 │                                      #   window, overlay, onboarding, updater, notification,
 │                                      #   protocol, api-validator, model-capabilities,
 │                                      #   secure-storage, git-bash, git-bash-installer,
-│                                      #   mock-bash, browser-view, watcher-host
+│                                      #   mock-bash, browser-view, browser-policy,
+│                                      #   watcher-host
 │                                      #   (+ utilities: browser-login-pages, proxy-fetch)
 │
 ├── worker/                            # Utility processes (file-watcher)
@@ -179,7 +180,7 @@ All channels follow `module:action` format. Modules are organized by functional 
 | Auth & config | `auth`, `config`, `cli-config`, `model-capabilities` |
 | Conversation & agent | `conversation`, `agent` |
 | Space & artifact | `space`, `artifact`, `search` |
-| Browser | `browser`, `ai-browser`, `overlay` |
+| Browser | `browser`, `browser-policy`, `ai-browser`, `overlay` |
 | Apps & store | `app`, `store`, `onboarding` |
 | IM channels | `im-channels`, `im-sessions`, `wecom-bot`, `weixin-ilink` |
 | Transport & remote | `remote`, `notification-channels` |

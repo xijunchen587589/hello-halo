@@ -556,6 +556,15 @@ interface HaloConfig {
     proxy?: string  // Manual proxy URL. Empty string or undefined = use system proxy.
     browserUseProxy?: boolean  // When true, AI Browser also uses the Settings proxy. Default false = system proxy.
   }
+  // Browser configuration
+  browser?: {
+    /**
+     * User-added allowlist patterns merged on top of product.json
+     * browserPolicy.allowlist. Only honored when the build sets
+     * browserPolicy.userExtensible — see browser-policy.service.ts.
+     */
+    customAllowlist?: string[]
+  }
 }
 
 // MCP server configuration types
@@ -1097,6 +1106,10 @@ export function saveConfig(config: Partial<HaloConfig>): HaloConfig {
   // copilot: shallow merge (identity + simulation)
   if (config.copilot !== undefined) {
     newConfig.copilot = { ...currentConfig.copilot, ...config.copilot }
+  }
+  // browser: shallow merge (customAllowlist replaced as a whole when provided)
+  if (config.browser !== undefined) {
+    newConfig.browser = { ...currentConfig.browser, ...config.browser }
   }
   // network: shallow merge (proxy, future fields)
   if (config.network !== undefined) {

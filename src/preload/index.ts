@@ -217,6 +217,11 @@ export interface HaloAPI {
   // Security policy (renderer-safe slice — see ipc/security.ts)
   getSecurityPolicy: () => Promise<IpcResponse>
 
+  // Browser policy (user-extensible allowlist — see ipc/browser-policy.ts)
+  getBrowserPolicy: () => Promise<IpcResponse>
+  addBrowserAllowlistEntry: (pattern: string) => Promise<IpcResponse>
+  removeBrowserAllowlistEntry: (pattern: string) => Promise<IpcResponse>
+
   // System Settings
   getAutoLaunch: () => Promise<IpcResponse>
   setAutoLaunch: (enabled: boolean) => Promise<IpcResponse>
@@ -641,6 +646,11 @@ const api: HaloAPI = {
 
   // Security policy
   getSecurityPolicy: () => ipcRenderer.invoke('security:get-public-policy'),
+
+  // Browser policy
+  getBrowserPolicy: () => ipcRenderer.invoke('browser-policy:get'),
+  addBrowserAllowlistEntry: (pattern) => ipcRenderer.invoke('browser-policy:add', { pattern }),
+  removeBrowserAllowlistEntry: (pattern) => ipcRenderer.invoke('browser-policy:remove', { pattern }),
 
   // System Settings
   getAutoLaunch: () => ipcRenderer.invoke('system:get-auto-launch'),

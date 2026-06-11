@@ -29,6 +29,7 @@ import { registerSecurityHandlers } from '../ipc/security'
 import { enableRemoteAccess } from '../services/remote.service'
 import { getConfig, migrateCredentialEncryption } from '../services/config.service'
 import { registerBrowserHandlers } from '../ipc/browser'
+import { registerBrowserPolicyHandlers } from '../ipc/browser-policy'
 import { cleanupAIBrowser } from '../services/ai-browser'
 import { registerOverlayHandlers, cleanupOverlayHandlers } from '../ipc/overlay'
 import { initializeSearchHandlers, cleanupSearchHandlers } from '../ipc/search'
@@ -235,6 +236,9 @@ export function initializeExtendedServices(): void {
   // Browser: Embedded BrowserView for Content Canvas
   // Note: BrowserView is created lazily when Canvas is opened
   registerBrowserHandlers(mainWindow)
+
+  // Browser Policy: user-extensible allowlist (Settings + blocked-page action)
+  registerBrowserPolicyHandlers()
 
   // AI Browser: No startup registration needed.
   // Initialization is self-contained in createAIBrowserMcpServer() (called on

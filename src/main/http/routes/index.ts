@@ -52,6 +52,7 @@ import {
   isMcpAppSpec,
   patchTouchesMcp,
   configTouchesMcp,
+  rejectIfRemoteBrowserAllowlistForbidden,
   yamlIsMcpSpec,
   getPublicSecurityPolicy,
   MCP_COMMAND_BLOCKED,
@@ -207,6 +208,7 @@ export function registerApiRoutes(app: Express): void {
 
   app.post('/api/config', async (req: Request, res: Response) => {
     if (rejectIfRemoteMcpForbidden(res, () => configTouchesMcp(req.body), 'POST /api/config')) return
+    if (rejectIfRemoteBrowserAllowlistForbidden(res, req.body)) return
     const result = configController.setConfig(req.body)
     res.json(result)
   })

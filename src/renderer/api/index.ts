@@ -809,6 +809,30 @@ export const api = {
     return httpRequest('GET', '/api/security/policy')
   },
 
+  // ===== Browser Policy (Electron only) =====
+  // The user-extensible browser allowlist is a security boundary, so it can
+  // only be read/changed from the desktop app — there are no HTTP mirrors.
+  getBrowserPolicy: async (): Promise<ApiResponse> => {
+    if (!isElectron()) {
+      return { success: false, error: 'Only available in desktop app' }
+    }
+    return window.halo.getBrowserPolicy()
+  },
+
+  addBrowserAllowlistEntry: async (pattern: string): Promise<ApiResponse> => {
+    if (!isElectron()) {
+      return { success: false, error: 'Only available in desktop app' }
+    }
+    return window.halo.addBrowserAllowlistEntry(pattern)
+  },
+
+  removeBrowserAllowlistEntry: async (pattern: string): Promise<ApiResponse> => {
+    if (!isElectron()) {
+      return { success: false, error: 'Only available in desktop app' }
+    }
+    return window.halo.removeBrowserAllowlistEntry(pattern)
+  },
+
   // ===== Remote Access (Electron only) =====
   enableRemoteAccess: async (port?: number): Promise<ApiResponse> => {
     if (!isElectron()) {

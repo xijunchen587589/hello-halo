@@ -58,6 +58,14 @@ export interface BrowserPolicy {
   blocklist?: string[]
   /** Default homepage URL for new browser tabs (defaults to about:blank when policy is active) */
   homepage?: string
+  /**
+   * Allowlist mode only: when true, users may add their own allowlist
+   * entries (persisted in config.json `browser.customAllowlist`) via the
+   * Settings UI and the blocked-page "allow and retry" action. User entries
+   * can only widen the allowlist — mode and built-in patterns stay fixed.
+   * Omitted/false → the allowlist is fully locked (default).
+   */
+  userExtensible?: boolean
 }
 
 /**
