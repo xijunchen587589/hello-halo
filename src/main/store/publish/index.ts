@@ -5,7 +5,7 @@
  * the renderer never picks a target.
  */
 
-import { loadProductConfig } from '../../services/ai-sources/auth-loader'
+import { loadProductConfig } from '../../foundation/product-config'
 import { getAppManager } from '../../apps/manager'
 import type { AppManagerService } from '../../apps/manager'
 import { getRegistries, findStoreEntry } from '../registry.service'

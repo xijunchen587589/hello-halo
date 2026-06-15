@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 
-vi.mock('../../../src/main/services/security-policy', () => ({
+vi.mock('../../../src/main/foundation/credential-safety', () => ({
   isCredentialAtRestSafe: vi.fn(() => false),
 }))
 
@@ -22,14 +22,14 @@ import {
   initializeApp,
   getCredentialsGeneration,
   migrateCredentialEncryption
-} from '../../../src/main/services/config.service'
-import { isCredentialAtRestSafe } from '../../../src/main/services/security-policy'
+} from '../../../src/main/foundation/config.service'
+import { isCredentialAtRestSafe } from '../../../src/main/foundation/credential-safety'
 import {
   encodeForStorage,
   decodeFromStorage,
   needsKeyMigration,
   __resetKeyCacheForTests,
-} from '../../../src/main/http/auth/envelope'
+} from '../../../src/main/foundation/crypto-envelope'
 
 type MockFn = ReturnType<typeof vi.fn>
 function setCredentialAtRestSafe(on: boolean): void {

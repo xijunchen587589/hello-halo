@@ -14,12 +14,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // Mock the product config loader so each test controls the browser policy.
 // config.service also imports getDataFolderName from this module.
-vi.mock('../../../src/main/services/ai-sources/auth-loader', () => ({
-  loadProductConfig: vi.fn(() => ({})),
-  getDataFolderName: vi.fn(() => 'halo'),
-}))
+vi.mock('../../../src/main/foundation/product-config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/foundation/product-config')>()
+  return {
+    ...actual,
+    loadProductConfig: vi.fn(() => ({})),
+    getDataFolderName: vi.fn(() => 'halo'),
+  }
+})
 
-import { loadProductConfig } from '../../../src/main/services/ai-sources/auth-loader'
+import { loadProductConfig } from '../../../src/main/foundation/product-config'
 import {
   isUrlAllowedByPolicy,
   isHostnameTrustedForCertificates,

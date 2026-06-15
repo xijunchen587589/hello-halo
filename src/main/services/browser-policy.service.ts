@@ -18,8 +18,8 @@
  *   - ipc/browser-policy.ts — settings UI and blocked-page "allow and retry"
  */
 
-import { loadProductConfig } from './ai-sources/auth-loader'
-import { getConfig, saveConfig } from './config.service'
+import { loadProductConfig } from '../foundation/product-config'
+import { getConfig, saveConfig } from '../foundation/config.service'
 import { isBrowserAllowlistUserExtensible } from './security-policy'
 
 // ============================================

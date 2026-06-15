@@ -9,17 +9,17 @@ import { writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 
-vi.mock('../../../../src/main/services/security-policy', () => ({
+vi.mock('../../../../src/main/foundation/credential-safety', () => ({
   isCredentialAtRestSafe: vi.fn(() => false),
 }))
 
-import { isCredentialAtRestSafe } from '../../../../src/main/services/security-policy'
+import { isCredentialAtRestSafe } from '../../../../src/main/foundation/credential-safety'
 import {
   encodeForStorage,
   decodeFromStorage,
   needsKeyMigration,
   __resetKeyCacheForTests,
-} from '../../../../src/main/http/auth/envelope'
+} from '../../../../src/main/foundation/crypto-envelope'
 
 // Mirrors the electron mock in tests/unit/setup.ts: userData = <testDir>/.halo
 function credKeyPath(): string {

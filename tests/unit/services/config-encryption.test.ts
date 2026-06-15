@@ -9,11 +9,11 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-vi.mock('../../../src/main/services/security-policy', () => ({
+vi.mock('../../../src/main/foundation/credential-safety', () => ({
   isCredentialAtRestSafe: vi.fn(() => false),
 }))
 
-import { isCredentialAtRestSafe } from '../../../src/main/services/security-policy'
+import { isCredentialAtRestSafe } from '../../../src/main/foundation/credential-safety'
 import {
   encryptConfigFields,
   decryptConfigFields,
@@ -21,7 +21,7 @@ import {
   unmaskSentinels,
   configHasUnmigratedCredentials,
   MASK_SENTINEL,
-} from '../../../src/main/services/config-encryption'
+} from '../../../src/main/foundation/config-encryption'
 
 type MockFn = ReturnType<typeof vi.fn>
 

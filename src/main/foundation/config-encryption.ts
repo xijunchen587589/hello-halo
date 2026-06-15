@@ -12,7 +12,7 @@
  * every masked/encrypted field is auditable at code-review time.
  */
 
-import { encodeForStorage, decodeFromStorage, needsKeyMigration } from '../http/auth/envelope'
+import { encodeForStorage, decodeFromStorage, needsKeyMigration } from './crypto-envelope'
 
 // ============================================================================
 // Mask sentinel — the value returned to clients in place of real secrets.

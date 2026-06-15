@@ -7,11 +7,10 @@ import { dirname, join } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'fs'
 import { v4 as uuidv4 } from 'uuid'
-import { getDataFolderName } from './ai-sources/auth-loader'
-import { isCredentialAtRestSafe } from './security-policy'
+import { getDataFolderName } from './product-config'
 
 // Import analytics config type
-import type { AnalyticsConfig } from './analytics/types'
+import type { AnalyticsConfig } from '../services/analytics/types'
 import type {
   AISourcesConfig,
   AISource,
@@ -23,7 +22,8 @@ import type {
 import { BUILTIN_PROVIDERS, getBuiltinProvider } from '../../shared/constants'
 import { decryptString } from './secure-storage.service'
 import { encryptConfigFields, decryptConfigFields, configHasUnmigratedCredentials } from './config-encryption'
-import { encodeForStorage, decodeFromStorage, needsKeyMigration } from '../http/auth/envelope'
+import { encodeForStorage, decodeFromStorage, needsKeyMigration } from './crypto-envelope'
+import { isCredentialAtRestSafe } from './credential-safety'
 
 // ============================================================================
 // ENCRYPTED DATA MIGRATION

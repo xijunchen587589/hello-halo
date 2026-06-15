@@ -17,13 +17,11 @@ vi.mock("../../../src/main/apps/runtime", () => ({
   getAppRuntime: getAppRuntimeMock,
 }))
 
-// Adapters fetch via proxyFetch (system-proxy aware), which does not go through
-// the stubbed global fetch. Route it back so fetchMock intercepts all traffic.
 vi.mock("../../../src/main/services/proxy-fetch", () => ({
   proxyFetch: (url: string | URL, init?: RequestInit) => fetch(String(url), init),
 }))
 
-vi.mock("../../../src/main/services/ai-sources/auth-loader", () => ({
+vi.mock("../../../src/main/foundation/product-config", () => ({
   loadProductConfig: loadProductConfigMock,
   // config.service indirectly imports getDataFolderName via the same
   // module; provide a deterministic fallback so the test mock surface

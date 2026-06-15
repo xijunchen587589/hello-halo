@@ -34,7 +34,7 @@
  *   app:open-data-folder   Reveal an automation app's data/memory directory in the OS file manager
  */
 
-import { ipcMain, shell } from 'electron'
+import { shell } from 'electron'
 import { existsSync } from 'fs'
 import { getAppManager } from '../apps/manager'
 import { AppAlreadyInstalledError, McpCommandBlockedError } from '../apps/manager/errors'
@@ -62,6 +62,8 @@ import { broadcastToAll } from '../http/websocket'
 import * as appController from '../controllers/app.controller'
 import { analytics } from '../services/analytics/analytics.service'
 import { AnalyticsEvents } from '../services/analytics/types'
+import { appRpc } from '../../shared/rpc/contracts/app.contract'
+import { registerRawRpcHandlers } from './rpc'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -95,53 +97,22 @@ function requireRuntime() {
 // ---------------------------------------------------------------------------
 
 export function registerAppHandlers(): void {
-  // ── app:install ──────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:install',
-    async (_event, input: { spaceId: string | null; spec: AppSpec; userConfig?: Record<string, unknown> }) => {
-      try {
-        const r = requireManager()
-        if (!r.success) return r
-        const appId = await r.manager.install(input.spaceId, input.spec, input.userConfig)
-
-        // Auto-activate in the runtime if runtime is ready
-        const runtime = getAppRuntime()
-        let activationWarning: string | undefined
-        if (runtime) {
-          try {
-            await runtime.activate(appId)
-          } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err)
-            console.warn(`[AppIPC] app:install -- runtime activate failed: ${errMsg}`)
-            activationWarning = errMsg
-          }
-        }
-
-        console.log(`[AppIPC] app:install: appId=${appId}, space=${input.spaceId}`)
-        return { success: true, data: { appId, activationWarning } }
-      } catch (error: unknown) {
-        const err = error as Error
-        console.error('[AppIPC] app:install error:', err.message)
-        analytics.trackErrorSurface('app-install', err)
-        // Surface a stable discriminator so the renderer can render a
-        // localized, friendly message for known failure modes instead of
-        // dumping the raw English error text from the manager.
-        if (error instanceof McpCommandBlockedError) {
-          console.warn(`[AppIPC] app:install blocked by policy: command='${error.command}'`)
-          return { success: false, error: MCP_COMMAND_BLOCKED_MESSAGE, code: 'MCP_COMMAND_BLOCKED' }
-        }
-        if (error instanceof AppAlreadyInstalledError) {
-          return { success: false, error: err.message, code: 'ALREADY_INSTALLED' }
-        }
-        return { success: false, error: err.message }
+  registerRawRpcHandlers(appRpc, {
+    // ── app:install ──────────────────────────────────────────────────────────
+    appInstall: async (input: { spaceId: string | null; spec: AppSpec; userConfig?: Record<string, unknown> }) => {
+      // Shared install + activate orchestration lives in the controller.
+      const result = await appController.installApp(input.spaceId, input.spec, input.userConfig)
+      if (result.success) {
+        console.log(`[AppIPC] app:install: appId=${result.data.appId}, space=${input.spaceId}`)
+      } else {
+        console.error('[AppIPC] app:install error:', result.error)
+        analytics.trackErrorSurface('app-install', new Error(result.error))
       }
-    }
-  )
+      return result
+    },
 
-  // ── app:uninstall ────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:uninstall',
-    async (_event, input: { appId: string; options?: UninstallOptions }) => {
+    // ── app:uninstall ────────────────────────────────────────────────────────
+    appUninstall: async (input: { appId: string; options?: UninstallOptions }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -162,13 +133,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:uninstall error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:reinstall ──────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:reinstall',
-    async (_event, input: { appId: string }) => {
+    // ── app:reinstall ──────────────────────────────────────────────────────
+    appReinstall: async (input: { appId: string }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -195,17 +163,14 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:reinstall error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:delete ─────────────────────────────────────────────────────────
-  // NOTE: external callers (renderer, HTTP) must NOT be able to bypass the
-  // built-in protection guard. We deliberately do NOT forward any options
-  // from the input — `deleteApp` is invoked with no second argument, so
-  // `BuiltinAppProtectedError` will fire as designed for built-in apps.
-  ipcMain.handle(
-    'app:delete',
-    async (_event, input: { appId: string }) => {
+    // ── app:delete ─────────────────────────────────────────────────────────
+    // NOTE: external callers (renderer, HTTP) must NOT be able to bypass the
+    // built-in protection guard. We deliberately do NOT forward any options
+    // from the input — `deleteApp` is invoked with no second argument, so
+    // `BuiltinAppProtectedError` will fire as designed for built-in apps.
+    appDelete: async (input: { appId: string }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -225,13 +190,10 @@ export function registerAppHandlers(): void {
         // surfacing the raw English error text.
         return { success: false, error: err.message, errorName: err.name }
       }
-    }
-  )
+    },
 
-  // ── app:list ─────────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:list',
-    async (_event, filter?: AppListFilter) => {
+    // ── app:list ─────────────────────────────────────────────────────────────
+    appList: async (filter?: AppListFilter) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -242,13 +204,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:list error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:get ──────────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:get',
-    async (_event, appId: string) => {
+    // ── app:get ──────────────────────────────────────────────────────────────
+    appGet: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -259,13 +218,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:get error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:pause ────────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:pause',
-    async (_event, appId: string) => {
+    // ── app:pause ────────────────────────────────────────────────────────────
+    appPause: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -286,13 +242,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:pause error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:resume ───────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:resume',
-    async (_event, appId: string) => {
+    // ── app:resume ───────────────────────────────────────────────────────────
+    appResume: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -318,13 +271,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:resume error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:trigger ──────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:trigger',
-    async (_event, appId: string) => {
+    // ── app:trigger ──────────────────────────────────────────────────────────
+    appTrigger: async (appId: string) => {
       try {
         const r = requireRuntime()
         if (!r.success) return r
@@ -336,13 +286,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:trigger error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:get-state ────────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:get-state',
-    async (_event, appId: string) => {
+    // ── app:get-state ────────────────────────────────────────────────────────
+    appGetState: async (appId: string) => {
       try {
         const r = requireRuntime()
         if (!r.success) return r
@@ -353,13 +300,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:get-state error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:get-activity ─────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:get-activity',
-    async (_event, input: { appId: string; options?: ActivityQueryOptions }) => {
+    // ── app:get-activity ─────────────────────────────────────────────────────
+    appGetActivity: async (input: { appId: string; options?: ActivityQueryOptions }) => {
       try {
         const r = requireRuntime()
         if (!r.success) return r
@@ -370,13 +314,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:get-activity error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:respond-escalation ───────────────────────────────────────────────
-  ipcMain.handle(
-    'app:respond-escalation',
-    async (_event, input: { appId: string; escalationId: string; response: EscalationResponse }) => {
+    // ── app:respond-escalation ───────────────────────────────────────────────
+    appRespondEscalation: async (input: { appId: string; escalationId: string; response: EscalationResponse }) => {
       try {
         const r = requireRuntime()
         if (!r.success) return r
@@ -388,13 +329,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:respond-escalation error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:continue-run ─────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:continue-run',
-    async (_event, input: { appId: string; runId: string }) => {
+    // ── app:continue-run ─────────────────────────────────────────────────────
+    appContinueRun: async (input: { appId: string; runId: string }) => {
       try {
         const r = requireRuntime()
         if (!r.success) return r
@@ -406,15 +344,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:continue-run error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:inject-run ───────────────────────────────────────────────────────
-  // Inject a user supplement into a currently-running automation run
-  // (mid-run correction from the run-detail view).
-  ipcMain.handle(
-    'app:inject-run',
-    async (_event, input: { appId: string; runId: string; text: string }) => {
+    // ── app:inject-run ───────────────────────────────────────────────────────
+    appInjectRun: async (input: { appId: string; runId: string; text: string }) => {
       try {
         const r = requireRuntime()
         if (!r.success) return r
@@ -426,13 +359,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:inject-run error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:update-config ────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:update-config',
-    async (_event, input: { appId: string; config: Record<string, unknown> }) => {
+    // ── app:update-config ────────────────────────────────────────────────────
+    appUpdateConfig: async (input: { appId: string; config: Record<string, unknown> }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -444,13 +374,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:update-config error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:update-frequency ─────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:update-frequency',
-    async (_event, input: { appId: string; subscriptionId: string; frequency: string }) => {
+    // ── app:update-frequency ─────────────────────────────────────────────────
+    appUpdateFrequency: async (input: { appId: string; subscriptionId: string; frequency: string }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -470,13 +397,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:update-frequency error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:update-overrides ────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:update-overrides',
-    async (_event, input: { appId: string; overrides: Record<string, unknown> }) => {
+    // ── app:update-overrides ────────────────────────────────────────────────
+    appUpdateOverrides: async (input: { appId: string; overrides: Record<string, unknown> }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -488,13 +412,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:update-overrides error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:update-spec ──────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:update-spec',
-    async (_event, input: { appId: string; specPatch: Record<string, unknown> }) => {
+    // ── app:update-spec ──────────────────────────────────────────────────────
+    appUpdateSpec: async (input: { appId: string; specPatch: Record<string, unknown> }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -521,13 +442,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:update-spec error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:grant-permission ──────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:grant-permission',
-    async (_event, input: { appId: string; permission: string }) => {
+    // ── app:grant-permission ──────────────────────────────────────────────────
+    appGrantPermission: async (input: { appId: string; permission: string }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -539,13 +457,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:grant-permission error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:set-upgrade-strategy ────────────────────────────────────────────
-  ipcMain.handle(
-    'app:set-upgrade-strategy',
-    async (_event, input: { appId: string; strategy: UpgradeStrategy }) => {
+    // ── app:set-upgrade-strategy ────────────────────────────────────────────
+    appSetUpgradeStrategy: async (input: { appId: string; strategy: UpgradeStrategy }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -557,13 +472,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:set-upgrade-strategy error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:revoke-permission ─────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:revoke-permission',
-    async (_event, input: { appId: string; permission: string }) => {
+    // ── app:revoke-permission ─────────────────────────────────────────────────
+    appRevokePermission: async (input: { appId: string; permission: string }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -575,13 +487,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:revoke-permission error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:get-session ──────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:get-session',
-    async (_event, input: { appId: string; runId: string }) => {
+    // ── app:get-session ──────────────────────────────────────────────────────
+    appGetSession: async (input: { appId: string; runId: string }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -607,13 +516,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:get-session error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-send ─────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:chat-send',
-    async (_event, request: AppChatRequest) => {
+    // ── app:chat-send ─────────────────────────────────────────────────────
+    appChatSend: async (request: AppChatRequest) => {
       try {
         // Telemetry: count user-sent messages to app chat (no content).
         // specId is reverse-looked-up so dashboards can label the digital
@@ -643,13 +549,10 @@ export function registerAppHandlers(): void {
         analytics.trackErrorSurface('app-chat-send', err)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-stop ──────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:chat-stop',
-    async (_event, appId: string) => {
+    // ── app:chat-stop ──────────────────────────────────────────────────────
+    appChatStop: async (appId: string) => {
       try {
         await stopAppChat(appId)
         console.log(`[AppIPC] app:chat-stop: appId=${appId}`)
@@ -659,13 +562,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:chat-stop error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-status ────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:chat-status',
-    async (_event, appId: string) => {
+    // ── app:chat-status ────────────────────────────────────────────────────
+    appChatStatus: async (appId: string) => {
       try {
         return {
           success: true,
@@ -679,13 +579,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:chat-status error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-messages ──────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:chat-messages',
-    async (_event, input: { appId: string; spaceId: string }) => {
+    // ── app:chat-messages ──────────────────────────────────────────────────
+    appChatMessages: async (input: { appId: string; spaceId: string }) => {
       try {
         const space = getSpace(input.spaceId)
         if (!space?.path) {
@@ -698,13 +595,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:chat-messages error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-session-state ─────────────────────────────────────────────
-  ipcMain.handle(
-    'app:chat-session-state',
-    async (_event, appId: string) => {
+    // ── app:chat-session-state ─────────────────────────────────────────────
+    appChatSessionState: async (appId: string) => {
       try {
         const state = getAppChatSessionState(appId)
         return { success: true, data: state }
@@ -713,13 +607,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:chat-session-state error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-clear ────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:chat-clear',
-    async (_event, input: { appId: string; spaceId: string }) => {
+    // ── app:chat-clear ────────────────────────────────────────────────────
+    appChatClear: async (input: { appId: string; spaceId: string }) => {
       try {
         await clearAppChat(input.appId, input.spaceId)
         console.log(`[AppIPC] app:chat-clear: appId=${input.appId}`)
@@ -729,16 +620,13 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:chat-clear error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:chat-restart ─────────────────────────────────────────────────
-  // Closes all Claude Code subprocesses for an app's chat sessions (native
-  // + every IM channel session) so the next message loads the latest system
-  // prompt and config. Conversation history is preserved via saved sessionId.
-  ipcMain.handle(
-    'app:chat-restart',
-    async (_event, appId: string) => {
+    // ── app:chat-restart ─────────────────────────────────────────────────
+    // Closes all Claude Code subprocesses for an app's chat sessions (native
+    // + every IM channel session) so the next message loads the latest system
+    // prompt and config. Conversation history is preserved via saved sessionId.
+    appChatRestart: async (appId: string) => {
       try {
         const result = await restartAppChat(appId)
         console.log(`[AppIPC] app:chat-restart: appId=${appId}, closed=${result.sessionsClosed}`)
@@ -748,13 +636,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:chat-restart error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:im-chat-messages ────────────────────────────────────────────
-  ipcMain.handle(
-    'app:im-chat-messages',
-    async (_event, input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => {
+    // ── app:im-chat-messages ────────────────────────────────────────────
+    appImChatMessages: async (input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => {
       try {
         const space = getSpace(input.spaceId)
         if (!space?.path) {
@@ -767,13 +652,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:im-chat-messages error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:im-chat-clear ────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:im-chat-clear',
-    async (_event, input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => {
+    // ── app:im-chat-clear ────────────────────────────────────────────────
+    appImChatClear: async (input: { appId: string; spaceId: string; channel: string; chatType: 'direct' | 'group'; chatId: string }) => {
       try {
         await clearImSession(input.appId, input.spaceId, input.channel, input.chatType, input.chatId)
         console.log(`[AppIPC] app:im-chat-clear: appId=${input.appId} channel=${input.channel} chatId=${input.chatId}`)
@@ -783,13 +665,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:im-chat-clear error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:export-spec ────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:export-spec',
-    async (_event, appId: string) => {
+    // ── app:export-spec ────────────────────────────────────────────────────
+    appExportSpec: async (appId: string) => {
       try {
         const result = appController.exportSpec(appId)
         if (result.success) {
@@ -801,13 +680,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:export-spec error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:import-spec ────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:import-spec',
-    async (_event, input: { spaceId: string | null; yamlContent: string; userConfig?: Record<string, unknown> }) => {
+    // ── app:import-spec ────────────────────────────────────────────────────
+    appImportSpec: async (input: { spaceId: string | null; yamlContent: string; userConfig?: Record<string, unknown> }) => {
       try {
         const result = await appController.importSpec(input)
         if (result.success) {
@@ -819,13 +695,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:import-spec error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:open-skill-folder ──────────────────────────────────────────────
-  ipcMain.handle(
-    'app:open-skill-folder',
-    async (_event, appId: string) => {
+    // ── app:open-skill-folder ──────────────────────────────────────────────
+    appOpenSkillFolder: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -856,13 +729,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:open-skill-folder error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:get-data-path ──────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:get-data-path',
-    async (_event, appId: string) => {
+    // ── app:get-data-path ──────────────────────────────────────────────────
+    appGetDataPath: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -879,13 +749,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:get-data-path error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:open-data-folder ────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:open-data-folder',
-    async (_event, appId: string) => {
+    // ── app:open-data-folder ────────────────────────────────────────────────
+    appOpenDataFolder: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -908,13 +775,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:open-data-folder error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:clear-memory ────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:clear-memory',
-    async (_event, appId: string) => {
+    // ── app:clear-memory ────────────────────────────────────────────────────
+    appClearMemory: async (appId: string) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -932,13 +796,10 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:clear-memory error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
 
-  // ── app:move-space ─────────────────────────────────────────────────────
-  ipcMain.handle(
-    'app:move-space',
-    async (_event, input: { appId: string; newSpaceId: string | null }) => {
+    // ── app:move-space ─────────────────────────────────────────────────────
+    appMoveSpace: async (input: { appId: string; newSpaceId: string | null }) => {
       try {
         const r = requireManager()
         if (!r.success) return r
@@ -984,8 +845,8 @@ export function registerAppHandlers(): void {
         console.error('[AppIPC] app:move-space error:', err.message)
         return { success: false, error: err.message }
       }
-    }
-  )
+    },
+  })
 
   console.log('[AppIPC] App management handlers registered (30 channels)')
 }
