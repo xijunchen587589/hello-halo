@@ -10,6 +10,7 @@ import {
   convertAnthropicThinkingToResponsesReasoning
 } from '../tools'
 import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
+import { buildStreamOptionsIncludeUsage } from './stream-options'
 
 export interface ConversionResult {
   request: OpenAIResponsesRequest
@@ -59,6 +60,14 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
     model: anthropicRequest.model,
     input: inputItems,
     stream: anthropicRequest.stream
+  }
+
+  // Mirror the Chat Completions path: OpenAI-compatible gateways return usage
+  // in the final streamed chunk only when `stream_options.include_usage` is
+  // explicitly set. Otherwise the Responses API stream omits usage entirely
+  // and the TokenUsageIndicator shows zeros.
+  if (request.stream) {
+    request.stream_options = buildStreamOptionsIncludeUsage()
   }
 
   // Add tools if present
