@@ -110,6 +110,11 @@ export function supportsVisionById(modelId: string | undefined | null): boolean 
  * upstream 400. Prefixes are matched with a token-boundary guard (see
  * {@link isReasoningModelById}) so substrings like "gpt-4o-1" are not trapped
  * and version suffixes (e.g. `-2024-12-17`, `-mini`) are still covered.
+ *
+ * A non-OpenAI provider that happens to ship an id starting with one of these
+ * prefixes would also match — the list is intentionally limited to minimize
+ * that risk, and providers with such collisions should override at a higher
+ * layer.
  */
 const REASONING_MODEL_PREFIXES: string[] = [
   // OpenAI reasoning family — rejects max_tokens, accepts max_completion_tokens
@@ -121,22 +126,16 @@ const REASONING_MODEL_PREFIXES: string[] = [
 /**
  * Check whether a model id belongs to a reasoning model that requires
  * `max_completion_tokens` instead of `max_tokens` on OpenAI-compatible
- * Chat Completions endpoints.
- *
- * Used by the openai-compat router where only the request body's `model`
- * string is available. The prefix list is intentionally limited to
- * well-known OpenAI reasoning families; the token-boundary guard prevents
- * false positives such as "gpt-4o-1". A non-OpenAI provider that happens
- * to ship an id starting with one of these prefixes would still match —
- * providers with such collisions should override at a higher layer.
+ * Chat Completions endpoints. Used by the openai-compat router where only
+ * the request body's `model` string is available.
  */
 export function isReasoningModelById(modelId: string | undefined | null): boolean {
   if (!modelId) return false
   const lower = modelId.toLowerCase()
-  // Guard against false positives like "gpt-4o-1" — require the family prefix
-  // to be followed by a non-alphanumeric boundary (end of string, '-', '.').
   return REASONING_MODEL_PREFIXES.some((prefix) => {
     if (!lower.startsWith(prefix)) return false
+    // Token-boundary guard: require end-of-string, '-', or '.' after the
+    // prefix so substrings like "o1" in "gpt-4o-1" are not trapped.
     const next = lower[prefix.length]
     return next === undefined || next === '-' || next === '.'
   })

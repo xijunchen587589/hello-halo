@@ -46,11 +46,6 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
     stream: anthropicRequest.stream
   }
 
-  // Forward the user-configured output length. Anthropic requires max_tokens,
-  // so honoring it lets downstream OpenAI-compatible providers respect the
-  // user's Halo "max output tokens" setting instead of falling back to a
-  // provider default that may truncate long responses.
-  //
   // OpenAI reasoning models (o1/o3/o4-mini, gpt-5 thinking variants) reject
   // `max_tokens` with HTTP 400 and only accept `max_completion_tokens`. Route
   // the value to the correct field based on the model family.

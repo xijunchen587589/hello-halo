@@ -12,8 +12,8 @@
  *     (o1/o3/o4-mini, gpt-5-thinking variants) and avoids the `gpt-4o-1`
  *     false-positive trap.
  *
- * These tests live under the canonical `tests/unit/services/` path so they are
- * picked up by the project vitest config (include: 'unit/<glob>.test.ts').
+ * These tests live under the canonical `tests/unit/services/` path so they
+ * match the project vitest config's recursive `tests/unit/` include pattern.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -102,8 +102,7 @@ describe('Chat Completions — max_tokens forwarding (issue #137)', () => {
 
   it('truncates fractional max_tokens to an integer', () => {
     // OpenAI-compatible APIs require an integer for max_tokens /
-    // max_completion_tokens; a fractional value triggers HTTP 400. The
-    // converter normalizes at the protocol boundary.
+    // max_completion_tokens; a fractional value triggers HTTP 400.
     const request: AnthropicRequest = {
       model: 'gpt-4o',
       max_tokens: 4096.9,
@@ -232,9 +231,8 @@ describe('isReasoningModelById', () => {
   })
 
   it('rejects the gpt-4o-1 false-positive trap', () => {
-    // "gpt-4o-1" contains the "o1" prefix as a substring but is not a reasoning
-    // model. The token-boundary guard (prefix must be followed by end-of-string,
-    // '-', or '.') rejects it.
+    // Exercises the same token-boundary guard as the converter-level test
+    // above, but at the detector level.
     expect(isReasoningModelById('gpt-4o-1')).toBe(false)
     expect(isReasoningModelById('gpt-4o')).toBe(false)
     expect(isReasoningModelById('gpt-4o-mini')).toBe(false)

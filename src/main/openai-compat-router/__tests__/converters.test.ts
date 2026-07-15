@@ -1,9 +1,9 @@
 /**
  * Unit Tests for Converters (colocated)
  *
- * This file is outside the vitest CI include glob (`tests/unit/**/*.test.ts`)
- * and runs only when invoked manually. It is retained for local development
- * of legacy converter behavior.
+ * This file is outside the vitest CI include pattern and runs only when
+ * invoked manually. It is retained for local development of legacy converter
+ * behavior.
  *
  * Canonical tests for issue #137 (max_tokens routing, reasoning model
  * detection, output-token normalization) live in
