@@ -54,11 +54,19 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
   const hasTools = !!tools && tools.length > 0
 
   // Build request - only include essential parameters
-  // Omit max_output_tokens as many providers don't support it
   const request: OpenAIResponsesRequest = {
     model: anthropicRequest.model,
     input: inputItems,
     stream: anthropicRequest.stream
+  }
+
+  // Forward the user-configured output length, mirroring the Chat Completions
+  // path. The Responses API field is `max_output_tokens` and is part of the
+  // public spec, so providers implementing the Responses endpoint accept it.
+  // Without this, Halo's "max output tokens" setting is silently dropped for
+  // any backend routed through the Responses API.
+  if (typeof anthropicRequest.max_tokens === 'number' && anthropicRequest.max_tokens > 0) {
+    request.max_output_tokens = anthropicRequest.max_tokens
   }
 
   // Add tools if present

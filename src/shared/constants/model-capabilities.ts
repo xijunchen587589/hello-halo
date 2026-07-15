@@ -1,11 +1,16 @@
 /**
- * Model Capabilities — Vision Support Detection
+ * Model Capabilities — Capability Detection From Model IDs
  *
- * Maintains a blacklist of known non-vision models and provides a unified
- * query function for checking vision support. Used by InputArea to block
- * image input for models that don't support it.
+ * Maintains pattern lists for capability inference from a model id string and
+ * provides unified query functions. Currently covers:
+ *   - Vision support: used by InputArea to block image input for non-vision
+ *     models, and by the OpenAI-compat router to strip image blocks.
+ *   - Reasoning model detection: used by the OpenAI-compat router to pick the
+ *     correct output-length parameter (`max_completion_tokens` for reasoning
+ *     models, `max_tokens` otherwise). OpenAI rejects `max_tokens` on the
+ *     o1/o3/o4-mini and gpt-5-thinking families with HTTP 400.
  *
- * Resolution order:
+ * Resolution order (vision):
  *   1. Explicit ModelOption.supportsVision (provider-declared) — highest priority
  *   2. Vision keyword whitelist (e.g. "-vl", "vision", "omni")
  *   3. Non-vision pattern blacklist (e.g. "deepseek", "glm-4")
@@ -94,4 +99,41 @@ export function supportsVision(model: ModelOption): boolean {
 export function supportsVisionById(modelId: string | undefined | null): boolean {
   if (!modelId) return true
   return inferVisionSupport(modelId)
+}
+
+/**
+ * Known reasoning model patterns.
+ *
+ * OpenAI's reasoning family (o1, o3, o4-mini, gpt-5 thinking variants)
+ * deprecates `max_tokens` and only accepts `max_completion_tokens`. Matching
+ * these ids lets the OpenAI-compat router emit the right field and avoid an
+ * upstream 400. Matches via modelId.toLowerCase().startsWith(pattern) so the
+ * version suffix (e.g. `-2024-12-17`, `-mini`) is covered.
+ */
+const REASONING_MODEL_PREFIXES: string[] = [
+  // OpenAI reasoning family — rejects max_tokens, accepts max_completion_tokens
+  'o1', 'o3', 'o4',
+  // GPT-5 thinking variants — same restriction
+  'gpt-5-thinking', 'gpt-5-reasoning'
+]
+
+/**
+ * Check whether a model id belongs to a reasoning model that requires
+ * `max_completion_tokens` instead of `max_tokens` on OpenAI-compatible
+ * Chat Completions endpoints.
+ *
+ * Used by the openai-compat router where only the request body's `model`
+ * string is available. Conservative by design: only well-known reasoning
+ * family prefixes match, so non-OpenAI providers are unaffected.
+ */
+export function isReasoningModelById(modelId: string | undefined | null): boolean {
+  if (!modelId) return false
+  const lower = modelId.toLowerCase()
+  // Guard against false positives like "gpt-4o-1" — require the family prefix
+  // to be followed by a non-alphanumeric boundary (end of string, '-', '.').
+  return REASONING_MODEL_PREFIXES.some((prefix) => {
+    if (!lower.startsWith(prefix)) return false
+    const next = lower[prefix.length]
+    return next === undefined || next === '-' || next === '.'
+  })
 }

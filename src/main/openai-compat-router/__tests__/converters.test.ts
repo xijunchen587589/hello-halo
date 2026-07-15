@@ -50,6 +50,37 @@ describe('Request Converters', () => {
       expect(result.request.max_tokens).toBeUndefined()
     })
 
+    it('should route max_tokens to max_completion_tokens for reasoning models', () => {
+      // OpenAI reasoning family rejects `max_tokens` with HTTP 400; the
+      // converter must emit `max_completion_tokens` instead so the user's
+      // Halo "max output tokens" setting is honored without breaking the
+      // request.
+      const request: AnthropicRequest = {
+        model: 'o3-mini',
+        max_tokens: 32000,
+        messages: [{ role: 'user', content: 'Hello' }]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      expect(result.request.max_completion_tokens).toBe(32000)
+      expect(result.request.max_tokens).toBeUndefined()
+    })
+
+    it('should keep max_tokens for gpt-4o-1 (non-reasoning, starts with "o" trap)', () => {
+      // Guard against a naive startsWith('o') check trapping "gpt-4o-1".
+      const request: AnthropicRequest = {
+        model: 'gpt-4o-1',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: 'Hello' }]
+      }
+
+      const result = convertAnthropicToOpenAIChat(request)
+
+      expect(result.request.max_tokens).toBe(4096)
+      expect(result.request.max_completion_tokens).toBeUndefined()
+    })
+
     it('should convert system prompt to system message', () => {
       const request: AnthropicRequest = {
         model: 'claude-3-opus',
@@ -415,8 +446,9 @@ describe('Request Converters', () => {
       const result = convertAnthropicToOpenAIResponses(request)
 
       expect(result.request.model).toBe('claude-3-opus')
-      // max_output_tokens is deliberately omitted — many providers don't support it
-      expect(result.request.max_output_tokens).toBeUndefined()
+      // The Responses API field `max_output_tokens` is part of the public spec
+      // and is forwarded so the user's "max output tokens" setting is honored.
+      expect(result.request.max_output_tokens).toBe(1024)
       expect(result.request.input).toHaveLength(1)
       expect((result.request.input as any)[0].role).toBe('user')
       expect((result.request.input as any)[0].content[0]).toEqual({
@@ -452,6 +484,21 @@ describe('Request Converters', () => {
       expect(functionCall).toBeDefined()
       expect(functionCall.call_id).toBe('call_789')
       expect(functionCall.name).toBe('search')
+    })
+
+    it('should omit max_output_tokens when max_tokens is not a positive value', () => {
+      // Mirrors the Chat Completions boundary guard: non-positive values must
+      // not be forwarded so providers fall back to their own defaults rather
+      // than receiving an invalid zero/negative cap.
+      const request: AnthropicRequest = {
+        model: 'claude-3-opus',
+        max_tokens: 0,
+        messages: [{ role: 'user', content: 'Hello!' }]
+      }
+
+      const result = convertAnthropicToOpenAIResponses(request)
+
+      expect(result.request.max_output_tokens).toBeUndefined()
     })
   })
 

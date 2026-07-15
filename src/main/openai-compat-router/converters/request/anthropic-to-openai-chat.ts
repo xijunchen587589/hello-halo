@@ -9,7 +9,7 @@ import {
   convertAnthropicToolChoiceToOpenAIChat,
   convertAnthropicThinkingToChatReasoningEffort
 } from '../tools'
-import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
+import { supportsVisionById, isReasoningModelById } from '../../../../shared/constants/model-capabilities'
 
 export interface ConversionResult {
   request: OpenAIChatRequest
@@ -49,8 +49,16 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
   // so honoring it lets downstream OpenAI-compatible providers respect the
   // user's Halo "max output tokens" setting instead of falling back to a
   // provider default that may truncate long responses.
+  //
+  // OpenAI reasoning models (o1/o3/o4-mini, gpt-5 thinking variants) reject
+  // `max_tokens` with HTTP 400 and only accept `max_completion_tokens`. Route
+  // the value to the correct field based on the model family.
   if (typeof anthropicRequest.max_tokens === 'number' && anthropicRequest.max_tokens > 0) {
-    openaiRequest.max_tokens = anthropicRequest.max_tokens
+    if (isReasoningModelById(anthropicRequest.model)) {
+      openaiRequest.max_completion_tokens = anthropicRequest.max_tokens
+    } else {
+      openaiRequest.max_tokens = anthropicRequest.max_tokens
+    }
   }
 
   // Add tools if present
