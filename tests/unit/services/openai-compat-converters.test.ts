@@ -114,6 +114,38 @@ describe('Chat Completions — max_tokens forwarding (issue #137)', () => {
 
     expect(result.request.max_tokens).toBe(4096)
   })
+
+  it('truncates fractional max_tokens to an integer for reasoning models', () => {
+    // Cross-path: the integer normalization in resolveOutputTokenLimit must
+    // run before the reasoning-model routing, so max_completion_tokens also
+    // receives a truncated integer.
+    const request: AnthropicRequest = {
+      model: 'o3-mini',
+      max_tokens: 32000.7,
+      messages: [{ role: 'user', content: 'Hello' }]
+    }
+
+    const result = convertAnthropicToOpenAIChat(request)
+
+    expect(result.request.max_completion_tokens).toBe(32000)
+    expect(result.request.max_tokens).toBeUndefined()
+  })
+
+  it('omits both fields when max_tokens is 0 for reasoning models', () => {
+    // Cross-path: the non-positive guard must short-circuit before the
+    // reasoning routing, so neither max_completion_tokens nor max_tokens
+    // is emitted.
+    const request: AnthropicRequest = {
+      model: 'o3-mini',
+      max_tokens: 0,
+      messages: [{ role: 'user', content: 'Hello' }]
+    }
+
+    const result = convertAnthropicToOpenAIChat(request)
+
+    expect(result.request.max_completion_tokens).toBeUndefined()
+    expect(result.request.max_tokens).toBeUndefined()
+  })
 })
 
 describe('Responses API — max_output_tokens forwarding (issue #137)', () => {

@@ -1,5 +1,14 @@
 /**
- * Unit Tests for Converters
+ * Unit Tests for Converters (colocated)
+ *
+ * This file is outside the vitest CI include glob (`tests/unit/**/*.test.ts`)
+ * and runs only when invoked manually. It is retained for local development
+ * of legacy converter behavior.
+ *
+ * Canonical tests for issue #137 (max_tokens routing, reasoning model
+ * detection, output-token normalization) live in
+ * `tests/unit/services/openai-compat-converters.test.ts` — that file is the
+ * mandatory pre-handoff validation source. Do not add new #137 coverage here.
  */
 
 import { describe, it, expect } from 'vitest'
