@@ -10,6 +10,7 @@ import {
   convertAnthropicThinkingToResponsesReasoning
 } from '../tools'
 import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
+import { resolveOutputTokenLimit } from './max-tokens'
 
 export interface ConversionResult {
   request: OpenAIResponsesRequest
@@ -65,8 +66,9 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
   // public spec, so providers implementing the Responses endpoint accept it.
   // Without this, Halo's "max output tokens" setting is silently dropped for
   // any backend routed through the Responses API.
-  if (typeof anthropicRequest.max_tokens === 'number' && anthropicRequest.max_tokens > 0) {
-    request.max_output_tokens = anthropicRequest.max_tokens
+  const outputTokens = resolveOutputTokenLimit(anthropicRequest.max_tokens)
+  if (outputTokens !== undefined) {
+    request.max_output_tokens = outputTokens
   }
 
   // Add tools if present

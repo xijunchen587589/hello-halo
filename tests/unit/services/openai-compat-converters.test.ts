@@ -24,6 +24,7 @@ import {
   convertAnthropicToOpenAIChat,
   convertAnthropicToOpenAIResponses
 } from '../../../src/main/openai-compat-router/converters'
+import { resolveOutputTokenLimit } from '../../../src/main/openai-compat-router/converters/request/max-tokens'
 import type { AnthropicRequest } from '../../../src/main/openai-compat-router/types'
 import { isReasoningModelById } from '../../../src/shared/constants/model-capabilities'
 
@@ -100,6 +101,21 @@ describe('Chat Completions — max_tokens forwarding (issue #137)', () => {
     expect(result.request.max_tokens).toBeUndefined()
     expect(result.request.max_completion_tokens).toBeUndefined()
   })
+
+  it('truncates fractional max_tokens to an integer', () => {
+    // OpenAI-compatible APIs require an integer for max_tokens /
+    // max_completion_tokens; a fractional value triggers HTTP 400. The
+    // converter normalizes at the protocol boundary.
+    const request: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 4096.9,
+      messages: [{ role: 'user', content: 'Hello' }]
+    }
+
+    const result = convertAnthropicToOpenAIChat(request)
+
+    expect(result.request.max_tokens).toBe(4096)
+  })
 })
 
 describe('Responses API — max_output_tokens forwarding (issue #137)', () => {
@@ -128,6 +144,44 @@ describe('Responses API — max_output_tokens forwarding (issue #137)', () => {
     const result = convertAnthropicToOpenAIResponses(request)
 
     expect(result.request.max_output_tokens).toBeUndefined()
+  })
+
+  it('truncates fractional max_tokens to an integer', () => {
+    const request: AnthropicRequest = {
+      model: 'claude-3-opus',
+      max_tokens: 1024.5,
+      messages: [{ role: 'user', content: 'Hello!' }]
+    }
+
+    const result = convertAnthropicToOpenAIResponses(request)
+
+    expect(result.request.max_output_tokens).toBe(1024)
+  })
+})
+
+describe('resolveOutputTokenLimit', () => {
+  it('returns the value as-is when it is already a positive integer', () => {
+    expect(resolveOutputTokenLimit(1)).toBe(1)
+    expect(resolveOutputTokenLimit(8192)).toBe(8192)
+  })
+
+  it('truncates fractional values to the integer part', () => {
+    expect(resolveOutputTokenLimit(1024.9)).toBe(1024)
+    expect(resolveOutputTokenLimit(0.5)).toBeUndefined() // truncates to 0 → not positive
+  })
+
+  it('returns undefined for non-positive values', () => {
+    expect(resolveOutputTokenLimit(0)).toBeUndefined()
+    expect(resolveOutputTokenLimit(-1)).toBeUndefined()
+    expect(resolveOutputTokenLimit(-100)).toBeUndefined()
+  })
+
+  it('returns undefined for nullish / non-finite inputs', () => {
+    expect(resolveOutputTokenLimit(undefined)).toBeUndefined()
+    expect(resolveOutputTokenLimit(null)).toBeUndefined()
+    expect(resolveOutputTokenLimit(NaN)).toBeUndefined()
+    expect(resolveOutputTokenLimit(Infinity)).toBeUndefined()
+    expect(resolveOutputTokenLimit(-Infinity)).toBeUndefined()
   })
 })
 

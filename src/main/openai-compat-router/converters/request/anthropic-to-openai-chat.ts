@@ -10,6 +10,7 @@ import {
   convertAnthropicThinkingToChatReasoningEffort
 } from '../tools'
 import { supportsVisionById, isReasoningModelById } from '../../../../shared/constants/model-capabilities'
+import { resolveOutputTokenLimit } from './max-tokens'
 
 export interface ConversionResult {
   request: OpenAIChatRequest
@@ -53,11 +54,12 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
   // OpenAI reasoning models (o1/o3/o4-mini, gpt-5 thinking variants) reject
   // `max_tokens` with HTTP 400 and only accept `max_completion_tokens`. Route
   // the value to the correct field based on the model family.
-  if (typeof anthropicRequest.max_tokens === 'number' && anthropicRequest.max_tokens > 0) {
+  const outputTokens = resolveOutputTokenLimit(anthropicRequest.max_tokens)
+  if (outputTokens !== undefined) {
     if (isReasoningModelById(anthropicRequest.model)) {
-      openaiRequest.max_completion_tokens = anthropicRequest.max_tokens
+      openaiRequest.max_completion_tokens = outputTokens
     } else {
-      openaiRequest.max_tokens = anthropicRequest.max_tokens
+      openaiRequest.max_tokens = outputTokens
     }
   }
 

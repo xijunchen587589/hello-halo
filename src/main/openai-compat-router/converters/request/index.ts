@@ -11,3 +11,5 @@ export {
   convertAnthropicToOpenAIResponses,
   convertRequest as convertRequestToResponses
 } from './anthropic-to-openai-responses'
+
+export { resolveOutputTokenLimit } from './max-tokens'
