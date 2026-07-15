@@ -110,11 +110,6 @@ export function supportsVisionById(modelId: string | undefined | null): boolean 
  * upstream 400. Prefixes are matched with a token-boundary guard (see
  * {@link isReasoningModelById}) so substrings like "gpt-4o-1" are not trapped
  * and version suffixes (e.g. `-2024-12-17`, `-mini`) are still covered.
- *
- * A non-OpenAI provider that happens to ship an id starting with one of these
- * prefixes would also match — the list is intentionally limited to minimize
- * that risk, and providers with such collisions should override at a higher
- * layer.
  */
 const REASONING_MODEL_PREFIXES: string[] = [
   // OpenAI reasoning family — rejects max_tokens, accepts max_completion_tokens
