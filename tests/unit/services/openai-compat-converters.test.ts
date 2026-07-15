@@ -212,6 +212,12 @@ describe('resolveOutputTokenLimit', () => {
     expect(resolveOutputTokenLimit(Infinity)).toBeUndefined()
     expect(resolveOutputTokenLimit(-Infinity)).toBeUndefined()
   })
+
+  it('preserves large integers without truncation', () => {
+    // Guards against a future refactor to bitwise truncation (~~value, | 0)
+    // which would silently corrupt values above 2^31.
+    expect(resolveOutputTokenLimit(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER)
+  })
 })
 
 describe('isReasoningModelById', () => {
@@ -253,5 +259,12 @@ describe('isReasoningModelById', () => {
   it('is case-insensitive', () => {
     expect(isReasoningModelById('O3-MINI')).toBe(true)
     expect(isReasoningModelById('GPT-5-Thinking')).toBe(true)
+  })
+
+  it('accepts dot-separated version suffixes', () => {
+    // The boundary guard treats '.' as a valid separator, so a hypothetical
+    // minor-version id like "o3.5" is classified as reasoning.
+    expect(isReasoningModelById('o3.5')).toBe(true)
+    expect(isReasoningModelById('o1.2')).toBe(true)
   })
 })
