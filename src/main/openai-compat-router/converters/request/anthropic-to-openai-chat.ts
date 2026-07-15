@@ -46,9 +46,8 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
     stream: anthropicRequest.stream
   }
 
-  // OpenAI-compatible gateways (litellm, OpenAI public API) omit usage from
-  // streamed chunks unless the request explicitly opts in. Without this flag,
-  // `chunk.usage` is always empty, so the TokenUsageIndicator renders zeros.
+  // Issue #181: opt into chunk.usage so TokenUsageIndicator is not zero.
+  // See `stream-options.ts` for the gateway-compat rationale.
   if (openaiRequest.stream) {
     openaiRequest.stream_options = buildStreamOptionsIncludeUsage()
   }
