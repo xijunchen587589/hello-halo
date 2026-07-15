@@ -62,10 +62,13 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
     stream: anthropicRequest.stream
   }
 
-  // Mirror the Chat Completions path: OpenAI-compatible gateways return usage
-  // in the final streamed chunk only when `stream_options.include_usage` is
-  // explicitly set. Otherwise the Responses API stream omits usage entirely
-  // and the TokenUsageIndicator shows zeros.
+  // Defensive: the OpenAI Responses API returns usage in the `response.completed`
+  // event unconditionally — no `stream_options` gate. However, some OpenAI-compat
+  // gateways (e.g. litellm) internally translate the Responses API to Chat
+  // Completions, where usage IS gated by `stream_options.include_usage`. Without
+  // this flag, such gateways emit no usage in any streamed chunk and the
+  // TokenUsageIndicator shows zeros (issue #181). The field is silently ignored
+  // by the native OpenAI Responses API, so injecting it is harmless there.
   if (request.stream) {
     request.stream_options = buildStreamOptionsIncludeUsage()
   }

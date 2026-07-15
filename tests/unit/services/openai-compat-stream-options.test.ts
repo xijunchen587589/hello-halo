@@ -72,10 +72,9 @@ describe('Chat Completions — stream_options.include_usage (issue #181)', () =>
     expect(result.request.stream_options).toBeUndefined()
   })
 
-  it('injects stream_options.include_usage alongside reasoning model routing', () => {
-    // Sanity check: streaming and reasoning-model detection are orthogonal.
-    // A streaming reasoning model request must carry both
-    // stream_options.include_usage and the correct max_completion_tokens.
+  it('injects stream_options.include_usage for reasoning model requests', () => {
+    // Sanity check: streaming and model id are orthogonal — the stream_options
+    // contract must hold for reasoning models too, not just standard ones.
     const request: AnthropicRequest = {
       model: 'o1-mini',
       stream: true,
@@ -91,9 +90,10 @@ describe('Chat Completions — stream_options.include_usage (issue #181)', () =>
 
 describe('Responses API — stream_options.include_usage (issue #181)', () => {
   it('injects stream_options.include_usage when stream is true', () => {
-    // The Responses API mirrors the Chat Completions streaming contract: the
-    // final streamed event only carries usage when stream_options.include_usage
-    // is explicitly set. Without it, the TokenUsageIndicator stays at zero.
+    // Defensive: the native OpenAI Responses API returns usage in
+    // `response.completed` unconditionally, but translation-style gateways
+    // (litellm and similar) gate usage on stream_options.include_usage.
+    // See the converter comment for the full rationale.
     const request: AnthropicRequest = {
       model: 'claude-3-opus',
       stream: true,
@@ -132,5 +132,21 @@ describe('Responses API — stream_options.include_usage (issue #181)', () => {
 
     expect(result.request.stream).toBeFalsy()
     expect(result.request.stream_options).toBeUndefined()
+  })
+
+  it('injects stream_options.include_usage for reasoning model requests', () => {
+    // Symmetry with the Chat Completions path: model id must not affect the
+    // stream_options contract. Guards against future refactors that gate
+    // stream_options on model family.
+    const request: AnthropicRequest = {
+      model: 'o1-mini',
+      stream: true,
+      max_tokens: 8192,
+      messages: [{ role: 'user', content: 'Hello!' }]
+    }
+
+    const result = convertAnthropicToOpenAIResponses(request)
+
+    expect(result.request.stream_options).toEqual({ include_usage: true })
   })
 })
