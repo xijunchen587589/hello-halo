@@ -102,13 +102,14 @@ export function supportsVisionById(modelId: string | undefined | null): boolean 
 }
 
 /**
- * Known reasoning model patterns.
+ * Known reasoning model prefixes.
  *
  * OpenAI's reasoning family (o1, o3, o4-mini, gpt-5 thinking variants)
  * deprecates `max_tokens` and only accepts `max_completion_tokens`. Matching
  * these ids lets the OpenAI-compat router emit the right field and avoid an
- * upstream 400. Matches via modelId.toLowerCase().startsWith(pattern) so the
- * version suffix (e.g. `-2024-12-17`, `-mini`) is covered.
+ * upstream 400. Prefixes are matched with a token-boundary guard (see
+ * {@link isReasoningModelById}) so substrings like "gpt-4o-1" are not trapped
+ * and version suffixes (e.g. `-2024-12-17`, `-mini`) are still covered.
  */
 const REASONING_MODEL_PREFIXES: string[] = [
   // OpenAI reasoning family — rejects max_tokens, accepts max_completion_tokens
@@ -123,8 +124,11 @@ const REASONING_MODEL_PREFIXES: string[] = [
  * Chat Completions endpoints.
  *
  * Used by the openai-compat router where only the request body's `model`
- * string is available. Conservative by design: only well-known reasoning
- * family prefixes match, so non-OpenAI providers are unaffected.
+ * string is available. The prefix list is intentionally limited to
+ * well-known OpenAI reasoning families; the token-boundary guard prevents
+ * false positives such as "gpt-4o-1". A non-OpenAI provider that happens
+ * to ship an id starting with one of these prefixes would still match —
+ * providers with such collisions should override at a higher layer.
  */
 export function isReasoningModelById(modelId: string | undefined | null): boolean {
   if (!modelId) return false

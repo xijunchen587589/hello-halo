@@ -10,10 +10,9 @@
  *   - Drop non-positive values (0, negative) — let the provider use its own
  *     default rather than emitting an invalid cap.
  *   - Truncate fractional values to an integer. `AnthropicRequest.max_tokens`
- *     is typed `number` (not `integer`), and although the Halo UI steppers and
- *     the Anthropic SDK both constrain to integers, this is the protocol
- *     boundary where untrusted upstream values are normalized once before
- *     being fanned out to provider-specific fields.
+ *     is typed `number` (not `integer`), and this is the protocol boundary
+ *     where upstream values are normalized once before being fanned out to
+ *     provider-specific fields.
  */
 
 /**

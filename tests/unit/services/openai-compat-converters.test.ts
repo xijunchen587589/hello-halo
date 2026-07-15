@@ -14,9 +14,6 @@
  *
  * These tests live under the canonical `tests/unit/services/` path so they are
  * picked up by the project vitest config (include: 'unit/<glob>.test.ts').
- * The colocated `src/main/openai-compat-router/__tests__/converters.test.ts`
- * is a legacy file and is kept in sync with the same invariants, but only this
- * file is part of the mandatory pre-handoff validation run.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -60,8 +57,9 @@ describe('Chat Completions — max_tokens forwarding (issue #137)', () => {
   })
 
   it('keeps max_tokens for gpt-4o-1 (non-reasoning, starts-with-"o" trap)', () => {
-    // Guards against a naive startsWith('o') check trapping "gpt-4o-1".
-    // The detector requires the family prefix to end on a token boundary.
+    // "gpt-4o-1" contains the prefix "o1" as a substring but must not be
+    // classified as a reasoning model. The detector's token-boundary guard
+    // (prefix must be followed by end-of-string, '-', or '.') rejects it.
     const request: AnthropicRequest = {
       model: 'gpt-4o-1',
       max_tokens: 4096,
@@ -202,8 +200,9 @@ describe('isReasoningModelById', () => {
   })
 
   it('rejects the gpt-4o-1 false-positive trap', () => {
-    // A naive startsWith('o') check would trap "gpt-4o-1". The detector must
-    // require the family prefix to end on a token boundary.
+    // "gpt-4o-1" contains the "o1" prefix as a substring but is not a reasoning
+    // model. The token-boundary guard (prefix must be followed by end-of-string,
+    // '-', or '.') rejects it.
     expect(isReasoningModelById('gpt-4o-1')).toBe(false)
     expect(isReasoningModelById('gpt-4o')).toBe(false)
     expect(isReasoningModelById('gpt-4o-mini')).toBe(false)
