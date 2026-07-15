@@ -258,6 +258,7 @@ export interface NetworkConfig {
 // Browser configuration
 export interface BrowserConfig {
   customAllowlist?: string[];  // User-added allowlist patterns; only honored when the build sets browserPolicy.userExtensible
+  userAgent?: string;  // Custom User-Agent for the embedded AI Browser; overrides built-in desktop/mobile UAs (issue #124)
 }
 
 export interface HaloConfig {
