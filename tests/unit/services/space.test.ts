@@ -19,6 +19,7 @@ import {
   getAllSpacePaths,
   touchSpaceActivity,
   flushSpaceActivity,
+  reorderSpaces,
   _resetSpaceRegistry,
   _resetActivityState
 } from '../../../src/main/services/space.service'
@@ -377,6 +378,80 @@ describe('Space Service', () => {
 
     it('returns empty string for unknown spaceIds', () => {
       expect(getSpaceDir('does-not-exist')).toBe('')
+    })
+  })
+
+  describe('reorderSpaces + sortOrder', () => {
+    it('assigns sortOrder to newly created spaces (ascending, last wins)', async () => {
+      const a = createSpace({ name: 'A', icon: 'folder' })
+      const b = createSpace({ name: 'B', icon: 'folder' })
+
+      expect(typeof a.sortOrder).toBe('number')
+      expect(typeof b.sortOrder).toBe('number')
+      expect(b.sortOrder!).toBeGreaterThan(a.sortOrder!)
+    })
+
+    it('sorts by sortOrder when all spaces have it', async () => {
+      const a = createSpace({ name: 'A', icon: 'folder' })
+      const b = createSpace({ name: 'B', icon: 'folder' })
+      const c = createSpace({ name: 'C', icon: 'folder' })
+
+      // Reverse the order via reorderSpaces
+      reorderSpaces([c.id, b.id, a.id])
+
+      const spaces = listSpaces()
+      expect(spaces.map(s => s.name)).toEqual(['C', 'B', 'A'])
+    })
+
+    it('persisted sortOrder survives a registry reload', async () => {
+      const a = createSpace({ name: 'A', icon: 'folder' })
+      const b = createSpace({ name: 'B', icon: 'folder' })
+
+      reorderSpaces([b.id, a.id])
+
+      _resetSpaceRegistry()
+      const spaces = listSpaces()
+      expect(spaces.map(s => s.name)).toEqual(['B', 'A'])
+    })
+
+    it('rejects partial lists and preserves existing order', async () => {
+      const a = createSpace({ name: 'A', icon: 'folder' })
+      const b = createSpace({ name: 'B', icon: 'folder' })
+
+      // Establish a known order first
+      reorderSpaces([a.id, b.id])
+
+      // Partial list (3 ids for 2 spaces, with an unknown id) — must be rejected
+      reorderSpaces([b.id, 'unknown-id', a.id])
+
+      // Order unchanged from the successful reorder above
+      const spaces = listSpaces()
+      expect(spaces.map(s => s.name)).toEqual(['A', 'B'])
+    })
+
+    it('rejects incomplete lists (fewer ids than spaces)', async () => {
+      const a = createSpace({ name: 'A', icon: 'folder' })
+      const b = createSpace({ name: 'B', icon: 'folder' })
+      const c = createSpace({ name: 'C', icon: 'folder' })
+
+      reorderSpaces([c.id, b.id, a.id])
+
+      // Only send 2 of 3 ids — must be rejected, order preserved
+      reorderSpaces([a.id, b.id])
+
+      const spaces = listSpaces()
+      expect(spaces.map(s => s.name)).toEqual(['C', 'B', 'A'])
+    })
+
+    it('new space created after reorder sorts last', async () => {
+      const a = createSpace({ name: 'A', icon: 'folder' })
+      const b = createSpace({ name: 'B', icon: 'folder' })
+
+      reorderSpaces([b.id, a.id])
+
+      const c = createSpace({ name: 'C', icon: 'folder' })
+      const spaces = listSpaces()
+      expect(spaces.map(s => s.name)).toEqual(['B', 'A', 'C'])
     })
   })
 })

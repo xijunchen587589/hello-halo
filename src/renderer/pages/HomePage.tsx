@@ -18,6 +18,7 @@ import {
 import { Header } from '../components/layout/Header'
 import { SpaceGuide } from '../components/space/SpaceGuide'
 import { CreateSpaceDialog } from '../components/space/CreateSpaceDialog'
+import { SortableSpaceList } from '../components/space/SortableSpaceList'
 import { Blocks, ArrowRight, AlertCircle, SendHorizontal, Unplug } from 'lucide-react'
 import { api } from '../api'
 import { useTranslation } from '../i18n'
@@ -29,7 +30,7 @@ import type { AppType } from '../../shared/apps/spec-types'
 export function HomePage() {
   const { t } = useTranslation()
   const { setView } = useAppStore()
-  const { haloSpace, spaces, loadSpaces, setCurrentSpace, refreshCurrentSpace, updateSpace, deleteSpace } = useSpaceStore()
+  const { haloSpace, spaces, loadSpaces, setCurrentSpace, refreshCurrentSpace, updateSpace, deleteSpace, reorderSpaces } = useSpaceStore()
   const { apps, loadApps } = useAppsStore()
   const { setInitialAppId, setCurrentTab, setShowInstallDialog, openMarketplaceFilteredBy } = useAppsPageStore()
 
@@ -232,14 +233,15 @@ export function HomePage() {
             <p className="text-sm">{t('No dedicated spaces yet')}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
-            {spaces.map((space, i) => (
+          <SortableSpaceList
+            items={spaces}
+            onReorder={(ids) => { void reorderSpaces(ids) }}
+            className="grid grid-cols-2 gap-4"
+            itemClassName="space-card p-4 group animate-fade-in"
+            renderItem={(space) => (
               <div
-                key={`${space.id}-${i}`}
                 onClick={() => handleSpaceClick(space)}
-                className={`space-card p-4 group animate-fade-in ${
-                  space.isMissing ? 'opacity-70 cursor-not-allowed border-dashed' : ''
-                }`}
+                className={`w-full ${space.isMissing ? 'opacity-70 cursor-not-allowed border-dashed' : 'cursor-pointer'}`}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2 min-w-0">
@@ -275,8 +277,8 @@ export function HomePage() {
                     : `${formatTimeAgo(space.lastActiveAt || space.updatedAt)}${t('active')}`}
                 </p>
               </div>
-            ))}
-          </div>
+            )}
+          />
         )}
       </main>
 
