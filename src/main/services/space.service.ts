@@ -121,6 +121,48 @@ function metaToEntry(meta: SpaceMeta, spacePath: string): SpaceIndexEntry {
 }
 
 /**
+ * Backfill missing sortOrder on persisted entries using the activity-sort
+ * order. Eliminates the mixed-state window where some entries have sortOrder
+ * and others don't — that window caused createSpace's `max+1` to land at 0
+ * on a fully-legacy index, which then sorted the new space first under the
+ * activity fallback while the store appended it last (visual jump).
+ *
+ * Runs once at load; persisted entries stay stable across restarts. Entries
+ * keep the order they would have had under the legacy activity sort, so users
+ * upgrading see no visual change. After this runs, listSpaces()'s activity
+ * fallback never triggers in practice.
+ */
+function backfillSortOrder(map: Map<string, SpaceIndexEntry>): number {
+  const persistable: SpaceIndexEntry[] = []
+  for (const [, entry] of map) {
+    if (entry.isTemp) continue
+    if (typeof entry.sortOrder !== 'number') persistable.push(entry)
+  }
+  if (persistable.length === 0) return 0
+
+  persistable.sort((a, b) => {
+    const aTime = new Date(a.lastActiveAt || a.updatedAt).getTime()
+    const bTime = new Date(b.lastActiveAt || b.updatedAt).getTime()
+    return bTime - aTime
+  })
+
+  let next = 0
+  // Place backfilled entries after any that already have sortOrder, so a
+  // partial-legacy index (some dragged, some not) keeps dragged order intact.
+  for (const [, entry] of map) {
+    if (entry.isTemp) continue
+    if (typeof entry.sortOrder === 'number' && entry.sortOrder >= next) {
+      next = entry.sortOrder + 1
+    }
+  }
+  for (const entry of persistable) {
+    entry.sortOrder = next++
+  }
+  console.log(`[Space] Backfilled sortOrder for ${persistable.length} entries`)
+  return persistable.length
+}
+
+/**
  * Load space index from disk. Handles v3 (direct), v2 (migration), v1/missing (full scan).
  * Always registers halo-temp into the returned map.
  */
@@ -146,7 +188,9 @@ function loadSpaceIndex(): Map<string, SpaceIndexEntry> {
         map.set(id, entry)
       }
     }
-    console.log(`[Space] Index v3 loaded: ${map.size} spaces`)
+    const backfilled = backfillSortOrder(map)
+    if (backfilled) persistIndex(map)
+    console.log(`[Space] Index v3 loaded: ${map.size} spaces${backfilled ? ' (sortOrder backfilled)' : ''}`)
     registerHaloTemp(map)
     return map
   }
@@ -164,6 +208,8 @@ function loadSpaceIndex(): Map<string, SpaceIndexEntry> {
     }
     persistIndex(map)
     console.log(`[Space] Index v3 migration complete: ${map.size} spaces`)
+    backfillSortOrder(map)  // migration produced entries without sortOrder
+    persistIndex(map)
     registerHaloTemp(map)
     return map
   }
@@ -206,6 +252,8 @@ function loadSpaceIndex(): Map<string, SpaceIndexEntry> {
   // Persist v3 format
   persistIndex(map)
   console.log(`[Space] Index v3 migration complete: ${map.size} spaces`)
+  backfillSortOrder(map)  // full-scan entries have no sortOrder
+  persistIndex(map)
   registerHaloTemp(map)
   return map
 }

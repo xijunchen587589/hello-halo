@@ -453,5 +453,43 @@ describe('Space Service', () => {
       const spaces = listSpaces()
       expect(spaces.map(s => s.name)).toEqual(['B', 'A', 'C'])
     })
+
+    // Regression: legacy index (no sortOrder) + new space must not jump to
+    // the front. Before backfill, createSpace assigned sortOrder=0 while
+    // listSpaces fell back to activity sort (newest first), contradicting
+    // the store's append-on-create and causing a visual jump after re-sync.
+    it('new space on legacy index (no sortOrder) sorts last, not first', async () => {
+      const haloDir = getHaloDir()
+      const indexPath = path.join(haloDir, 'spaces-index.json')
+      const idA = 'legacy-space-a'
+      const dirA = path.join(globalThis.__HALO_TEST_DIR__, 'legacy-a')
+      fs.mkdirSync(path.join(dirA, '.halo'), { recursive: true })
+      fs.writeFileSync(path.join(dirA, '.halo', 'meta.json'), JSON.stringify({
+        id: idA, name: 'Legacy A', icon: 'folder',
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z'
+      }))
+      fs.writeFileSync(indexPath, JSON.stringify({
+        version: 3,
+        spaces: {
+          [idA]: {
+            path: dirA, name: 'Legacy A', icon: 'folder',
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        }
+      }, null, 2))
+
+      _resetSpaceRegistry()
+
+      // New space after legacy load — must sort last (matches store append)
+      const b = createSpace({ name: 'New B', icon: 'folder' })
+      const spaces = listSpaces()
+      expect(spaces.map(s => s.name)).toEqual(['Legacy A', 'New B'])
+
+      // Persisted sortOrder should now be present on both entries
+      const persisted = JSON.parse(fs.readFileSync(indexPath, 'utf-8'))
+      expect(typeof persisted.spaces[idA].sortOrder).toBe('number')
+      expect(typeof persisted.spaces[b.id].sortOrder).toBe('number')
+      expect(persisted.spaces[b.id].sortOrder).toBeGreaterThan(persisted.spaces[idA].sortOrder)
+    })
   })
 })
