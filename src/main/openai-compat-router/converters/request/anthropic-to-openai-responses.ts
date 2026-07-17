@@ -11,6 +11,7 @@ import {
 } from '../tools'
 import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
 import { buildStreamOptionsIncludeUsage } from './stream-options'
+import { resolveOutputTokenLimit } from './max-tokens'
 
 export interface ConversionResult {
   request: OpenAIResponsesRequest
@@ -55,7 +56,6 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
   const hasTools = !!tools && tools.length > 0
 
   // Build request - only include essential parameters
-  // Omit max_output_tokens as many providers don't support it
   const request: OpenAIResponsesRequest = {
     model: anthropicRequest.model,
     input: inputItems,
@@ -70,6 +70,14 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
   // API and required for such gateways.
   if (request.stream) {
     request.stream_options = buildStreamOptionsIncludeUsage()
+  }
+
+  // Mirror the Chat Completions path. `max_output_tokens` is part of the
+  // Responses API public spec — without forwarding, Halo's "max output tokens"
+  // setting is silently dropped for Responses-routed backends.
+  const outputTokens = resolveOutputTokenLimit(anthropicRequest.max_tokens)
+  if (outputTokens !== undefined) {
+    request.max_output_tokens = outputTokens
   }
 
   // Add tools if present
