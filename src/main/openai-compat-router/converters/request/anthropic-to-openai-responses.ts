@@ -10,6 +10,7 @@ import {
   convertAnthropicThinkingToResponsesReasoning
 } from '../tools'
 import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
+import { buildStreamOptionsIncludeUsage } from './stream-options'
 
 export interface ConversionResult {
   request: OpenAIResponsesRequest
@@ -59,6 +60,16 @@ export function convertAnthropicToOpenAIResponses(anthropicRequest: AnthropicReq
     model: anthropicRequest.model,
     input: inputItems,
     stream: anthropicRequest.stream
+  }
+
+  // Issue #181 (Responses-specific nuance): the native OpenAI Responses API
+  // returns usage in `response.completed` unconditionally and silently ignores
+  // `stream_options`. However, translation-style gateways (e.g. litellm) map
+  // the Responses API to Chat Completions internally, where usage is gated by
+  // `stream_options.include_usage`. Injecting it is harmless for the native
+  // API and required for such gateways.
+  if (request.stream) {
+    request.stream_options = buildStreamOptionsIncludeUsage()
   }
 
   // Add tools if present

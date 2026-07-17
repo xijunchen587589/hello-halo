@@ -10,6 +10,7 @@ import {
   convertAnthropicThinkingToChatReasoningEffort
 } from '../tools'
 import { supportsVisionById } from '../../../../shared/constants/model-capabilities'
+import { buildStreamOptionsIncludeUsage } from './stream-options'
 
 export interface ConversionResult {
   request: OpenAIChatRequest
@@ -43,6 +44,12 @@ export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest)
     model: anthropicRequest.model,
     messages,
     stream: anthropicRequest.stream
+  }
+
+  // Issue #181: opt into chunk.usage so TokenUsageIndicator is not zero.
+  // See `stream-options.ts` for the gateway-compat rationale.
+  if (openaiRequest.stream) {
+    openaiRequest.stream_options = buildStreamOptionsIncludeUsage()
   }
 
   // Forward the user-configured output length. Anthropic requires max_tokens,
