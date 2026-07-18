@@ -312,6 +312,7 @@ export interface Space {
   preferences?: SpacePreferences;  // User preferences for this space
   workingDir?: string;  // Project directory for custom spaces (agent cwd, artifacts, file explorer)
   isMissing?: boolean;  // True when the space data path is currently unavailable
+  sortOrder?: number;  // User-defined display order (lower = earlier); absent on legacy spaces
 }
 
 export interface CreateSpaceInput {
