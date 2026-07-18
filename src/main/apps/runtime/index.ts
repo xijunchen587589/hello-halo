@@ -102,6 +102,7 @@ export {
   cleanupAppChatBrowserContext,
   clearAppChat,
   clearImSession,
+  stopImSession,
   restartAppChat,
 } from './app-chat'
 export type { AppChatRequest } from './app-chat'

@@ -29,6 +29,7 @@ import { broadcastToAll } from '../../http/websocket'
 import { stopGeneration } from '../../services/agent/control'
 import { activeSessions } from '../../services/agent/session-manager'
 import { setImPermissionContext, clearImPermissionContext } from './im-permission-registry'
+import { setImStreamHandle } from './im-stream-registry'
 import { analytics } from '../../services/analytics/analytics.service'
 import { AnalyticsEvents } from '../../services/analytics/types'
 import { FileExportGate } from './file-export-gate'
@@ -258,7 +259,7 @@ function buildRoundSwitchPrefix(buffer: SupplementEntry[]): string {
 }
 
 /** Drop all buffered supplements for a conversation, disposing stream sessions. */
-function clearSupplementBuffer(conversationId: string): SupplementEntry[] {
+export function clearSupplementBuffer(conversationId: string): SupplementEntry[] {
   const entries = supplementBuffers.get(conversationId)
   if (!entries || entries.length === 0) {
     supplementBuffers.delete(conversationId)
@@ -559,6 +560,14 @@ export async function dispatchInboundMessage(
 
   // Build isolated session key
   const conversationId = buildImSessionKey(app.id, msg.channel, msg.chatType, msg.chatId)
+
+  // Track the active round's streaming handle so out-of-band callers
+  // (stopImSession) can terminate the IM-side stream without access to
+  // this dispatch closure. Overwrites any prior entry — only the latest
+  // round's handle is reachable, matching the supplement-buffer semantics.
+  if (reply.streaming) {
+    setImStreamHandle(conversationId, reply.streaming)
+  }
 
   // Register session in ImSessionRegistry (idempotent — updates lastActiveAt on repeat)
   const registry = getImSessionRegistry()
