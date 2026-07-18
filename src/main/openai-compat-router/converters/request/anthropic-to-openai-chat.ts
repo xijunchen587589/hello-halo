@@ -20,15 +20,35 @@ export interface ConversionResult {
 }
 
 /**
+ * Optional conversion overrides. `supportsVision` lets the caller pass the
+ * provider-declared ModelOption.supportsVision straight through to the
+ * router's strip decision, bypassing the model-id heuristic in
+ * {@link supportsVisionById}. Undefined falls back to that heuristic.
+ * See issue #139.
+ */
+export interface ConvertOptions {
+  supportsVision?: boolean
+}
+
+/**
  * Convert Anthropic request to OpenAI Chat Completions request
  */
-export function convertAnthropicToOpenAIChat(anthropicRequest: AnthropicRequest): ConversionResult {
+export function convertAnthropicToOpenAIChat(
+  anthropicRequest: AnthropicRequest,
+  options?: ConvertOptions
+): ConversionResult {
   // Strip image blocks for non-vision models. The OpenAI Chat spec encodes
   // images as `{type:'image_url', ...}`, but strict non-vision providers
   // reject this variant entirely. Image content can leak in via tool results
   // (Read on image, screenshots, MCP image returns) or mid-conv model
   // switches — the renderer UI input gate alone is not sufficient.
-  const stripImages = !supportsVisionById(anthropicRequest.model)
+  //
+  // Prefer the provider-declared override (ModelOption.supportsVision carried
+  // through the encoded BackendConfig) over the model-id heuristic; the
+  // heuristic defaults unknown models to vision-capable and would forward
+  // images to non-vision providers, triggering HTTP 400. (#139)
+  const visionCapable = options?.supportsVision ?? supportsVisionById(anthropicRequest.model)
+  const stripImages = !visionCapable
 
   // Convert messages
   const { messages, hasImages } = convertAnthropicMessagesToOpenAIChat(

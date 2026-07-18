@@ -322,6 +322,12 @@ export interface BackendRequestConfig {
   profileArn?: string
   /** Provider adapter ID — selects a registered adapter for request/response transformations */
   adapterId?: string
+  /**
+   * Provider-declared vision capability for the target model. When present,
+   * the OpenAI-compat router uses this instead of inferring from the model id;
+   * undefined falls back to supportsVisionById. See issue #139.
+   */
+  supportsVision?: boolean
 }
 
 // ============================================================================
