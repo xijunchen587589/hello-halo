@@ -561,14 +561,6 @@ export async function dispatchInboundMessage(
   // Build isolated session key
   const conversationId = buildImSessionKey(app.id, msg.channel, msg.chatType, msg.chatId)
 
-  // Track the active round's streaming handle so out-of-band callers
-  // (stopImSession) can terminate the IM-side stream without access to
-  // this dispatch closure. Overwrites any prior entry — only the latest
-  // round's handle is reachable, matching the supplement-buffer semantics.
-  if (reply.streaming) {
-    setImStreamHandle(conversationId, reply.streaming)
-  }
-
   // Register session in ImSessionRegistry (idempotent — updates lastActiveAt on repeat)
   const registry = getImSessionRegistry()
   if (registry) {
@@ -697,6 +689,16 @@ export async function dispatchInboundMessage(
     guestPolicy: permissionEnabled ? instanceCfg?.guestPolicy : undefined,
     ownerIds: hasOwnerRestriction ? owners! : undefined,
   })
+
+  // Register the active round's streaming handle ONLY on the start-of-round
+  // path — never on the supplement-buffer branch above (which returns early).
+  // A buffered supplement's reply.streaming belongs to a round that will
+  // never start; registering it would overwrite the running round's handle
+  // and leave the live stream undiscoverable to stopImSession. stopImSession
+  // must always reach the handle of the round currently in flight.
+  if (reply.streaming) {
+    setImStreamHandle(conversationId, reply.streaming)
+  }
 
   // Inject file attachment context so the AI can access them via the Read tool.
   // Images are passed separately as multimodal input (see `images` below);

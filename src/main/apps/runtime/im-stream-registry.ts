@@ -12,10 +12,15 @@
  *   app-chat.ts (stop)   → get()     (reads to finish/dispose on user stop)
  *
  * Lifecycle:
- *   - Set on every inbound IM dispatch where reply.streaming is present.
- *   - Overwrites the previous entry — only the LATEST round's handle is
- *     reachable, which is correct because a new inbound message either
- *     starts a new round (idle) or buffers as supplement (busy).
+ *   - Set ONLY on the start-of-round path in dispatch-inbound — never on
+ *     the supplement-buffer branch (which returns early). A buffered
+ *     supplement's reply.streaming belongs to a round that will never
+ *     start; registering it would overwrite the running round's handle
+ *     and leave the live stream undiscoverable to stopImSession.
+ *   - Overwrites the previous entry — only the LATEST RUNNING round's
+ *     handle is reachable. Correct because a new round starting means
+ *     the prior round already completed (handle cleared in
+ *     sendAppChatMessage's finally) or was aborted (cleared in stopImSession).
  *   - Cleared in sendAppChatMessage's finally block (round complete) and in
  *     clearSessionByConversationId (history wipe). Entries are NOT persisted.
  *
