@@ -182,7 +182,7 @@ describe('dispatchInboundMessage — stream-handle race regression', () => {
   })
 
   it('does NOT call setImStreamHandle when the message is buffered as a supplement', async () => {
-    // Simulate an active round — the busy-check at line 637 will buffer
+    // Simulate an active round — the supplement-buffer busy-check will buffer
     // this message and return before reaching the setImStreamHandle call.
     const conversationId = 'app-chat:app-1:wecom-bot:group:room-1'
     activeSessions.set(conversationId, {})
@@ -246,8 +246,8 @@ describe('dispatchInboundMessage — stream-handle race regression', () => {
       'inst-1',
     )
 
-    // Streaming was stripped at line 557 before reaching the registry set,
-    // so setImStreamHandle must not fire.
+    // Streaming was stripped by the instance-config disable check before
+    // reaching the registry set, so setImStreamHandle must not fire.
     expect(setImStreamHandle).not.toHaveBeenCalled()
   })
 })
