@@ -237,11 +237,12 @@ export function HomePage() {
             items={spaces}
             onReorder={(ids) => { void reorderSpaces(ids) }}
             className="grid grid-cols-2 gap-4"
-            itemClassName="space-card p-4 group animate-fade-in"
             renderItem={(space) => (
               <div
                 onClick={() => handleSpaceClick(space)}
-                className={`w-full ${space.isMissing ? 'opacity-70 cursor-not-allowed border-dashed' : 'cursor-pointer'}`}
+                className={`space-card p-4 group animate-fade-in ${
+                  space.isMissing ? 'opacity-70 cursor-not-allowed border-dashed' : ''
+                }`}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2 min-w-0">

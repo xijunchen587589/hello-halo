@@ -165,6 +165,9 @@ function backfillSortOrder(map: Map<string, SpaceIndexEntry>): number {
 /**
  * Load space index from disk. Handles v3 (direct), v2 (migration), v1/missing (full scan).
  * Always registers halo-temp into the returned map.
+ *
+ * Single write point: every path only builds the map; sortOrder backfill and
+ * the (at most one) persistIndex happen at the shared exit.
  */
 function loadSpaceIndex(): Map<string, SpaceIndexEntry> {
   const indexPath = getSpaceIndexPath()
@@ -180,23 +183,21 @@ function loadSpaceIndex(): Map<string, SpaceIndexEntry> {
     }
   }
 
-  // v3: direct load
+  // True when the on-disk format was upgraded and must be re-persisted even
+  // if backfillSortOrder finds nothing to do.
+  let migrated = false
+
   if (raw && raw.version === 3 && raw.spaces && typeof raw.spaces === 'object') {
+    // v3: direct load
     const spaces = raw.spaces as Record<string, SpaceIndexEntry>
     for (const [id, entry] of Object.entries(spaces)) {
       if (entry && typeof entry.path === 'string' && typeof entry.name === 'string') {
         map.set(id, entry)
       }
     }
-    const backfilled = backfillSortOrder(map)
-    if (backfilled) persistIndex(map)
-    console.log(`[Space] Index v3 loaded: ${map.size} spaces${backfilled ? ' (sortOrder backfilled)' : ''}`)
-    registerHaloTemp(map)
-    return map
-  }
-
-  // v2: one-time migration (read each meta.json once)
-  if (raw && raw.version === 2 && raw.spaces && typeof raw.spaces === 'object') {
+    console.log(`[Space] Index v3 loaded: ${map.size} spaces`)
+  } else if (raw && raw.version === 2 && raw.spaces && typeof raw.spaces === 'object') {
+    // v2: one-time migration (read each meta.json once)
     console.log('[Space] Migrating space index v2 -> v3...')
     const v2Spaces = raw.spaces as Record<string, { path: string }>
     for (const [id, v2Entry] of Object.entries(v2Spaces)) {
@@ -206,54 +207,50 @@ function loadSpaceIndex(): Map<string, SpaceIndexEntry> {
         map.set(id, metaToEntry(meta, v2Entry.path))
       }
     }
-    persistIndex(map)
+    migrated = true
     console.log(`[Space] Index v3 migration complete: ${map.size} spaces`)
-    backfillSortOrder(map)  // migration produced entries without sortOrder
-    persistIndex(map)
-    registerHaloTemp(map)
-    return map
-  }
+  } else {
+    // v1 or missing: one-time migration via full scan
+    console.log('[Space] Migrating space index to v3 (full scan)...')
+    const oldCustomPaths: string[] = Array.isArray((raw as Record<string, unknown>)?.customPaths)
+      ? (raw as { customPaths: string[] }).customPaths
+      : []
 
-  // v1 or missing: one-time migration via full scan
-  console.log('[Space] Migrating space index to v3 (full scan)...')
-  const oldCustomPaths: string[] = Array.isArray((raw as Record<string, unknown>)?.customPaths)
-    ? (raw as { customPaths: string[] }).customPaths
-    : []
+    // Scan default spaces directory
+    const spacesDir = getSpacesDir()
+    if (existsSync(spacesDir)) {
+      try {
+        for (const dir of readdirSync(spacesDir)) {
+          const spacePath = join(spacesDir, dir)
+          try {
+            if (!statSync(spacePath).isDirectory()) continue
+          } catch { continue }
+          const meta = tryReadMeta(spacePath)
+          if (meta) {
+            map.set(meta.id, metaToEntry(meta, spacePath))
+          }
+        }
+      } catch (error) {
+        console.error('[Space] Error scanning spaces directory:', error)
+      }
+    }
 
-  // Scan default spaces directory
-  const spacesDir = getSpacesDir()
-  if (existsSync(spacesDir)) {
-    try {
-      for (const dir of readdirSync(spacesDir)) {
-        const spacePath = join(spacesDir, dir)
-        try {
-          if (!statSync(spacePath).isDirectory()) continue
-        } catch { continue }
-        const meta = tryReadMeta(spacePath)
-        if (meta) {
-          map.set(meta.id, metaToEntry(meta, spacePath))
+    // Scan old custom paths
+    for (const customPath of oldCustomPaths) {
+      if (existsSync(customPath)) {
+        const meta = tryReadMeta(customPath)
+        if (meta && !map.has(meta.id)) {
+          map.set(meta.id, metaToEntry(meta, customPath))
         }
       }
-    } catch (error) {
-      console.error('[Space] Error scanning spaces directory:', error)
     }
+
+    migrated = true
+    console.log(`[Space] Index v3 migration complete: ${map.size} spaces`)
   }
 
-  // Scan old custom paths
-  for (const customPath of oldCustomPaths) {
-    if (existsSync(customPath)) {
-      const meta = tryReadMeta(customPath)
-      if (meta && !map.has(meta.id)) {
-        map.set(meta.id, metaToEntry(meta, customPath))
-      }
-    }
-  }
-
-  // Persist v3 format
-  persistIndex(map)
-  console.log(`[Space] Index v3 migration complete: ${map.size} spaces`)
-  backfillSortOrder(map)  // full-scan entries have no sortOrder
-  persistIndex(map)
+  const backfilled = backfillSortOrder(map)
+  if (migrated || backfilled > 0) persistIndex(map)
   registerHaloTemp(map)
   return map
 }

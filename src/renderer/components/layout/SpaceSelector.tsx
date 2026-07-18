@@ -146,7 +146,6 @@ export function SpaceSelector() {
               items={spaces}
               onReorder={(ids) => { void reorderSpaces(ids) }}
               className="flex flex-col"
-              itemClassName=""
               renderItem={(space) => (
                 <SpaceDropdownRow
                   space={space}
