@@ -324,6 +324,7 @@ class CanvasLifecycle {
 
   // IPC listener cleanup
   private browserStateUnsubscribe: (() => void) | null = null
+  private artifactChangedUnsubscribe: (() => void) | null = null
 
   // Callback subscriptions
   private tabsChangeCallbacks: Set<TabsChangeCallback> = new Set()
@@ -395,6 +396,17 @@ class CanvasLifecycle {
       }
     })
 
+    // Listen for file changes via existing artifact watcher, auto-refresh open tabs
+    this.artifactChangedUnsubscribe = api.onArtifactChanged((event) => {
+      if (event.type !== 'change') return
+      for (const [tabId, tab] of this.tabs) {
+        if (tab.path === event.path && !tab.isDirty) {
+          this.refreshTab(tabId)
+          break
+        }
+      }
+    })
+
     console.log('[CanvasLifecycle] Initialized successfully')
   }
 
@@ -407,6 +419,11 @@ class CanvasLifecycle {
     if (this.browserStateUnsubscribe) {
       this.browserStateUnsubscribe()
       this.browserStateUnsubscribe = null
+    }
+
+    if (this.artifactChangedUnsubscribe) {
+      this.artifactChangedUnsubscribe()
+      this.artifactChangedUnsubscribe = null
     }
 
     // Destroy all browser views

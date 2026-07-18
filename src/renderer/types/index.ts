@@ -258,6 +258,7 @@ export interface NetworkConfig {
 // Browser configuration
 export interface BrowserConfig {
   customAllowlist?: string[];  // User-added allowlist patterns; only honored when the build sets browserPolicy.userExtensible
+  userAgent?: string;  // Custom User-Agent for the embedded AI Browser; overrides built-in desktop/mobile UAs (issue #124)
 }
 
 export interface HaloConfig {
@@ -279,6 +280,9 @@ export interface HaloConfig {
   network?: NetworkConfig;  // Network settings (proxy, etc.)
   browser?: BrowserConfig;  // Browser settings (user custom allowlist)
   isFirstLaunch: boolean;
+  // True when the user deferred model configuration in the first-run wizard.
+  // Suppresses the setup re-entry guard so they can reach Home and configure later.
+  modelConfigSkipped?: boolean;
 }
 
 // ============================================
@@ -792,7 +796,8 @@ export const DEFAULT_CONFIG: HaloConfig = {
   },
   mcpServers: {},  // Empty by default
   agent: { maxTurns: 999 },  // Agent defaults
-  isFirstLaunch: true
+  isFirstLaunch: true,
+  modelConfigSkipped: false
 };
 
 // Helper functions hasAnyAISource and getCurrentModelName are now imported from shared module

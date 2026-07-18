@@ -6,7 +6,9 @@
  */
 
 import { ipcMain, BrowserWindow, Menu, clipboard, nativeImage, shell, nativeTheme, MenuItemConstructorOptions } from 'electron'
-import { browserViewManager, CHROME_USER_AGENT, type BrowserViewBounds, type DeviceMode } from '../services/browser-view.service'
+import { browserViewManager, type BrowserViewBounds, type DeviceMode } from '../services/browser-view.service'
+import { resolveUserAgent } from '../services/user-agent-resolver'
+import { getConfig } from '../foundation/config.service'
 import { getDefaultBrowserHomepage } from '../services/browser-policy.service'
 import { buildLoginLoadingPage, buildLoginErrorPage, loginPageBg } from '../services/browser-login-pages'
 
@@ -509,7 +511,12 @@ export function registerBrowserHandlers(mainWindow: BrowserWindow | null) {
           },
         })
 
-        loginWindow.webContents.setUserAgent(CHROME_USER_AGENT)
+        // Issue #124: apply custom UA so login flows see the same UA as the
+        // main browser views — sites that gate auth by UA otherwise reject
+        // the login request (session/cookie tied to the UA at first request).
+        loginWindow.webContents.setUserAgent(
+          resolveUserAgent(getConfig().browser?.userAgent, 'pc')
+        )
 
         // The inline loading page (data: URL) renders near-instantly, so
         // ready-to-show fires within milliseconds. Once visible, we navigate
